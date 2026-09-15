@@ -2,9 +2,11 @@ import { useEffect, useState, useCallback } from 'react'
 import { Activity, Database, Layers, Sparkles, ArrowDownUp, Mic, HardDrive } from 'lucide-react'
 import { get } from '../services/api'
 import EmptyState from '../components/ui/EmptyState'
+import { useI18n } from '../contexts/I18nContext'
 
-const LABEL = { ok: ['ok', 'Online'], down: ['bad', 'Offline'], disabled: ['mute', 'Disabled'], unset: ['mute', 'Not set'] }
-const OVERALL = { ok: ['ok', 'All systems operational'], down: ['bad', 'Degraded — action needed'] }
+// [css class, i18n key] — labels resolved with t() at render time
+const LABEL = { ok: ['ok', 'status.online'], down: ['bad', 'status.offline'], disabled: ['mute', 'status.disabled'], unset: ['mute', 'status.notset'] }
+const OVERALL = { ok: ['ok', 'health.overall.ok'], down: ['bad', 'health.overall.down'] }
 
 function kindIcon(kind) {
   const k = (kind || '').toLowerCase()
@@ -18,6 +20,7 @@ function kindIcon(kind) {
 }
 
 export default function HealthPage() {
+  const { t } = useI18n()
   const [d, setD] = useState(null)
   const [err, setErr] = useState(null)
 
@@ -33,20 +36,20 @@ export default function HealthPage() {
     return () => { alive = false; clearInterval(t) }
   }, [load])
 
-  const overall = d && (OVERALL[d.overall] || ['mute', 'Idle'])
+  const overall = d && (OVERALL[d.overall] || ['mute', 'health.overall.idle'])
 
   return (
     <div id="view-health">
       <div className="card">
         <div className="card-head">
           <div className="icon"><Activity size={16} /></div>
-          <div><h2>System Health</h2><div className="desc">Live connectivity to every external dependency · refreshes every 15s</div></div>
+          <div><h2>{t('health.title')}</h2><div className="desc">{t('health.desc')}</div></div>
           <div className="grow" />
-          {overall && <span className={'pill ' + overall[0]}>{overall[1]}</span>}
+          {overall && <span className={'pill ' + overall[0]}>{t(overall[1])}</span>}
         </div>
         <div className="health-grid">
-          {err ? <div style={{ gridColumn: '1/-1' }}><EmptyState t="Failed to load health" d={err} /></div>
-            : d == null ? <div className="sec" style={{ marginTop: 4 }}>loading…</div>
+          {err ? <div style={{ gridColumn: '1/-1' }}><EmptyState t={t('health.failTitle')} d={err} /></div>
+            : d == null ? <div className="sec" style={{ marginTop: 4 }}>{t('common.loading')}</div>
               : d.checks.map((c, i) => {
                 const Icon = kindIcon(c.kind)
                 const [cls, label] = LABEL[c.status] || LABEL.unset
@@ -54,7 +57,7 @@ export default function HealthPage() {
                   <div key={i} className={'htile ' + c.status}>
                     <div className="h-icon"><Icon size={17} /></div>
                     <div className="h-body">
-                      <div className="h-name">{c.name}<span className={'pill ' + cls}>{label}</span></div>
+                      <div className="h-name">{c.name}<span className={'pill ' + cls}>{t(label)}</span></div>
                       <div className="h-detail">{c.detail || ''}</div>
                       {c.endpoint && <div className="h-ep" title={c.endpoint}>{c.endpoint}</div>}
                     </div>

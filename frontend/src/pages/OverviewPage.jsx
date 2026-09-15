@@ -2,6 +2,7 @@ import { useEffect, useState, useCallback } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { get, post } from '../services/api'
 import { fmtNum, fmtBytes, shortModel } from '../lib/format'
+import { useI18n } from '../contexts/I18nContext'
 
 const Svg = ({ children }) => <svg viewBox="0 0 24 24">{children}</svg>
 
@@ -16,17 +17,19 @@ const STAGES = [
 ]
 
 function Pill({ state }) {
+  const { t } = useI18n()
   const map = {
-    online: ['ok', 'Online'], offline: ['bad', 'Offline'],
-    unset: ['mute', 'Not set'], checking: ['mute', 'Checking'],
-    ready: ['ok', 'Ready'], disabled: ['mute', 'Disabled'],
+    online: ['ok', 'status.online'], offline: ['bad', 'status.offline'],
+    unset: ['mute', 'status.notset'], checking: ['mute', 'status.checking'],
+    ready: ['ok', 'status.ready'], disabled: ['mute', 'status.disabled'],
   }
   const [cls, label] = map[state] || map.checking
-  return <span className={`pill ${cls}`}>{label}</span>
+  return <span className={`pill ${cls}`}>{t(label)}</span>
 }
 
 export default function OverviewPage() {
   const nav = useNavigate()
+  const { t } = useI18n()
   const [d, setD] = useState(null)
   const [res, setRes] = useState(null)
   const [health, setHealth] = useState({})
@@ -59,15 +62,15 @@ export default function OverviewPage() {
   if (!d) {
     return (
       <div className="term-hero">
-        <div className="term-cap"><h1>Pipeline</h1></div>
-        <div className="sec" style={{ marginTop: 20 }}>loading…</div>
+        <div className="term-cap"><h1>{t('ov.title')}</h1></div>
+        <div className="sec" style={{ marginTop: 20 }}>{t('common.loading')}</div>
       </div>
     )
   }
 
   const ix = d.index, m = d.models
   const total = Math.max(ix.indexed_files + ix.failed_files + ix.unindexed_files, 1)
-  const jobsFoot = Object.entries(d.jobs.by_status).map(([k, v]) => `${k} ${v}`).join(' · ') || 'queue idle'
+  const jobsFoot = Object.entries(d.jobs.by_status).map(([k, v]) => `${k} ${v}`).join(' · ') || t('ov.rb.queueIdle')
 
   const stageStat = {
     ingest: <><b>{fmtNum(d.files)}</b> file · {fmtBytes(d.total_size_bytes)}</>,
@@ -80,10 +83,10 @@ export default function OverviewPage() {
   }
 
   const ribbon = [
-    { k: 'Folders', v: fmtNum(d.folders), cls: 'cy', d: 'token-scoped', nav: '/folders' },
-    { k: 'Files', v: fmtNum(d.files), cls: '', d: fmtBytes(d.total_size_bytes) + ' indexed' },
-    { k: 'Chunks', v: fmtNum(ix.total_chunks), cls: 'am', d: 'vectors in store' },
-    { k: 'Active Jobs', v: fmtNum(d.jobs.active.length), cls: 'gr', d: jobsFoot, nav: '/jobs' },
+    { k: t('ov.rb.folders'), v: fmtNum(d.folders), cls: 'cy', d: t('ov.rb.tokenScoped'), nav: '/folders' },
+    { k: t('ov.rb.files'), v: fmtNum(d.files), cls: '', d: fmtBytes(d.total_size_bytes) + ' ' + t('ov.rb.indexed') },
+    { k: t('ov.rb.chunks'), v: fmtNum(ix.total_chunks), cls: 'am', d: t('ov.rb.vectorsInStore') },
+    { k: t('ov.rb.activeJobs'), v: fmtNum(d.jobs.active.length), cls: 'gr', d: jobsFoot, nav: '/jobs' },
   ]
 
   const asrState = !m.asr.enabled ? 'disabled' : (m.asr.available ? 'ready' : 'offline')
@@ -92,7 +95,7 @@ export default function OverviewPage() {
     <div id="view-overview">
       <div className="term-hero">
         <div className="term-cap">
-          <h1>Pipeline</h1>
+          <h1>{t('ov.title')}</h1>
           <div className="term-q">&#10095; hierarchical · auto-merge · hybrid retrieval<span className="cursor blink">&#9613;</span></div>
         </div>
         <div className="pipe">
@@ -119,43 +122,43 @@ export default function OverviewPage() {
 
       <div className="term-cols">
         <div className="term-col">
-          <div className="sec">Index Health <span className="r">coverage</span></div>
+          <div className="sec">{t('ov.indexHealth')} <span className="r">{t('ov.coverage')}</span></div>
           <div className="distbar">
             <div style={{ width: `${ix.indexed_files / total * 100}%`, background: 'var(--matrix)' }} />
             <div style={{ width: `${ix.failed_files / total * 100}%`, background: 'var(--alert)' }} />
             <div style={{ width: `${ix.unindexed_files / total * 100}%`, background: 'var(--ink-subtle)' }} />
           </div>
           <div className="dist-legend">
-            <span><i style={{ background: 'var(--matrix)' }} />Indexed {fmtNum(ix.indexed_files)}</span>
-            <span><i style={{ background: 'var(--alert)' }} />Failed {fmtNum(ix.failed_files)}</span>
-            <span><i style={{ background: 'var(--ink-subtle)' }} />Not indexed {fmtNum(ix.unindexed_files)}</span>
+            <span><i style={{ background: 'var(--matrix)' }} />{t('ov.legend.indexed')} {fmtNum(ix.indexed_files)}</span>
+            <span><i style={{ background: 'var(--alert)' }} />{t('ov.legend.failed')} {fmtNum(ix.failed_files)}</span>
+            <span><i style={{ background: 'var(--ink-subtle)' }} />{t('ov.legend.notIndexed')} {fmtNum(ix.unindexed_files)}</span>
           </div>
 
-          <div className="sec" style={{ marginTop: 24 }}>Retrieval Shape <span className="r">auto-merge · hybrid .75/.25</span></div>
+          <div className="sec" style={{ marginTop: 24 }}>{t('ov.retrievalShape')} <span className="r">auto-merge · hybrid .75/.25</span></div>
           <div className="term-tree">
-            <div className="n"><span className="p hit">parent · passage</span><small>auto-merged on hit</small></div>
-            <div className="n l"><span className="p hit">leaf</span><small>matched</small></div>
-            <div className="n l"><span className="p hit">leaf</span><small>matched</small></div>
-            <div className="n l"><span className="p">leaf</span><small>neighbor · expanded</small></div>
+            <div className="n"><span className="p hit">{t('ov.tree.parent')}</span><small>{t('ov.tree.autoMerged')}</small></div>
+            <div className="n l"><span className="p hit">{t('ov.tree.leaf')}</span><small>{t('ov.tree.matched')}</small></div>
+            <div className="n l"><span className="p hit">{t('ov.tree.leaf')}</span><small>{t('ov.tree.matched')}</small></div>
+            <div className="n l"><span className="p">{t('ov.tree.leaf')}</span><small>{t('ov.tree.neighbor')}</small></div>
           </div>
         </div>
 
         <div className="term-col">
-          <div className="sec">Services <span className="r">live health</span></div>
+          <div className="sec">{t('ov.services')} <span className="r">{t('ov.liveHealth')}</span></div>
           <div className="svc-grid">
-            <div className="svc"><div className="grow"><div className="name">Embedding</div><div className="val">{m.embedding.model || '—'} · {m.embedding.dimension || '?'}d</div></div><Pill state={health.embed || 'checking'} /></div>
-            <div className="svc"><div className="grow"><div className="name">LLM</div><div className="val">{m.llm.model || '—'}</div></div><Pill state={health.llm || 'checking'} /></div>
-            <div className="svc"><div className="grow"><div className="name">Reranker</div><div className="val">{m.rerank.enabled ? (m.rerank.model || '—') : 'Disabled'}</div></div><Pill state={m.rerank.enabled ? (health.rerank || 'checking') : 'disabled'} /></div>
-            <div className="svc"><div className="grow"><div className="name">Speech-to-Text</div><div className="val">{m.asr.provider || '—'}</div></div><Pill state={asrState} /></div>
+            <div className="svc"><div className="grow"><div className="name">{t('ov.svc.embedding')}</div><div className="val">{m.embedding.model || '—'} · {m.embedding.dimension || '?'}d</div></div><Pill state={health.embed || 'checking'} /></div>
+            <div className="svc"><div className="grow"><div className="name">{t('ov.svc.llm')}</div><div className="val">{m.llm.model || '—'}</div></div><Pill state={health.llm || 'checking'} /></div>
+            <div className="svc"><div className="grow"><div className="name">{t('ov.svc.reranker')}</div><div className="val">{m.rerank.enabled ? (m.rerank.model || '—') : t('ov.disabled')}</div></div><Pill state={m.rerank.enabled ? (health.rerank || 'checking') : 'disabled'} /></div>
+            <div className="svc"><div className="grow"><div className="name">{t('ov.svc.asr')}</div><div className="val">{m.asr.provider || '—'}</div></div><Pill state={asrState} /></div>
           </div>
 
-          <div className="sec" style={{ marginTop: 24 }}>Store <span className="r">agentic_rag</span></div>
+          <div className="sec" style={{ marginTop: 24 }}>{t('ov.store')} <span className="r">agentic_rag</span></div>
           <div className="svc-grid">
             {res ? (
               <>
-                <div className="svc"><div className="grow"><div className="name">Database</div><div className="val">{fmtBytes(res.db_size_bytes)}</div></div></div>
-                <div className="svc"><div className="grow"><div className="name">Vector storage · {res.vector_tables} table(s)</div><div className="val">{fmtBytes(res.vector_bytes)}</div></div></div>
-                <div className="svc"><div className="grow"><div className="name">Disk usage</div><div className="val">{fmtBytes(res.disk_used_bytes)} / {fmtBytes(res.disk_total_bytes)}</div></div></div>
+                <div className="svc"><div className="grow"><div className="name">{t('ov.svc.database')}</div><div className="val">{fmtBytes(res.db_size_bytes)}</div></div></div>
+                <div className="svc"><div className="grow"><div className="name">{t('ov.svc.vectorStorage')} · {res.vector_tables} table(s)</div><div className="val">{fmtBytes(res.vector_bytes)}</div></div></div>
+                <div className="svc"><div className="grow"><div className="name">{t('ov.svc.diskUsage')}</div><div className="val">{fmtBytes(res.disk_used_bytes)} / {fmtBytes(res.disk_total_bytes)}</div></div></div>
               </>
             ) : <div className="svc"><div className="grow"><div className="val">…</div></div></div>}
           </div>

@@ -6,11 +6,13 @@ import { fmtNum } from '../lib/format'
 import { META, FIELDS, PRESETS, sectionOf } from '../lib/settings-config'
 import { useModal } from '../contexts/ModalContext'
 import { useToast } from '../contexts/ToastContext'
+import { useI18n } from '../contexts/I18nContext'
 
 const ICON = { layers: Layers, spark: Sparkles, list: List, sort: ArrowDownUp, mic: Mic, sliders: SlidersHorizontal }
 const PARAM_TO_SEC = { embedding: 'rag.embedding', llm: 'rag.llm', contextual: 'rag.contextual_retrieval', reranker: 'rag.rerank', asr: 'rag.asr', retrieval: 'rag.retrieval' }
 
 function Field({ path, f, value, overridden, onChange }) {
+  const { t } = useI18n()
   const wide = f.type === 'textarea'
   const isBool = f.type === 'bool'
   const setV = (v) => onChange(path, v)
@@ -20,7 +22,7 @@ function Field({ path, f, value, overridden, onChange }) {
       <div className="f-head">
         <label>{f.label}</label>
         <div className="grow" />
-        {overridden && <span className="ovr" title="Differs from config.yaml">Overridden</span>}
+        {overridden && <span className="ovr" title={t('set.overriddenTip')}>{t('set.overridden')}</span>}
         {isBool && (
           <label className="toggle"><input type="checkbox" checked={!!value} onChange={(e) => setV(e.target.checked)} /><span /></label>
         )}
@@ -54,6 +56,7 @@ function Field({ path, f, value, overridden, onChange }) {
 export default function SettingsPage() {
   const { confirm } = useModal()
   const toast = useToast()
+  const { t } = useI18n()
   const [state, setState] = useState(null) // path -> {value, overridden}
   const [dirty, setDirty] = useState({})
   const [saving, setSaving] = useState('')
@@ -137,13 +140,13 @@ export default function SettingsPage() {
     <div id="view-settings">
       <p className="lede">Changes take effect <strong>immediately</strong> and persist across restarts. An <strong>Overridden</strong> badge means the value differs from config.yaml. Changes in the <span style={{ color: 'var(--signal-hi)' }}>amber section (Embedding)</span> require re-indexing existing folders.</p>
       <div className="preset-bar">
-        <span className="preset-label">Retrieval presets</span>
+        <span className="preset-label">{t('set.presets')}</span>
         {Object.entries(PRESETS).map(([k, p]) => (
           <button key={k} className="preset-btn" onClick={() => applyPreset(k)}><b>{p.label}</b><span>{p.sub}</span></button>
         ))}
       </div>
 
-      {state == null ? <div className="sec">loading…</div> : Object.entries(META).map(([sec, meta]) => {
+      {state == null ? <div className="sec">{t('common.loading')}</div> : Object.entries(META).map(([sec, meta]) => {
         const paths = Object.keys(FIELDS).filter((p) => sectionOf(p) === sec && p in state)
         if (!paths.length) return null
         const Icon = ICON[meta.icon] || SlidersHorizontal
@@ -163,8 +166,8 @@ export default function SettingsPage() {
               ))}
             </div>
             <div className="card-foot">
-              <button className="btn-cyber" disabled={!secDirty || saving === sec} onClick={() => saveSection(sec)}>{saving === sec ? 'Saving…' : 'Save Changes'}</button>
-              {meta.probe && <button className="btn-ghost" onClick={() => testConn(sec)}>Test Connection</button>}
+              <button className="btn-cyber" disabled={!secDirty || saving === sec} onClick={() => saveSection(sec)}>{saving === sec ? t('common.saving') : t('common.save')}</button>
+              {meta.probe && <button className="btn-ghost" onClick={() => testConn(sec)}>{t('set.testConn')}</button>}
               {pr && <span className={'probe-result ' + pr.cls}>{pr.text}</span>}
               <div className="grow" />
             </div>
