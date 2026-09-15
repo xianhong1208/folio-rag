@@ -5,10 +5,9 @@ tracked but not started. Items are grounded in the current codebase and its know
 
 ## 🔨 Now — short term
 
-- **Console i18n (English + 繁體中文).** *Shipped.* `I18nProvider` (browser-detected
-  default, `localStorage`-persisted, English fallback with `{var}` interpolation),
-  a sidebar language toggle, and every page translated. Technical settings field
-  labels/hints stay English by design (config-level terms).
+- **Console i18n.** *Dropped by decision* — the console stays English-only. (A
+  full English + 繁體中文 implementation with a sidebar toggle was built and then
+  removed; it lives in git history at `e4f0c8d` / `d7b50be` if ever wanted.)
 - **Rebuild-FTS action.** *Shipped.* One-click `POST …/rebuild-fts` re-segments
   stored chunks with CKIP and rewrites `text_search_tsv` in place (no
   re-embedding), backfilling Chinese BM25 recall for folders indexed before the
@@ -127,7 +126,6 @@ fragmented chunks and weak precision.
 - **Streaming RAG answers** over SSE in the Search Playground.
 - **Multi-modal retrieval v1**: Docling tables surfaced (badge + rendered HTML table).
 - **Evaluation depth**: LLM-graded answer quality + baseline history and trend.
-- **Console i18n** complete (English + 繁體中文) with a sidebar language toggle.
 - One-click **Rebuild-FTS** to backfill CKIP full-text search on existing folders.
 - **Frontend tests + CI** (Vitest + GitHub Actions) for the console SPA.
 - **React console is the front door** (root URL redirects to `/admin`); legacy
