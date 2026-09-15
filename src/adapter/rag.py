@@ -124,14 +124,21 @@ class RAGAdapter:
         chunk_size: Optional[int] = None,
         chunk_overlap: Optional[int] = None,
         folder_id_override: Optional[int] = None,
+        force: bool = False,
     ) -> IndexDocumentResponse:
-        """Delegates to RAGIndexingService — single-document indexing."""
+        """Delegates to RAGIndexingService — single-document indexing.
+
+        force=True bypasses the content_hash short-circuit (the console's per-file
+        Retry / bulk Reindex rely on it; without forwarding it here those calls
+        raised TypeError).
+        """
         return await self._indexing.index_document(
             file_record=file_record,
             token=token,
             chunk_size=chunk_size,
             chunk_overlap=chunk_overlap,
             folder_id_override=folder_id_override,
+            force=force,
         )
 
     async def index_folder(

@@ -11,7 +11,9 @@ tracked but not started. Items are grounded in the current codebase and its know
 - **Rebuild-FTS action.** *Shipped.* One-click `POST …/rebuild-fts` re-segments
   stored chunks with CKIP and rewrites `text_search_tsv` in place (no
   re-embedding), backfilling Chinese BM25 recall for folders indexed before the
-  CKIP upgrade.
+  CKIP upgrade. *Follow-up:* it runs synchronously, and a 5.6k-chunk folder took
+  ~10 min — past any sane HTTP timeout. Turn it into a background job with
+  progress, like indexing.
 - **Retire the legacy console.** *Partly shipped.* The root URL now redirects to
   the React console; the single-file `admin_console.html` is retired from the
   front door and kept only at `/admin-classic` as a temporary escape hatch. Hard

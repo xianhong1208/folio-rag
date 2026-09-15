@@ -245,6 +245,38 @@ def _append_history(slug: str, rep: dict) -> None:
         f.write(json.dumps(entry, ensure_ascii=False) + "\n")
 
 
+_STALE_REASON = ("stale eval set — none of its gold node_ids exist in the index "
+                 "(folder reindexed?); question set regenerated")
+
+
+def _existing_gold_ids(folder, items: list) -> set:
+    """The eval set's gold node_ids that still exist in the folder's vector table.
+
+    A reindex rewrites node_ids: a full reindex silently turns a cached eval set
+    into an all-zero run; a single-file reindex quietly drags scores down. Callers
+    drop stale items (recording how many) and regenerate only when none survive.
+    """
+    from sqlalchemy import text
+    from db.db import get_engine
+    from src.domain.rag.vector_store_manager import VectorStoreManager
+    ids = [it["gold_node_id"] for it in items if it.get("gold_node_id")]
+    if not ids:
+        return set()
+    table = VectorStoreManager.physical_table_name(folder.id, folder.vector_table_uuid)
+    with get_engine().connect() as c:
+        rows = c.execute(text(f'SELECT node_id FROM "{table}" WHERE node_id = ANY(:ids)'),
+                         {"ids": ids}).fetchall()
+    return {r[0] for r in rows}
+
+
+def _prune_stale(folder, items: list, alive: set):
+    """Return (items_kept, regen_reason, stale_dropped) for a loaded eval set."""
+    kept = [it for it in items if it.get("gold_node_id") in alive]
+    if not kept:
+        return None, _STALE_REASON, 0
+    return kept, None, len(items) - len(kept)
+
+
 async def evaluate(folder, items, k: int, progress=None, judge: bool = False) -> dict:
     """Run the multi-mode retrieval eval and return a report dict (no printing or file writing — left to the caller).
 
@@ -355,13 +387,23 @@ def run_eval(folder_name: str, n: int = 15, k: int = 10,
     folder = _resolve_folder(folder_name)
     slug = str(folder.name).replace("/", "_")
     eval_path = f"reports/eval_set_{slug}.jsonl"
-    if regenerate or not os.path.exists(eval_path):
-        items = generate_eval_set(folder, n, eval_path)
-    else:
+    items, regen_reason, stale_dropped = None, None, 0
+    if not regenerate and os.path.exists(eval_path):
         with open(eval_path, encoding="utf-8") as f:
             items = [json.loads(line) for line in f if line.strip()]
+        if items:
+            items, regen_reason, stale_dropped = _prune_stale(
+                folder, items, _existing_gold_ids(folder, items))
+            if regen_reason:
+                print(f"  ! {regen_reason}")
+            elif stale_dropped:
+                print(f"  ! dropped {stale_dropped} stale item(s) whose gold chunk no longer exists")
+    if items is None:
+        items = generate_eval_set(folder, n, eval_path)
     prev = _read_history(slug)
     rep = asyncio.run(evaluate(folder, items, k, progress=progress, judge=judge))
+    rep["regenerate_reason"] = regen_reason
+    rep["stale_dropped"] = stale_dropped
     import datetime
     rep["generated_at"] = datetime.datetime.now().isoformat(timespec="seconds")
     rep["previous"] = prev[-1] if prev else None
@@ -388,13 +430,19 @@ async def run_eval_async(folder_name: str, n: int = 15, k: int = 10,
     slug = str(folder.name).replace("/", "_")
     eval_path = f"reports/eval_set_{slug}.jsonl"
     loop = asyncio.get_event_loop()
-    if regenerate or not os.path.exists(eval_path):
-        items = await loop.run_in_executor(None, generate_eval_set, folder, n, eval_path)
-    else:
+    items, regen_reason, stale_dropped = None, None, 0
+    if not regenerate and os.path.exists(eval_path):
         with open(eval_path, encoding="utf-8") as f:
             items = [json.loads(line) for line in f if line.strip()]
+        if items:
+            alive = await loop.run_in_executor(None, _existing_gold_ids, folder, items)
+            items, regen_reason, stale_dropped = _prune_stale(folder, items, alive)
+    if items is None:
+        items = await loop.run_in_executor(None, generate_eval_set, folder, n, eval_path)
     prev = _read_history(slug)
     rep = await evaluate(folder, items, k, progress=progress, judge=judge)
+    rep["regenerate_reason"] = regen_reason
+    rep["stale_dropped"] = stale_dropped
     rep["generated_at"] = datetime.datetime.now().isoformat(timespec="seconds")
     rep["previous"] = prev[-1] if prev else None
     out_path = f"reports/rag_eval_{slug}.json"
