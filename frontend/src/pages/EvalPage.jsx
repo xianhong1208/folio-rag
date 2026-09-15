@@ -116,6 +116,12 @@ export default function EvalPage() {
             </label>
           </div>
           {status && <div className="sec" style={{ marginBottom: 12 }}>{status.error ? 'Error: ' + status.error : (status.message || `Evaluating… ${status.done || 0}/${status.total || '?'}`)}</div>}
+          {report?.regenerate_reason && (
+            <div className="sec" style={{ marginBottom: 12, color: 'var(--signal-hi)' }}>⚠ {report.regenerate_reason}</div>
+          )}
+          {report?.stale_dropped > 0 && (
+            <div className="sec" style={{ marginBottom: 12, color: 'var(--signal-hi)' }}>⚠ {report.stale_dropped} question(s) skipped — their source chunk no longer exists (file reindexed). Regenerate the set for a full run.</div>
+          )}
 
           {report && rows.length ? (
             <>
