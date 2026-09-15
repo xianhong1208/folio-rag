@@ -3,30 +3,33 @@ import { useState } from 'react'
 import {
   Home, Folder, Zap, Search, BarChart3, FlaskConical, Layers, Sparkles,
   ListTree, ArrowDownUp, Mic, SlidersHorizontal, Activity, ScrollText, Sun, Moon,
+  Languages,
 } from 'lucide-react'
+import { useI18n } from '../contexts/I18nContext'
 
+// `key` is an i18n key (nav.*); labels are resolved through t() at render time.
 const NAV = [
-  { group: 'Console', items: [
-    { to: '/', end: true, icon: Home, label: 'Overview' },
-    { to: '/folders', icon: Folder, label: 'Folders' },
-    { to: '/jobs', icon: Zap, label: 'Index Jobs' },
+  { group: 'nav.group.console', items: [
+    { to: '/', end: true, icon: Home, key: 'nav.overview' },
+    { to: '/folders', icon: Folder, key: 'nav.folders' },
+    { to: '/jobs', icon: Zap, key: 'nav.jobs' },
   ] },
-  { group: 'Search & Insights', items: [
-    { to: '/search', icon: Search, label: 'Search Playground' },
-    { to: '/analytics', icon: BarChart3, label: 'Query Analytics' },
-    { to: '/eval', icon: FlaskConical, label: 'Evaluation' },
+  { group: 'nav.group.search', items: [
+    { to: '/search', icon: Search, key: 'nav.search' },
+    { to: '/analytics', icon: BarChart3, key: 'nav.analytics' },
+    { to: '/eval', icon: FlaskConical, key: 'nav.eval' },
   ] },
-  { group: 'Settings', items: [
-    { to: '/settings/embedding', icon: Layers, label: 'Embedding' },
-    { to: '/settings/llm', icon: Sparkles, label: 'LLM' },
-    { to: '/settings/contextual', icon: ListTree, label: 'Contextual Retrieval' },
-    { to: '/settings/reranker', icon: ArrowDownUp, label: 'Reranker' },
-    { to: '/settings/asr', icon: Mic, label: 'Speech-to-Text' },
-    { to: '/settings/retrieval', icon: SlidersHorizontal, label: 'Retrieval' },
+  { group: 'nav.group.settings', items: [
+    { to: '/settings/embedding', icon: Layers, key: 'nav.embedding' },
+    { to: '/settings/llm', icon: Sparkles, key: 'nav.llm' },
+    { to: '/settings/contextual', icon: ListTree, key: 'nav.contextual' },
+    { to: '/settings/reranker', icon: ArrowDownUp, key: 'nav.reranker' },
+    { to: '/settings/asr', icon: Mic, key: 'nav.asr' },
+    { to: '/settings/retrieval', icon: SlidersHorizontal, key: 'nav.retrieval' },
   ] },
-  { group: 'System', items: [
-    { to: '/health', icon: Activity, label: 'System Health' },
-    { to: '/audit', icon: ScrollText, label: 'Audit Log' },
+  { group: 'nav.group.system', items: [
+    { to: '/health', icon: Activity, key: 'nav.health' },
+    { to: '/audit', icon: ScrollText, key: 'nav.audit' },
   ] },
 ]
 
@@ -34,11 +37,12 @@ const ALL = NAV.flatMap((g) => g.items)
 
 export default function Layout() {
   const loc = useLocation()
+  const { t, lang, setLang } = useI18n()
   const [theme, setTheme] = useState(document.documentElement.className || 'dark')
 
   const active = [...ALL].sort((a, b) => b.to.length - a.to.length)
     .find((i) => (i.end ? loc.pathname === '/' : loc.pathname.startsWith(i.to)))
-  const title = active ? active.label : 'Overview'
+  const title = t(active ? active.key : 'nav.overview')
 
   const toggleTheme = () => {
     const next = theme === 'dark' ? 'light' : 'dark'
@@ -46,18 +50,19 @@ export default function Layout() {
     try { localStorage.setItem('agentic_theme', next) } catch { /* ignore */ }
     setTheme(next)
   }
+  const toggleLang = () => setLang(lang === 'en' ? 'zh-TW' : 'en')
 
   return (
     <>
       <aside>
         <div className="brand">
           <div className="logo">Agentic RAG</div>
-          <div className="sub">Retrieval Terminal</div>
+          <div className="sub">{t('brand.sub')}</div>
         </div>
         <nav>
           {NAV.map((g) => (
             <div key={g.group}>
-              <div className="nav-group">{g.group}</div>
+              <div className="nav-group">{t(g.group)}</div>
               {g.items.map((it) => {
                 const Icon = it.icon
                 return (
@@ -68,7 +73,7 @@ export default function Layout() {
                     className={({ isActive }) => 'nav-item' + (isActive ? ' active' : '')}
                   >
                     <Icon strokeWidth={1.7} />
-                    {it.label}
+                    {t(it.key)}
                   </NavLink>
                 )
               })}
@@ -76,11 +81,17 @@ export default function Layout() {
           ))}
         </nav>
         <div className="side-foot">
-          <div className="side-ver">Agentic RAG v1.0.0</div>
-          <button className="theme-btn" onClick={toggleTheme}>
-            {theme === 'dark' ? <Sun size={14} /> : <Moon size={14} />}
-            {theme === 'dark' ? 'Light' : 'Dark'}
-          </button>
+          <div className="side-ver">{t('side.version')}</div>
+          <div className="side-foot-btns">
+            <button className="theme-btn" onClick={toggleLang} title={t('lang.label')}>
+              <Languages size={14} />
+              {lang === 'en' ? '中文' : 'EN'}
+            </button>
+            <button className="theme-btn" onClick={toggleTheme}>
+              {theme === 'dark' ? <Sun size={14} /> : <Moon size={14} />}
+              {theme === 'dark' ? t('theme.light') : t('theme.dark')}
+            </button>
+          </div>
         </div>
       </aside>
 
@@ -88,7 +99,7 @@ export default function Layout() {
         <header className="top">
           <div className="title">{title}</div>
           <div className="grow" />
-          <div className="statusline"><span className="dot ok" /> Connected</div>
+          <div className="statusline"><span className="dot ok" /> {t('top.connected')}</div>
         </header>
         <div className="content">
           <Outlet />

@@ -5,6 +5,7 @@ import { fmtNum, fmtBytes, fmtTime, shortModel } from '../lib/format'
 import EmptyState from '../components/ui/EmptyState'
 import { useModal } from '../contexts/ModalContext'
 import { useToast } from '../contexts/ToastContext'
+import { useI18n } from '../contexts/I18nContext'
 
 function statusPill(s) {
   const map = { indexed: 'ok', failed: 'bad', running: 'run', pending: 'warn', queued: 'warn', unindexed: 'mute' }
@@ -15,6 +16,7 @@ function statusPill(s) {
 export default function FoldersPage() {
   const { confirm, form } = useModal()
   const toast = useToast()
+  const { t } = useI18n()
   const [folders, setFolders] = useState(null)
   const [q, setQ] = useState('')
   const [cur, setCur] = useState(null) // {id,name} when viewing files
@@ -156,34 +158,34 @@ export default function FoldersPage() {
     const mdl = models.length === 1 ? shortModel(models[0]) : (models.length > 1 ? models.length + ' models' : '—')
     return (
       <div id="folder-files">
-        <div className="crumbs"><a onClick={back} style={{ cursor: 'pointer' }}>Folders</a><span className="sep">/</span><span>{cur.name}</span></div>
+        <div className="crumbs"><a onClick={back} style={{ cursor: 'pointer' }}>{t('folders.crumb')}</a><span className="sep">/</span><span>{cur.name}</span></div>
         <div className="ff-head">
           <div className="ff-title-wrap"><h2>{cur.name}</h2>
-            <div className="desc">{list.length} file(s) · {failed ? failed + ' failed' : 'all healthy'}{models.length === 1 ? ' · ' + models[0] : ''}</div>
+            <div className="desc">{t('folders.stat.files')}: {list.length} · {failed ? t('folders.failedN', { n: failed }) : t('folders.allHealthy')}{models.length === 1 ? ' · ' + models[0] : ''}</div>
           </div>
           <div className="ff-actions">
-            <div className="search-box"><input placeholder="Search files…" value={fq} onChange={(e) => setFq(e.target.value)} /></div>
-            <button className="btn-ghost" onClick={rebuildFts} disabled={rebuilding} title="Re-segment chunks with CKIP and rebuild the keyword search vector (no re-embedding)">
-              <RefreshCw size={13} style={{ marginRight: 6, verticalAlign: '-2px', animation: rebuilding ? 'spin 1s linear infinite' : 'none' }} />{rebuilding ? 'Rebuilding…' : 'Rebuild FTS'}
+            <div className="search-box"><input placeholder={t('folders.searchFiles')} value={fq} onChange={(e) => setFq(e.target.value)} /></div>
+            <button className="btn-ghost" onClick={rebuildFts} disabled={rebuilding} title={t('folders.rebuildFts.title')}>
+              <RefreshCw size={13} style={{ marginRight: 6, verticalAlign: '-2px', animation: rebuilding ? 'spin 1s linear infinite' : 'none' }} />{rebuilding ? t('common.rebuilding') : t('folders.rebuildFts')}
             </button>
-            <button className="btn-ghost" onClick={() => reindexFolder(cur.id, false)}>Reindex Folder</button>
-            <button className="btn-cyber" onClick={() => fileInput.current?.click()}>Upload Files</button>
+            <button className="btn-ghost" onClick={() => reindexFolder(cur.id, false)}>{t('folders.reindex')}</button>
+            <button className="btn-cyber" onClick={() => fileInput.current?.click()}>{t('folders.upload')}</button>
             <input type="file" ref={fileInput} multiple hidden onChange={upload} />
           </div>
         </div>
         <div className="ff-stats">
-          <div className="s"><div className="k">Files</div><div className="v">{fmtNum(list.length)}</div><div className="d">{failed ? failed + ' failed' : 'all healthy'}</div></div>
-          <div className="s"><div className="k">Chunks</div><div className="v" style={{ color: 'var(--signal)' }}>{fmtNum(totalChunks)}</div><div className="d">vectors indexed</div></div>
-          <div className="s"><div className="k">Coverage</div><div className="v" style={{ color: 'var(--matrix)' }}>{pct}<small>%</small></div><div className="d">{indexed}/{list.length} indexed</div></div>
-          <div className="s"><div className="k">Embedding</div><div className="v mdl" style={{ color: 'var(--cyber)' }}>{mdl}</div><div className="d">{models.length > 1 ? 'rebuild recommended' : 'e5 · 1024d'}</div></div>
+          <div className="s"><div className="k">{t('folders.stat.files')}</div><div className="v">{fmtNum(list.length)}</div><div className="d">{failed ? t('folders.failedN', { n: failed }) : t('folders.allHealthy')}</div></div>
+          <div className="s"><div className="k">{t('folders.stat.chunks')}</div><div className="v" style={{ color: 'var(--signal)' }}>{fmtNum(totalChunks)}</div><div className="d">{t('folders.vectorsIndexed')}</div></div>
+          <div className="s"><div className="k">{t('folders.stat.coverage')}</div><div className="v" style={{ color: 'var(--matrix)' }}>{pct}<small>%</small></div><div className="d">{t('folders.nIndexed', { a: indexed, b: list.length })}</div></div>
+          <div className="s"><div className="k">{t('folders.stat.embedding')}</div><div className="v mdl" style={{ color: 'var(--cyber)' }}>{mdl}</div><div className="d">{models.length > 1 ? t('folders.rebuildRecommended') : 'e5 · 1024d'}</div></div>
         </div>
         {sel.size > 0 && (
           <div className="bulkbar">
-            <span>{sel.size} selected</span>
+            <span>{t('folders.selected', { n: sel.size })}</span>
             <div className="grow" />
-            <button className="btn-ghost" onClick={bulkReindex}>Reindex selected</button>
-            <button className="btn-danger" style={{ padding: '7px 14px' }} onClick={bulkDelete}>Delete selected</button>
-            <button className="act-btn" title="Clear selection" onClick={() => setSel(new Set())}><X size={14} /></button>
+            <button className="btn-ghost" onClick={bulkReindex}>{t('folders.reindexSelected')}</button>
+            <button className="btn-danger" style={{ padding: '7px 14px' }} onClick={bulkDelete}>{t('folders.deleteSelected')}</button>
+            <button className="act-btn" title={t('folders.clearSel')} onClick={() => setSel(new Set())}><X size={14} /></button>
           </div>
         )}
         <div className="tablewrap ff-grid">
@@ -192,11 +194,11 @@ export default function FoldersPage() {
               <th className="selcol"><input type="checkbox" className="selcheck"
                 checked={shown.length > 0 && shown.every((f) => sel.has(f.id))}
                 onChange={(e) => setSel(e.target.checked ? new Set(shown.map((f) => f.id)) : new Set())} /></th>
-              <th>File</th><th>Status</th><th>Chunks</th><th>Size</th><th>Indexed At</th><th>Actions</th>
+              <th>{t('folders.col.file')}</th><th>{t('folders.col.status')}</th><th>{t('folders.col.chunks')}</th><th>{t('folders.col.size')}</th><th>{t('folders.col.indexedAt')}</th><th>{t('folders.col.actions')}</th>
             </tr></thead>
             <tbody>
-              {files == null ? <tr><td className="empty" colSpan={7}>loading…</td></tr>
-                : shown.length === 0 ? <tr><td className="empty" colSpan={7}>No files</td></tr>
+              {files == null ? <tr><td className="empty" colSpan={7}>{t('common.loading')}</td></tr>
+                : shown.length === 0 ? <tr><td className="empty" colSpan={7}>{t('folders.noFiles')}</td></tr>
                   : shown.map((f) => (
                     <tr key={f.id} title={f.error || f.embedding_model || ''}>
                       <td className="selcol"><input type="checkbox" className="selcheck" checked={sel.has(f.id)} onChange={() => toggleSel(f.id)} /></td>
@@ -206,9 +208,9 @@ export default function FoldersPage() {
                       <td className="num">{fmtBytes(f.size_bytes)}</td>
                       <td className="num">{fmtTime(f.indexed_at)}</td>
                       <td><div className="actions">
-                        {f.status === 'indexed' && <button className="act-btn" title="View chunks" onClick={() => viewChunks(f)}><Eye size={14} /></button>}
-                        <button className="act-btn" title="Download" onClick={() => window.open(`/api/admin/manage/folders/${cur.id}/files/${f.id}/download`, '_blank')}><Download size={14} /></button>
-                        <button className="act-btn danger" title="Delete file" onClick={() => deleteFile(f.id)}><Trash2 size={14} /></button>
+                        {f.status === 'indexed' && <button className="act-btn" title={t('folders.action.viewChunks')} onClick={() => viewChunks(f)}><Eye size={14} /></button>}
+                        <button className="act-btn" title={t('folders.action.download')} onClick={() => window.open(`/api/admin/manage/folders/${cur.id}/files/${f.id}/download`, '_blank')}><Download size={14} /></button>
+                        <button className="act-btn danger" title={t('folders.action.deleteFile')} onClick={() => deleteFile(f.id)}><Trash2 size={14} /></button>
                       </div></td>
                     </tr>
                   ))}
@@ -219,13 +221,13 @@ export default function FoldersPage() {
         {chunks && (
           <div className="modal-scrim" onMouseDown={(e) => { if (e.target === e.currentTarget) setChunks(null) }}>
             <div className="modal wide" role="dialog">
-              <h3 style={{ display: 'flex', alignItems: 'center', gap: 10 }}>Chunks · {chunks.name}
+              <h3 style={{ display: 'flex', alignItems: 'center', gap: 10 }}>{t('folders.chunksTitle', { name: chunks.name })}
                 <button className="act-btn" style={{ marginLeft: 'auto' }} onClick={() => setChunks(null)}><X size={14} /></button>
               </h3>
               <div className="m-body">
-                {chunks.items == null ? <div className="sec">loading…</div>
-                  : chunks.err ? <EmptyState t="Failed to load" d={chunks.err} />
-                    : chunks.items.length === 0 ? <EmptyState t="No chunks" d="This file has no indexed chunks" />
+                {chunks.items == null ? <div className="sec">{t('common.loading')}</div>
+                  : chunks.err ? <EmptyState t={t('folders.chunks.failTitle')} d={chunks.err} />
+                    : chunks.items.length === 0 ? <EmptyState t={t('folders.chunks.noneTitle')} d={t('folders.chunks.noneDesc')} />
                       : chunks.items.map((c, i) => (
                         <div className="chunk-row" key={i}>
                           <div className="c-head">
@@ -237,7 +239,7 @@ export default function FoldersPage() {
                         </div>
                       ))}
               </div>
-              <div className="m-foot"><button className="btn-ghost" onClick={() => setChunks(null)}>Close</button></div>
+              <div className="m-foot"><button className="btn-ghost" onClick={() => setChunks(null)}>{t('common.close')}</button></div>
             </div>
           </div>
         )}
@@ -252,17 +254,17 @@ export default function FoldersPage() {
       <div className="card">
         <div className="card-head">
           <div className="icon"><Folder size={16} /></div>
-          <div><h2>Folders</h2><div className="desc">Files and index status per folder — click a row for details</div></div>
+          <div><h2>{t('folders.title')}</h2><div className="desc">{t('folders.desc')}</div></div>
           <div className="grow" />
-          <div className="search-box"><input placeholder="Search folders…" value={q} onChange={(e) => setQ(e.target.value)} /></div>
-          <button className="btn-cyber" onClick={createFolder}>+ New Folder</button>
+          <div className="search-box"><input placeholder={t('folders.searchFolders')} value={q} onChange={(e) => setQ(e.target.value)} /></div>
+          <button className="btn-cyber" onClick={createFolder}>{t('folders.new')}</button>
         </div>
         <div className="tablewrap">
           <table>
-            <thead><tr><th>Name</th><th>Files</th><th>Size</th><th>Indexed</th><th>Chunks</th><th>Last Indexed</th><th>Actions</th></tr></thead>
+            <thead><tr><th>{t('folders.col.name')}</th><th>{t('folders.col.files')}</th><th>{t('folders.col.size')}</th><th>{t('folders.col.indexed')}</th><th>{t('folders.col.chunks')}</th><th>{t('folders.col.lastIndexed')}</th><th>{t('folders.col.actions')}</th></tr></thead>
             <tbody>
-              {folders == null ? <tr><td className="empty" colSpan={7}>loading…</td></tr>
-                : shown.length === 0 ? <tr><td colSpan={7}><EmptyState t="No folders yet" d="Create one with “+ New Folder”" /></td></tr>
+              {folders == null ? <tr><td className="empty" colSpan={7}>{t('common.loading')}</td></tr>
+                : shown.length === 0 ? <tr><td colSpan={7}><EmptyState t={t('folders.empty.title')} d={t('folders.empty.desc')} /></td></tr>
                   : shown.map((f) => (
                     <tr key={f.id} className="rowlink" onClick={() => openFolder(f)}>
                       <td className="cell-main name-cell">{f.name}<div className="sub">{f.description || ''}</div></td>
@@ -272,9 +274,9 @@ export default function FoldersPage() {
                       <td className="num">{fmtNum(f.chunks)}</td>
                       <td className="num">{fmtTime(f.last_indexed_at)}</td>
                       <td onClick={(e) => e.stopPropagation()}><div className="actions">
-                        <button className="act-btn" title="Start indexing" onClick={() => reindexFolder(f.id, true)}><Play size={14} /></button>
-                        <button className="act-btn" title="Rename" onClick={() => editFolder(f)}><Pencil size={14} /></button>
-                        <button className="act-btn danger" title="Delete folder" onClick={() => deleteFolder(f)}><Trash2 size={14} /></button>
+                        <button className="act-btn" title={t('folders.action.index')} onClick={() => reindexFolder(f.id, true)}><Play size={14} /></button>
+                        <button className="act-btn" title={t('folders.action.rename')} onClick={() => editFolder(f)}><Pencil size={14} /></button>
+                        <button className="act-btn danger" title={t('folders.action.deleteFolder')} onClick={() => deleteFolder(f)}><Trash2 size={14} /></button>
                       </div></td>
                     </tr>
                   ))}
