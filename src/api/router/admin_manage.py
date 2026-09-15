@@ -39,12 +39,47 @@ def _normalize_owner_key(owner_token: str) -> str:
         claims = jwt.decode(
             owner_token, options={"verify_signature": False, "verify_aud": False}
         )
-        jti = claims.get("jti")
-        if jti:
-            return str(jti)
     except Exception:
-        pass
-    return owner_token
+        return owner_token  # not a JWT: an already-final owner key
+    _reject_foreign_token(claims)
+    jti = claims.get("jti")
+    return str(jti) if jti else owner_token
+
+
+def _reject_foreign_token(claims: dict) -> None:
+    """422 when a JWT was issued for another service (issuer/audience) or has expired.
+
+    The console is an operator tool and deliberately never verifies signatures — it
+    only needs the token's ``jti`` as the ownership key. But a folder bound to a
+    token this server's auth will never accept (e.g. an AnyDoc PAT from the same
+    MCP Center: right issuer, wrong audience) is unreachable through REST/MCP by
+    design, so refuse it up front with the reason instead of creating an orphan.
+    No-op when auth is disabled (nothing to compare against).
+    """
+    import time
+    from src.auth.mcp_center_auth import settings_from_config
+    from src.config.config_manager import Config
+    try:
+        settings = settings_from_config(Config.get_config_model())
+    except Exception:
+        settings = None
+    if settings is None:
+        return
+    iss = str(claims.get("iss") or "").rstrip("/")
+    if iss and iss != settings.issuer:
+        raise HTTPException(
+            422, f"Token was issued by {iss}, not by this server's issuer "
+                 f"({settings.issuer}).")
+    aud = claims.get("aud")
+    auds = list(aud) if isinstance(aud, (list, tuple)) else ([aud] if aud else [])
+    if auds and settings.audience not in auds:
+        raise HTTPException(
+            422, f"Token audience {auds} is not this server ({settings.audience}) — "
+                 "this looks like a token for another service (e.g. AnyDoc). "
+                 "Use a token issued for Agentic RAG.")
+    exp = claims.get("exp")
+    if exp and float(exp) < time.time():
+        raise HTTPException(422, "Token has expired.")
 
 
 def _owner(folder_id: int):

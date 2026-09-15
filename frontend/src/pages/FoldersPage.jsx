@@ -138,11 +138,32 @@ export default function FoldersPage() {
     catch (e) { toast('Delete failed: ' + e.message, 'bad') }
   }
   const upload = async (e) => {
-    const list = e.target.files; if (!list?.length) return
-    const fd = new FormData(); for (const f of list) fd.append('files', f)
-    try { await fetch(`/api/admin/manage/folders/${cur.id}/files`, { method: 'POST', body: fd }); toast(`Uploading ${list.length} file(s)`, 'ok'); loadFiles(cur.id) }
-    catch (err) { toast('Upload failed: ' + err.message, 'bad') }
+    const list = [...(e.target.files || [])]
     e.target.value = ''
+    if (!list.length) return
+    // The endpoint takes ONE file per request in field `file` (it used to be posted
+    // as `files`, which the API rejected with 422 — and the result was never checked,
+    // so uploads silently did nothing). Post sequentially so each failure is named.
+    let ok = 0
+    for (const f of list) {
+      const fd = new FormData()
+      fd.append('file', f)
+      fd.append('auto_index', 'true')
+      try {
+        const res = await fetch(`/api/admin/manage/folders/${cur.id}/files`, { method: 'POST', body: fd })
+        if (!res.ok) {
+          let msg = `HTTP ${res.status}`
+          try {
+            const d = await res.json()
+            msg = d.detail?.error || d.detail?.[0]?.msg || (typeof d.detail === 'string' ? d.detail : null) || d.message || msg
+          } catch { /* non-JSON */ }
+          throw new Error(msg)
+        }
+        ok++
+      } catch (err) { toast(`Upload failed: ${f.name} — ${err.message}`, 'bad') }
+    }
+    if (ok) toast(`Uploaded ${ok} file(s) — indexing`, 'ok')
+    loadFiles(cur.id)
   }
 
   // ---- files detail view ----
