@@ -5,11 +5,10 @@ tracked but not started. Items are grounded in the current codebase and its know
 
 ## 🔨 Now — short term
 
-- **Console i18n (English + 繁體中文).** *In progress.* Foundation shipped — an
-  `I18nProvider` (browser-detected default, `localStorage`-persisted, English
-  fallback with `{var}` interpolation), a sidebar language toggle, and full
-  translation of the shell and the Folders page as the reference implementation.
-  Remaining: translate the other eight pages (mechanical — reuse the same keys).
+- **Console i18n (English + 繁體中文).** *Shipped.* `I18nProvider` (browser-detected
+  default, `localStorage`-persisted, English fallback with `{var}` interpolation),
+  a sidebar language toggle, and every page translated. Technical settings field
+  labels/hints stay English by design (config-level terms).
 - **Rebuild-FTS action.** *Shipped.* One-click `POST …/rebuild-fts` re-segments
   stored chunks with CKIP and rewrites `text_search_tsv` in place (no
   re-embedding), backfilling Chinese BM25 recall for folders indexed before the
@@ -24,10 +23,10 @@ tracked but not started. Items are grounded in the current codebase and its know
 
 ## 🚀 Next — mid term
 
-- **Streaming answers.** SSE token streaming for the Search Playground `answer`
-  path and the MCP answer flow, so long generations render progressively instead
-  of blocking until the final token. Retrieval + CRAG grading stay non-stream;
-  only the final generation streams.
+- **Streaming answers.** *Shipped.* SSE token streaming for the Search Playground
+  `answer` path — retrieval + CRAG grading stay non-stream; only the final
+  generation streams (blocking OpenAI stream bridged to the loop via a threadpool
+  producer + asyncio queue).
 - **Instant revocation.** *Deferred by decision* — revisit when needed. A revoked
   token should stop working immediately, not at expiry. Two candidate mechanisms:
   - *jti deny-list* (self-contained): a console-managed revocation list checked on
@@ -38,12 +37,14 @@ tracked but not started. Items are grounded in the current codebase and its know
     Center to expose an introspection endpoint.
   Whichever is chosen must cover **both** verify paths — the REST / tool-filter
   `McpCenterTokenVerifier` and the FastMCP `/mcp` transport verifier.
-- **Multi-modal retrieval.** Docling already parses tables and images at index
-  time; surface them in retrieval results and in the returned context (not just
-  text chunks), with a way to preview a table/figure from a result card.
-- **Evaluation depth.** Beyond Recall@k · MRR · nDCG@k, add an answer-quality
-  score (LLM-graded faithfulness / relevance against the retrieved context) and
-  persist run baselines so tuning changes are comparable over time.
+- **Multi-modal retrieval.** *Shipped (v1 — tables).* A `content_type` signal is
+  detected at index time and threaded through to the UI, which badges table chunks
+  and renders their Markdown as real HTML tables. Remaining: extract picture items
+  to disk and show figure thumbnails (currently flagged but not extracted).
+- **Evaluation depth.** *Shipped.* Opt-in answer-quality scoring (LLM-graded
+  faithfulness + relevance over the best retrieval mode) plus per-run baseline
+  history (`rag_eval_history_<slug>.jsonl`), a vs-previous nDCG delta, and a
+  baseline trend chart in the console.
 
 ## 🔭 Later — watching / larger efforts
 
@@ -123,6 +124,10 @@ fragmented chunks and weak precision.
 
 ## ✅ Recently shipped
 
+- **Streaming RAG answers** over SSE in the Search Playground.
+- **Multi-modal retrieval v1**: Docling tables surfaced (badge + rendered HTML table).
+- **Evaluation depth**: LLM-graded answer quality + baseline history and trend.
+- **Console i18n** complete (English + 繁體中文) with a sidebar language toggle.
 - One-click **Rebuild-FTS** to backfill CKIP full-text search on existing folders.
 - **Frontend tests + CI** (Vitest + GitHub Actions) for the console SPA.
 - **React console is the front door** (root URL redirects to `/admin`); legacy
