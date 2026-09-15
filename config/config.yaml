@@ -1,0 +1,254 @@
+database:
+  # DATABASE_URL overrides this; the default is used when it is not set (mirrors MCP Center).
+  url: "${DATABASE_URL:-postgresql://postgres:CHANGE_ME@localhost/agentic_rag}"
+  port: 5444
+  echo: false
+  pool_size: 5
+  max_overflow: 10
+  pool_timeout: 30
+  pool_recycle: 3600
+
+# Server Configuration
+server:
+  host: "0.0.0.0"
+  port: 5039
+  transport: "http"
+
+# Authentication — verify MCP Center OAuth 2.1 access tokens (offline RS256 JWKS)
+auth:
+  enabled: true
+  issuer: "http://localhost:4568"          # MCP Center base URL (RS256 JWKS issuer)
+  audience: "http://127.0.0.1:5039/mcp"     # must equal the token aud (how MCP Center registered this server)
+  required_scopes: []                        # scopes every token must carry (empty = none)
+  cache_ttl: 60                              # JWKS cache TTL (seconds)
+  dynamic_tools:
+    enabled: true # dynamic per-folder tool registration
+
+# Logging
+logging:
+  level: "DEBUG"
+  format: "colorized"
+  file: "logs/app.log"
+  max_size: "10MB"
+  backup_count: 3
+
+# Application
+app:
+  name: "Agentic RAG"
+  title: "Agentic RAG MCP Server"
+  description: "Agentic RAG — Hierarchical chunking + AutoMerging retrieval for LLM agents"
+  tool_prefix: "Agentic"
+
+# ===========================================================================
+# RAG — three sections: (1) model services (2) document processing (3) query behavior
+# ===========================================================================
+rag:
+
+  # ╔═════════════════════════════════════════════════════════════════════╗
+  # ║ (1) Model services — three local vLLM endpoints (infrastructure layer) ║
+  # ╚═════════════════════════════════════════════════════════════════════╝
+
+  # Embedding — turns documents/queries into vectors
+  # ⚠️ Changing the model requires a full reindex (incompatible vector spaces)
+  # To revert to bge-m3: set model to "BAAI/bge-m3", base_url to :5043, and remove both prefixes
+  embedding:
+    provider: "vllm"                            # openai / azure / vllm / ollama / huggingface
+    model: "intfloat/multilingual-e5-large"
+    dimension: 1024
+    base_url: "http://localhost:7075/v1"
+    api_key: "not-needed"
+    # e5 requires these prefixes; remove them for the bge family
+    query_prefix: "query: "
+    passage_prefix: "passage: "
+
+  # LLM — generates a context prefix for each chunk at index time (used by Contextual Retrieval)
+  llm:
+    provider: "vllm"
+    model: "openai/gpt-oss-120b"
+    base_url: "http://localhost:5052/v1"
+    api_key: "not-needed"
+
+  # Reranker — cross-encoder that reorders retrieval results
+  # ⚠️ model name must match `vllm serve`, or /v1/score returns 404 → silent fallback to the original order
+  # To revert to bge-reranker-v2-m3: set model back and remove the two template fields
+  rerank:
+    enabled: true
+    model: "mixedbread-ai/mxbai-rerank-base-v2"
+    base_url: "http://localhost:8787"
+    api_key: "not-needed"
+    top_n: null                                 # null = determined by top_k
+    score_threshold: 0.25                       # rerank score floor: results often all filtered out → lower it; too much noise → raise it
+    # mxbai's official template ({text} placeholder); without it, scores all cluster high and the threshold becomes ineffective
+    query_template: "query: {text}"
+    document_template: "document: {text}\nYou are a search relevance expert who evaluates how well documents match search queries. For each query-document pair, carefully analyze the semantic relationship between them, then provide your binary relevance judgment (0 for not relevant, 1 for relevant).\nRelevance:"
+
+  # ╔═════════════════════════════════════════════════════════════════════╗
+  # ║ (2) Document processing — index-time behavior (Docling parse + chunking + context enrichment) ║
+  # ╚═════════════════════════════════════════════════════════════════════╝
+
+  # Docling — structured PDF/DOCX parsing
+  docling:
+    device: "cuda"                            # cpu / cuda / cuda:0 / cuda:4
+    ocr_enabled: true
+    ocr_model_scale: "medium"                 # PP-OCRv6 tiny/small/medium; medium has the best accuracy (torch backend, weights under assets/.../RapidOcr/torch/)
+    hf_offline: true                            # offline deployment: force use of the models under assets/
+    compile_models: false
+
+  # Audio transcription (ASR) source. Minimal field set: trimming/hallucination
+  # filtering are always on in code; FireRedASR-specific fields will be added later.
+  asr:
+    enabled: true                               # false = do not transcribe audio (even if the model is present)
+    provider: "fireredasr"                      # docling-whisper | openai-compatible | fireredasr
+    # Cloud (openai-compatible) only — compatible with OpenAI / Groq / self-hosted vLLM whisper:
+    base_url: null                              # e.g. http://localhost:8000/v1
+    api_key: null
+    model: null                                 # cloud model name, e.g. whisper-1
+
+  # Indexing background-job behavior (auto-indexing of uploaded files goes through here)
+  indexing:
+    # Max concurrent jobs (100 ≈ unlimited); lower it only on GPU OOM / OCR thrash (typically 4-8)
+    # env RAG_INDEXING_CONCURRENCY can override this at runtime
+    max_concurrent_jobs: 100
+    # Per-file / per-job indexing limit defaults to 10 days (see IndexingConfig in
+    # src/config/model.py) — for large-file OCR on slow machines. Change the default
+    # in model.py; do not override it here. For temporary tweaks use the env vars:
+    # RAG_PER_FILE_TIMEOUT_SECONDS / RAG_JOB_TIMEOUT_SECONDS
+
+  # Hierarchical Chunking — leaves are split by Docling, parents are composed afterward
+  chunking:
+    # [parent_target_tokens, leaf_chunk_size]: larger parent → fuller context but higher return cost; smaller leaf → more precise but fragmented
+    # ⚠️ changing leaf size requires a reindex to take effect
+    hierarchy_sizes: [2048, 256]
+    chunk_overlap: 50                           # overlap between adjacent leaves: answers often get cut off at boundaries → raise it (keep it under 1/4 of the leaf)
+    max_chunk_size: 2000
+
+  # Contextual Retrieval — prepend an LLM-generated context prefix to each leaf (uses the LLM from section (1))
+  # Disabling (enabled: false) greatly speeds up indexing but degrades needle-in-a-haystack retrieval quality
+  contextual_retrieval:
+    enabled: true
+    apply_to: "leaf"                            # leaf / parent / all
+    max_context_length: 150                     # max prefix length (chars): too long dilutes the chunk body's vector
+    max_concurrent: 20                          # concurrent LLM requests: lower it if the vLLM backend overloads / returns 429
+    # Max full-text fed to the LLM (chars): the document + template + chunk must fit the LLM context; recompute when switching models
+    # (60000 chars ≈ 72K tokens, safe for gpt-oss @100K context)
+    max_doc_chars: 60000
+    # ⚠️ a reasoning model's thinking counts against the completion budget: too small and content comes back empty → prefix falls back
+    max_tokens: 2048
+    reasoning_effort: "low"                     # gpt-oss supports low/medium/high; low is enough for prefix generation
+
+  # ╔═════════════════════════════════════════════════════════════════════╗
+  # ║ (3) Query behavior — retrieval strategy (Hybrid + Auto-Merging + Context Expansion) ║
+  # ╚═════════════════════════════════════════════════════════════════════╝
+
+  # Vector Store — PGVector table configuration
+  vector_store:
+    type: "pgvector"
+    table_prefix: "vector_store"
+
+  # Hybrid retrieval + auto-merging + context expansion
+  # All of the following are defaults; each query request can override them
+  retrieval:
+    # Hybrid search
+    default_top_k: 10                           # number of chunks returned: incomplete answers → raise it; too much noise → lower it
+    default_similarity_cutoff: 0.25             # vector similarity floor: raise it to filter weak matches, too high returns nothing
+    default_sparse_top_k: 12                    # number of BM25-side candidates: proper nouns / IDs not found → raise it
+    default_hybrid_alpha: 0.75                  # 0=pure BM25, 1=pure vector: lower it for term/code-heavy queries
+    hybrid_search: true
+    text_search_config: "simple"                # Postgres FTS config; Chinese is segmented in Python via CKIP (ckip-transformers), then tokenized here with `simple`
+
+    # Auto-Merging — automatically promote when multiple hit leaves share one parent
+    auto_merging:
+      enabled: true
+      merge_threshold: 0.4                      # leaf-hit ratio threshold within a parent: lower promotes more easily (richer context); higher is conservative (more precise)
+
+    # Context Expansion — automatically expand neighbors for leaves that were not merged
+    expand_context_default: true
+    expand_context_neighbors: 5                 # expand N neighbors on each side: answers often span paragraphs → raise it; returns too cluttered → lower it
+
+    # Max concurrent queries (shared by REST+MCP; excess queues rather than being dropped)
+    # Based on the DB pools: sync 5+10 / async 5+10 / per-folder PGVector 5+10 — 8 concurrent leaves each pool headroom
+    # Queries queue often → raise it (and bump database.pool_size together); DB connections tight → lower it
+    max_concurrent_queries: 8
+
+    return_resource_files: true                 # whether query results include a download link to the original document
+
+# Modules — rag is split into three modules: rag_indexing (indexing API) / rag_query (query REST) / rag (MCP tools)
+modules:
+  enabled:
+    - folder
+    - file
+    - rag_indexing
+    - rag_query
+    - rag
+    - media
+    - admin
+
+  folder:
+    api_router:
+      module: "src.api.router.folder_api"
+      router_name: "router"
+      prefix: "/api"
+    mcp_tools:
+      module: ""
+      function_name: ""
+    description: "Folder CRUD REST API"
+
+  file:
+    api_router:
+      module: "src.api.router.file_api"
+      router_name: "router"
+      prefix: "/api"
+    mcp_tools:
+      module: ""
+      function_name: ""
+    description: "File upload/download/management REST API"
+
+  rag_indexing:
+    api_router:
+      module: "src.api.router.rag_indexing"
+      router_name: "router"
+      prefix: "/api/rag"
+    mcp_tools:
+      module: ""
+      function_name: ""
+    description: "RAG indexing: index / reindex / delete-index / job status"
+
+  rag_query:
+    api_router:
+      module: "src.api.router.rag_query"
+      router_name: "router"
+      prefix: "/api/rag"
+    mcp_tools:
+      module: ""
+      function_name: ""
+    description: "RAG query: hybrid retrieval REST endpoint"
+
+  rag:
+    api_router:
+      module: ""
+      router_name: ""
+      prefix: ""
+    mcp_tools:
+      module: "src.fastmcp_tools.agentic_tools"
+      function_name: "register_agentic_tools"
+    description: "Agentic RAG MCP tools (per-folder Agentic_{name} with auto-merging)"
+
+  admin:
+    api_router:
+      module: "src.api.router.admin_settings"
+      router_name: "router"
+      prefix: ""    # the router carries its own /api/admin and /admin paths
+    mcp_tools:
+      module: ""
+      function_name: ""
+    description: "Runtime settings console (hot-editable model/retrieval config + /admin UI)"
+
+  media:
+    api_router:
+      module: "src.api.router.media"
+      router_name: "router"
+      prefix: ""    # the router already prefixes with /v1 internally
+    mcp_tools:
+      module: ""
+      function_name: ""
+    description: "OpenAI-style STT/OCR REST API (shares Docling's pre-loaded Whisper turbo + RapidOCR)"

@@ -1,0 +1,92 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+share/python-wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+MANIFEST
+
+# Virtual environments
+.venv/
+venv/
+ENV/
+env/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
+
+# Testing
+.coverage
+.pytest_cache/
+.tox/
+coverage.xml
+*.cover
+.hypothesis/
+
+# mypy
+.mypy_cache/
+.dmypy.json
+dmypy.json
+
+# uv
+.uv/
+uv.lock
+
+# Logs
+*.log
+
+#config
+config/config_azure.yaml
+
+
+# File storage (keep directory structure but ignore actual files)
+storage/*
+!storage/.gitkeep
+data/*
+
+# docling
+assets/*
+# 本地測試/覆蓋率輸出(CI 內自產)
+reports/
+
+# 評測素材不進 repo(可能含內部資料;基線 JSON 要進)
+evals/rag/documents/*
+evals/asr/audio/*
+evals/asr/golden_transcripts/*
+evals/asr/drafts/*
+!evals/**/.gitkeep
+
+# Local environment overrides (DATABASE_URL etc.) — never commit real secrets
+.env
+
+# Node / frontend build deps
+node_modules/

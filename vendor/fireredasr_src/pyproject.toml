@@ -1,0 +1,18 @@
+# vendored FireRedASR 的最小 packaging(上游無 PyPI 發佈/packaging)。
+# 讓它成為 uv path dependency → 正常裝進 .venv site-packages →
+# Nuitka 打包時當一般依賴編進 binary,部署不用外帶 vendor/ 目錄。
+# 依賴(kaldiio/kaldi-native-fbank/sentencepiece/torch...)由主專案
+# pyproject 管理,這裡刻意不宣告 — 避免與 GPU group 的 torch 來源打架。
+[project]
+name = "fireredasr"
+version = "1.0.0"
+description = "FireRedASR — vendored official inference code (Apache-2.0, FireRedTeam/FireRedASR)"
+requires-python = ">=3.9"
+license = "Apache-2.0"
+
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+include = ["fireredasr*"]

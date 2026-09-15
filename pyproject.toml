@@ -1,0 +1,258 @@
+# agentic-rag — Agentic RAG MCP Server
+# GPU builds select PyTorch via PEP 735 dependency groups: `uv sync --group {rocm-r713|rocm-r714|cuda|cpu}`.
+# Only torch/torchvision/torchaudio differ per group; see docs/testing/ENVIRONMENTS.md for the matrix.
+
+[project]
+name = "agentic-rag"
+version = "1.0.0"
+description = "Agentic RAG MCP Server — Hierarchical chunking + AutoMerging retrieval, designed for gpt-oss-120b"
+# 3.12 is the lowest Python with cp312 wheels for every PyTorch build (rocm/cuda/cpu).
+requires-python = ">=3.12,<3.13"
+
+dependencies = [
+    # MCP / web framework
+    "fastmcp>=3.2.0",
+    "mcp[cli]>=1.24.0",
+    "uvicorn==0.38.0",
+    "fastapi==0.121.1",
+    # Logging / config / validation
+    "loguru==0.7.3",
+    "psutil==7.1.3",
+    "pydantic==2.12.4",
+    # Database
+    "sqlalchemy==2.0.44",
+    "psycopg2==2.9.11",
+    "alembic==1.17.1",
+    # LlamaIndex RAG stack
+    "llama-index==0.14.24",
+    "llama-index-core==0.14.24",
+    "llama-index-vector-stores-postgres==0.9.0",
+    "llama-index-embeddings-openai==0.6.0",
+    "llama-index-embeddings-azure-openai==0.6.0",
+    "llama-index-embeddings-huggingface==0.6.1",
+    "llama-index-embeddings-openai-like==0.4.0",
+    # Required by SimpleDirectoryReader's non-text fallback (not bundled in the 0.14.24 meta).
+    "llama-index-readers-file==0.7.0",
+    "pgvector==0.4.1",
+    "openai==1.109.1",
+    "tiktoken==0.12.0",
+    "numpy==2.3.4",
+    # Document parsing (Docling, with ASR extra)
+    "docling[asr]>=2.124.0",
+    # OpenDocument (odt/ods/odp) parsing
+    "odfdo>=3.22.0,<4.0.0",
+    "pymupdf==1.26.7",
+    "pillow==12.2.0",
+    "openpyxl>=3.1.5",
+    "python-docx>=1.2.0",
+    # FireRedASR — vendored official inference code (see [tool.uv.sources]; vendor/fireredasr_src)
+    "fireredasr",
+    # FireRedASR AED inference deps (arch-independent); opencc handles Simplified->Traditional.
+    "kaldiio>=2.18.0",
+    "kaldi-native-fbank>=1.15",
+    "sentencepiece>=0.2.0",
+    "opencc>=1.1.9",
+    # OCR runs via docling's transitive rapidocr (torch backend); no onnxruntime needed.
+    # Test
+    "pytest==9.0.3",
+    "pytest-asyncio>=1.3.0",
+    "pytest-cov>=7.0.0",
+    "pytest-mock>=3.15.0",
+    # Security pins. torch/torchvision/torchaudio come from [dependency-groups], not here.
+    "nltk>=3.9.4",
+    "authlib>=1.6.9",
+    "aiohttp>=3.13.4",
+    "urllib3>=2.6.3",
+    "pypdf>=6.10.0",
+    "python-multipart>=0.0.22",
+    "jaraco-context>=6.1.0",
+    "filelock>=3.20.3",
+    "cryptography>=46.0.7",
+    "pyjwt>=2.12.0",
+    "marshmallow>=3.26.2",
+    "requests>=2.33.0",
+    # Pinned to 4.x; 5.x needs separate sentence-transformers / llama-index compatibility checks.
+    "transformers>=4.46.0,<5.0.0",
+    # CKIP word segmentation for Chinese BM25/FTS (Academia Sinica). Segments in Python, then
+    # Postgres tokenizes with `simple`; replaces the old pg_jieba/jiebacfg path.
+    "ckip-transformers>=0.3.4",
+    "pygments>=2.20.0",
+]
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+testpaths = ["tests"]
+pythonpath = ["."]
+
+# Unit-test coverage. `omit` lists modules that need DB/vLLM/GPU/network and are covered by
+# integration tests instead (see docs/testing/TEST_STRATEGY.md).
+[tool.coverage.run]
+source = ["src"]
+omit = [
+    "tests/*",
+    # adapter layer (DB + llama_index)
+    "src/adapter/file.py",
+    "src/adapter/folder.py",
+    "src/adapter/rag.py",
+    "src/adapter/rag_context.py",
+    "src/adapter/rag_indexing.py",
+    "src/adapter/rag_query.py",
+    "src/adapter/rag_maintenance.py",
+    # API routers and Depends (FastAPI + DB)
+    "src/api/router/health.py",
+    "src/api/router/index.py",
+    "src/api/router/media.py",
+    "src/api/router/file_api.py",
+    "src/api/router/folder_api.py",
+    "src/api/router/rag_indexing.py",
+    "src/api/router/rag_query.py",
+    "src/api/dependencies/*",
+    # RAG pipeline with heavy external deps (pgvector / vLLM / GPU / docling)
+    "src/domain/rag/hierarchical_indexer.py",
+    "src/domain/rag/document_loader.py",
+    "src/domain/rag/leaf_splitter.py",
+    "src/domain/rag/agentic_handlers.py",
+    "src/domain/rag/index_service.py",
+    "src/domain/rag/index_job_manager.py",
+    "src/domain/rag/docling_loader.py",
+    "src/domain/rag/query_engine.py",
+    "src/domain/rag/vector_store_manager.py",
+    "src/domain/rag/chunk_lookup.py",
+    "src/domain/rag/reranker.py",
+    "src/domain/rag/auto_merging.py",
+    "src/domain/rag/embedding/*",
+    # MCP tool registration / auth wiring (FastMCP + DB + httpx)
+    "src/fastmcp_tools/*",
+    "src/auth/dependencies.py",
+    "src/auth/init_auth.py",
+    "src/middleware/auth_middleware.py",
+    # other wiring
+    "src/log.py",
+    "src/utils/db_bootstrap.py",
+]
+
+[tool.coverage.report]
+# CI gate: `pytest --cov` exits non-zero below 95%. A per-file 50% floor is enforced by
+# scripts/check_coverage_floor.py (coverage has no built-in per-file threshold).
+fail_under = 95
+show_missing = true
+exclude_lines = [
+    "pragma: no cover",
+    "if __name__ == .__main__.:",
+    "if TYPE_CHECKING:",
+    "raise NotImplementedError",
+    "@(abc\\.)?abstractmethod",
+]
+
+
+# PyTorch install split (PEP 735). Groups are mutually exclusive — see [tool.uv] conflicts.
+[dependency-groups]
+
+# NVIDIA CUDA 12.6 (local build-box GPU testing). torch 2.8+ is required by docling ASR.
+cuda = [
+    "torch>=2.8.0,<2.9",
+    "torchvision>=0.23.0,<0.24",
+    "torchaudio>=2.8.0,<2.9",
+    # triton is listed so its [tool.uv.sources] index pin applies (it is a torch transitive dep).
+    "triton>=3.4.0,<3.5",
+]
+
+# Pure CPU (CI / no GPU). Keep torch >= 2.8 — earlier versions break docling ASR.
+cpu = [
+    "torch>=2.8.0",
+    "torchvision>=0.23.0",
+    "torchaudio>=2.8.0",
+]
+
+# AMD ROCm 7.1.x multi-arch wheels: one torch[device-all] wheel covers all AMD archs
+# (gfx1151 / gfx90a / gfx1201). Groups differ only by ROCm version. [device-all] applies
+# to torch/torchvision only, not torchaudio (matches AMD's official command).
+rocm-r713 = [
+    "torch[device-all]==2.11.0+rocm7.13.0",
+    "torchvision[device-all]==0.26.0+rocm7.13.0",
+    "torchaudio==2.11.0+rocm7.13.0",
+]
+rocm-r714 = [
+    "torch[device-all]==2.12.0+rocm7.14.0",
+    "torchvision[device-all]==0.27.0+rocm7.14.0",
+    "torchaudio==2.11.0+rocm7.14.0",
+]
+
+
+[tool.uv]
+# Lower concurrency so first-time bootstrap (~3.5GB of torch/cuda wheels) doesn't starve
+# small downloads into the default 30s timeout. Consider UV_HTTP_TIMEOUT=300 in CI.
+concurrent-downloads = 8
+
+# Deploy target is always Linux x86_64; without this, unsafe-best-match may pick a version
+# that only ships aarch64/win wheels.
+required-environments = ["sys_platform == 'linux' and platform_machine == 'x86_64'"]
+
+# Needed because the AMD index only serves ROCm packages; a strict first-match resolver stalls
+# on ordinary PyPI packages. The per-package [tool.uv.sources] pins isolate the few names that
+# collide (e.g. triton, whose +rocm local version would otherwise win).
+index-strategy = "unsafe-best-match"
+
+# GPU/CPU groups are mutually exclusive (all install the same torch package from different
+# indexes). This list is the only guard — add every new group (including new ROCm versions).
+conflicts = [
+    [
+        { group = "rocm-r713" },
+        { group = "rocm-r714" },
+        { group = "cuda" },
+        { group = "cpu" },
+    ],
+]
+
+
+# Wheel index sources.
+[[tool.uv.index]]
+name = "pytorch-rocm-multiarch"
+url = "https://repo.amd.com/rocm/whl-multi-arch/"
+# Not explicit: torch[device-all]'s transitive ROCm runtime libs also live on this index.
+[[tool.uv.index]]
+name = "pytorch-cu126"
+url = "https://download.pytorch.org/whl/cu126"
+explicit = true
+[[tool.uv.index]]
+name = "pytorch-cpu"
+url = "https://download.pytorch.org/whl/cpu"
+explicit = true
+
+
+# Map torch/torchvision/torchaudio (and triton) to the right index per group.
+[tool.uv.sources]
+# Vendored FireRedASR (no PyPI release) installed as a local path dependency.
+fireredasr = { path = "vendor/fireredasr_src" }
+torch = [
+    { index = "pytorch-rocm-multiarch", group = "rocm-r713" },
+    { index = "pytorch-rocm-multiarch", group = "rocm-r714" },
+    { index = "pytorch-cu126",          group = "cuda"      },
+    { index = "pytorch-cpu",            group = "cpu"       },
+]
+torchvision = [
+    { index = "pytorch-rocm-multiarch", group = "rocm-r713" },
+    { index = "pytorch-rocm-multiarch", group = "rocm-r714" },
+    { index = "pytorch-cu126",          group = "cuda"      },
+    { index = "pytorch-cpu",            group = "cpu"       },
+]
+torchaudio = [
+    { index = "pytorch-rocm-multiarch", group = "rocm-r713" },
+    { index = "pytorch-rocm-multiarch", group = "rocm-r714" },
+    { index = "pytorch-cu126",          group = "cuda"      },
+    { index = "pytorch-cpu",            group = "cpu"       },
+]
+# Pin triton to the CUDA index; otherwise the AMD index's +rocm local version outranks the
+# bare 3.4.0 that CUDA needs, and torch.compile breaks on NVIDIA.
+triton = [
+    { index = "pytorch-cu126",        group = "cuda" },
+]
+
+
+# Install the project as a package so importlib.metadata can read the version (src/version.py).
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src", "db"]
