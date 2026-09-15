@@ -40,8 +40,11 @@ tracked but not started. Items are grounded in the current codebase and its know
   `McpCenterTokenVerifier` and the FastMCP `/mcp` transport verifier.
 - **Multi-modal retrieval.** *Shipped (v1 — tables).* A `content_type` signal is
   detected at index time and threaded through to the UI, which badges table chunks
-  and renders their Markdown as real HTML tables. Remaining: extract picture items
-  to disk and show figure thumbnails (currently flagged but not extracted).
+  and rebuilds them as real HTML tables. Verified live: Docling's *chunker*
+  serializes a table as row/column triplets (`row, Column = value.`), not Markdown,
+  so the renderer parses both forms. Remaining: extract picture items to disk and
+  show figure thumbnails (currently flagged but not extracted); consider storing
+  the original Markdown table in chunk metadata at index time for lossless display.
 - **Evaluation depth.** *Shipped.* Opt-in answer-quality scoring (LLM-graded
   faithfulness + relevance over the best retrieval mode) plus per-run baseline
   history (`rag_eval_history_<slug>.jsonl`), a vs-previous nDCG delta, and a
