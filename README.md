@@ -1,373 +1,179 @@
-# Agentic RAG MCP Server
+# Agentic RAG
 
-[繁體中文](README.zh-TW.md)
+**An open-source Retrieval-Augmented Generation server for the Model Context Protocol — hierarchical chunking, auto-merging retrieval, and hybrid vector + Chinese BM25 search, exposed to MCP clients as per-folder tools.**
 
-> Released under the MIT License; see [`LICENSE`](LICENSE) for details.
+Agentic RAG turns a folder of documents into a retrieval tool that Claude Code, Claude Desktop, Cursor and any other MCP client can call. Each folder becomes an `Agentic_<folder>` tool with three modes — **search**, **list** and **read** — backed by a pipeline that chunks hierarchically, retrieves with dense + sparse signals, merges neighbouring hits into whole passages, and re-ranks with a cross-encoder. It is a **resource server**: it verifies OAuth tokens offline and never issues them, pairing with [MCP Center](https://github.com/xianhong1208/MCP_Center) as the authorization server.
 
-A hierarchical RAG (Retrieval-Augmented Generation) MCP service. It turns arbitrary file
-collections (PDF / Office / audio / images) into vector indexes that AI agents can query,
-providing Hierarchical Auto-Merging Retrieval, Contextual Retrieval, cross-modal parsing
-(Whisper ASR / Docling OCR), and full index lifecycle management.
+License: MIT&nbsp;·&nbsp;Python 3.12&nbsp;·&nbsp;PostgreSQL + pgvector&nbsp;·&nbsp;Works with FastMCP&nbsp;·&nbsp;OAuth 2.1 (resource server)
 
----
+[繁體中文](README.zh-TW.md) · [Quick start](#quick-start) · [How it works](#how-it-works) · [Configuration](#configuration) · [Console](#use-the-console) · [Architecture](#architecture)
 
-## Design Principles
+```
+┌────────────────┐   Agentic_<folder> tool call (Bearer JWT)    ┌───────────────────────────────┐
+│   MCP client   │ ───────────────────────────────────────────▶ │  Agentic RAG (resource server) │
+│  Claude / IDE  │ ◀─────────────────────────────────────────── │  /mcp · per-token folder tools │
+└───────┬────────┘        auto-merged passages + scores         └───────────────┬───────────────┘
+        │ OAuth flow                                                             │ verify JWT offline
+        ▼                                                                        ▼
+  ┌─────────────┐                              retrieval pipeline (per query)
+  │  MCP Center │  RS256 JWKS                  ingest ─▶ chunk ─▶ embed ─▶ pgvector ─▶ hybrid retrieve
+  │ OAuth 2.1 AS│  (offline verify)            (Docling) (leaf+parent) (e5·1024d)   (vector + BM25/CKIP)
+  └─────────────┘                                   └▶ auto-merge + expand ─▶ rerank ─▶ gpt-oss-120b
+```
 
-| Principle | How it is realized |
-|------|----------|
-| **Hierarchical retrieval** | Docling chunks → SentenceSplitter → build leaf + parent hierarchy → hit a leaf, then auto-merge back to its parent |
-| **Contextual enrichment** | At index time, an LLM generates a contextual prefix for each chunk (carried over from the previous flat-RAG approach) |
-| **Token-scoped isolation** | Each `user_token` sees a fully independent set of folders / files / vector tables |
-| **Background-job-first** | Indexing always runs as a background job via `IndexingJobManager`, with full cancel / watchdog / restart recovery / persistence |
-| **Configuration-driven** | `config.yaml` + `${VAR:-default}` environment-variable expansion; modules are loaded dynamically via `importlib` |
+## Key features
 
-**Why Hierarchical + Contextual Retrieval**
-- **Hierarchical (Auto-Merging)**: small leaf chunks give precise hits, but the LLM needs
-  a larger context. Once leaves are hit, they auto-merge back into the parent, balancing
-  precision against context richness — roughly **+20% recall** over a single fixed chunk size.
-- **Contextual Retrieval (Anthropic, 2024)**: each chunk is prefixed at index time with an
-  LLM-generated summary of "what this passage is about", solving the missing-context problem
-  of traditional RAG — roughly **+35%** on needle-in-a-haystack tasks versus plain chunking.
+- **Hierarchical chunking + auto-merging retrieval.** Documents are split into small **leaves** (precise matching) and large **parents** (full context) at index time. When several leaves from the same passage are hit, the whole parent is returned instead of fragments; a single-leaf hit expands to its neighbours so the answer never loses narrative continuity.
+- **Hybrid search, tuned for Chinese.** Dense vector retrieval (pgvector) is fused with sparse **BM25** using Reciprocal Rank Fusion, so keyword signal genuinely affects ranking. Chinese text is word-segmented with **CKIP** (Academia Sinica) before Postgres full-text indexing — space-less Chinese actually gets tokenized instead of collapsing into one term.
+- **Cross-encoder reranking.** A `bge-reranker-v2-m3` / `mxbai-rerank-base-v2` model re-scores the fused candidates for fine-grained Top-K precision.
+- **Contextual retrieval.** At index time an LLM prepends a short, document-aware context to each chunk (Anthropic's recommended technique), improving retrievability of otherwise ambiguous fragments.
+- **Per-folder MCP tools, scoped per token.** Every folder is registered as an `Agentic_<folder>` tool; the tool list a caller sees is filtered by their token — you only see folders you own. Ownership is keyed on the token's stable `jti`.
+- **OAuth 2.1 resource server.** One `RemoteAuthProvider` + `JWTVerifier` protects `/mcp`; tokens are verified locally against MCP Center's JWKS (RS256, offline), and are bound to this server's audience so a token for another server never works here.
+- **Document + audio ingestion.** [Docling](https://github.com/DS4SD/docling) parses PDF / DOCX / PPTX / XLSX / images (with OCR); **FireRedASR** transcribes audio locally in Traditional Chinese (or any OpenAI-compatible `/v1/transcriptions` endpoint).
+- **Built-in evaluation harness.** Auto-generates questions from your own chunks and scores `vector` / `hybrid` / `rerank` on **Recall@k · MRR · nDCG@k**, so you can tune retrieval against your real corpus.
+- **Retrieval Terminal console.** A React single-page console at `/admin`: pipeline overview, folders & files, a **Search Playground** that shows the per-signal retrieval trace, live index-job stream, query analytics, the evaluation harness, live settings, health and an audit timeline.
+- **Runs on your GPU.** PyTorch is selected per platform with PEP 735 dependency groups (`rocm-r714` / `rocm-r713` / `cuda` / `cpu`) — AMD ROCm, NVIDIA CUDA or pure CPU.
 
----
+## Install
 
-## Quick Start
+**Prerequisites**
+
+- Python 3.12 and [uv](https://docs.astral.sh/uv/).
+- **PostgreSQL** with the **[pgvector](https://github.com/pgvector/pgvector)** extension.
+- OpenAI-compatible endpoints for the **embedding**, **LLM** and **reranker** models (e.g. [vLLM](https://github.com/vllm-project/vllm), Ollama, or a cloud provider).
+- Node.js 18+ — only if you work on the console UI.
 
 ```bash
-# 1. Install dependencies — torch follows a PEP 735 dependency group per deployment
-#    hardware, so always pass --group
-uv sync --group cuda        # NVIDIA (CUDA 12.6)
-# uv sync --group rocm-r714  # AMD (ROCm 7.1.4; multi-arch wheel, covers gfx1151/90a/1201)
-# uv sync --group rocm-r713  # AMD (ROCm 7.1.3)
-# uv sync --group cpu        # CI / no GPU
-#   ⚠️ A bare `uv sync` / `uv run` without --group swaps the three torch packages for the
-#      default resolved versions, breaking an already-installed GPU stack. See the table at
-#      the top of pyproject.toml and docs/testing/ENVIRONMENTS.md for details.
+git clone https://github.com/xianhong1208/agentic_rag.git
+cd agentic_rag
 
-# 2. Start the three local model services (via vLLM or any OpenAI-compatible endpoint)
-#    - Embedding (default intfloat/multilingual-e5-large, :5040; bge-m3 as fallback)
-#    - LLM (default openai/gpt-oss-120b, :5052) — used by Contextual Retrieval
-#    - Reranker (default mixedbread-ai/mxbai-rerank-base-v2, :8787; bge-reranker-v2-m3 fallback)
-#    All URLs/models are configurable in config/config.yaml (ports follow config.yaml base_url)
+# 1. Install — torch follows a PEP 735 dependency group per platform, so ALWAYS pass --group.
+uv sync --group rocm-r714    # AMD ROCm 7.1.4 (multi-arch wheel)   | rocm-r713 | cuda | cpu
 
-# 3. Configure .env (secrets)
-cp .env.example .env   # if present; otherwise edit config.yaml directly
-#    At minimum set: DATABASE_URL, TOKEN_SERVER_URL
+# 2. Configure the database and model endpoints
+cp .env.example .env         # set DATABASE_URL (Postgres + pgvector)
+#   edit config/config.yaml  → rag.embedding / rag.llm / rag.rerank endpoints,
+#                               auth.issuer / auth.audience, server.port
 
-# 4. Edit config/config.yaml
-#    - server.port (default 5031)
-#    - rag.embedding / rag.llm / rag.rerank endpoints
-#    - rag.docling.device (cuda / cuda:N / cpu)
-
-# 5. Start (runs DB migration automatically)
-uv run python main.py --config config/config.yaml
+# 3. Start (runs the DB bootstrap + migrations automatically)
+uv run python main.py
 ```
 
-After startup:
-- **Landing page**: `http://<host>:<port>/` — service overview + Swagger / Health links
-- **Swagger UI**: `http://<host>:<port>/docs`
-- **MCP endpoint**: `http://<host>:<port>/mcp`
-- **Health check**: `http://<host>:<port>/health`
+The server listens on `http://0.0.0.0:5039` by default; the MCP endpoint is `/mcp` and the console is at `/admin`.
 
----
+## Quick start
 
-## Supported Formats (format v3 — aligned with the docling 2.124 documentation, tested per format)
+Agentic RAG authenticates through [MCP Center](https://github.com/xianhong1208/MCP_Center). The order matters: **register this server in MCP Center first** — it only issues tokens for audiences it knows.
 
-> Tested = a minimal sample is generated and actually run through docling parsing, with
-> content-retrieval assertions (`tests/integration/test_format_smoke.py`, 35 cases);
-> coverage completeness is enforced by a programmatic invariant (`test_upload_formats.py`
-> ref reads docling's official `FormatToExtensions` directly, so the test goes red
-> automatically when upstream adds a format).
+**1 — Register the server in MCP Center.** In the MCP Center console, *Services → Register Service*, enter this server's host / port / path (`/mcp`). Its audience defaults to the MCP URL, e.g. `http://127.0.0.1:5039/mcp`. Set the same value as `auth.audience` in `config/config.yaml`.
 
-| Category | Extensions | Parser | Status |
-|---|---|---|---|
-| Plain text (direct read) | txt text json csv yaml yml xml conf log | read_text_robust (UTF-8/16/Big5 tolerant) | ✅ Unit-tested |
-| PDF | pdf | docling (layout + TableFormer + OCR) | ✅ In production |
-| Office OOXML | docx dotx docm dotm / pptx ppsx pptm potm ppsm / xlsx xlsm | docling | ✅ Smoke-tested |
-| Legacy Office | doc dot xls xlt ppt pot pps | docling + LibreOffice (deployment needs soffice) | ✅ Smoke-tested (real files) |
-| OpenDocument | odt ods odp | docling + odfdo | ✅ Smoke-tested |
-| Markup / scientific | md qmd rmd html htm xhtml adoc asciidoc asc tex latex | docling | ✅ Smoke-tested |
-| Mail / books / subtitles | msg eml epub vtt | docling | ✅ Smoke-tested (msg tested since v2) |
-| Images | png jpg jpeg tiff tif bmp webp | docling + RapidOCR | ✅ In production (bmp uses the same engine) |
-| Audio | wav mp3 m4a aac ogg flac | **AsrProvider** (local docling-whisper / local fireredasr (FireRedASR-AED-L, Traditional-Chinese output) / cloud openai-compatible, configured via `rag.asr`) | wav/mp3 ✅ in production; the 4 new types share the same pipeline (ffmpeg decode); fireredasr pending evaluation-material acceptance |
-| Video | — (planned, ref) | docling video (ASR + key frames) | 🧪 Pipeline verified end to end (mp4 SUCCESS); pending speech-sample content validation before adoption |
+**2 — Point Agentic RAG at MCP Center** (`config/config.yaml`):
 
-**Deliberately excluded after testing** (listed by docling but which the backend cannot open
-in practice): `ott/ots/otp` (ODF templates) and `potx` (PowerPoint template) — the rationale
-is recorded in ref's `_EXCLUDED_EXTS`; they will take effect automatically once removed
-after an upstream fix.
-
----
-
-## Primary REST API
-
-### File / folder management (`/api/folders` / `/api/{folder_id}/file`)
-
-| Method | Path | Purpose |
-|---|---|---|
-| `POST` | `/api/folders/` | Create a folder |
-| `GET` | `/api/folders/` | List folders / look up by name or ID |
-| `DELETE` | `/api/folders/{folder_id}` | Delete a folder (automatically cancels any in-progress indexing job) |
-| `POST` | `/api/folders/{folder_id}/file` | Upload a file (form-data, optional auto_index) |
-| `GET` | `/api/folders/{folder_id}/files/{file_id}/download` | Download the original file |
-
-### Indexing (`/api/rag`)
-
-| Method | Path | Purpose |
-|---|---|---|
-| `POST` | `/files/{folder_id}/index` | Index a whole folder in the background (returns job_id) |
-| `POST` | `/file/{file_id}/index` | Index a single file synchronously |
-| `POST` | `/files/{folder_id}/reindex` | Delete then re-index |
-| `GET` | `/files/{folder_id}/index/jobs/{job_id}` | Query job status |
-| `GET` | `/files/{folder_id}/index/jobs/{job_id}/events` | **SSE realtime progress** (EventSource push) |
-| `DELETE` | `/files/{folder_id}/index/jobs/{job_id}` | Cancel a running job |
-| `GET` | `/index/jobs` | List jobs + counts per status |
-| `GET` | `/file/{file_id}/index/status` | **Single-file status query** (`indexed`/`indexing`/`queued`/`failed`/`not_indexed`) |
-| `GET` | `/indexed-files` | List indexed files in a folder |
-| `DELETE` | `/files/{folder_id}/index` | Delete an entire folder's index |
-| `DELETE` | `/file/{file_id}/index` | Delete a single file's index |
-
-### Query (`/api/rag/query`)
-
-| Method | Path | Purpose |
-|---|---|---|
-| `POST` | `/api/rag/query` | Hybrid retrieval (vector + BM25) + optional rerank |
-
-`top_k` / `similarity_cutoff` / `sparse_top_k` / `hybrid_alpha` all default from
-`config.rag.retrieval.*` and can be overridden per request.
-
----
-
-## Index Reliability — `IndexingJobManager`
-
-Full lifecycle control. Key design points:
-
-| Feature | Behavior |
-|---|---|
-| **Folder lock** | The same folder cannot run two indexing jobs concurrently (returns 409 Conflict) |
-| **Cancel** | `DELETE /index/jobs/{id}` aborts an in-flight job immediately |
-| **Watchdog** | Scans every 60s; if a job has no heartbeat for >10min it is marked failed |
-| **Restart cleanup** | On server restart, any leftover PENDING/RUNNING jobs in the DB are flipped to failed (reason=server_restart) |
-| **Folder-delete cleanup** | Before deleting a folder or a whole folder index, all in-flight jobs are cancelled first |
-| **Per-file timeout** | Default 10 days per file (large-file OCR on slow machines; env `RAG_PER_FILE_TIMEOUT_SECONDS` / config `rag.indexing.per_file_timeout_seconds`) |
-| **Job-level timeout** | Default 10-day backstop for the whole job (env `RAG_JOB_TIMEOUT_SECONDS`) |
-| **File-existence gate** | If a user deletes a file mid-index, three gates abort early (no wasted GPU) |
-| **`PARTIAL_SUCCESS` status** | When 9/10 succeed and 1 fails, the job status is `partial_success` rather than being misreported as succeeded |
-| **Content-hash idempotency** | Re-indexing an unchanged file (same content) short-circuits — roughly **60× faster** |
-| **Embedding retry** | Transient disconnects / 5xx / 429 / timeout are retried 3 times with exponential backoff (1→2→4s) |
-| **Per-file timing audit** | Each file records `load_ms` (Docling) / `index_ms` (context-gen + embed + write) / `total_ms` |
-| **DB persistence** | All job state is write-through to the `IndexJobs` table and remains queryable across process restarts |
-
----
-
-## Directory Layout
-
-```
-├── app.py                           # FastAPI + FastMCP assembly (wire-up only)
-├── main.py                          # CLI entry point (startup + DB migration)
-├── config/
-│   ├── config.yaml                  # ★ main configuration
-│   └── instructions.md              # ★ MCP Instructions (also rendered on the landing page)
-├── assets/
-│   ├── docling_models/              # Docling models (gitignored, added at deploy time)
-│   ├── whisper_models/              # Whisper models (same)
-│   └── hf_tokenizers/               # HF tokenizers (same)
-├── docs/
-│   ├── integrate-existing-api.md    # Guide to integrating an existing API
-│   └── testing/                     # ★ Testing process docs (TEST_PLAN / STRATEGY / specs / test-cases)
-├── db/
-│   ├── db.py                        # ORM Models (Folder / File / FileIndex / IndexJob)
-│   ├── baseDB.py                    # Generic CRUD base class
-│   ├── filedb.py / folderdb.py / fileindexdb.py / indexjobdb.py
-│   ├── cached_folderdb.py           # Folder-query cache
-│   └── migrate.py                   # Alembic automatic migration
-├── src/
-│   ├── auth/                        # Token Server remote authentication
-│   ├── middleware/                  # request_id / auth / error handler
-│   ├── api/
-│   │   ├── dependencies/            # FastAPI Depends helpers
-│   │   └── router/
-│   │       ├── index.py             # landing page /
-│   │       ├── health.py            # /health
-│   │       ├── folder_api.py        # /api/folders/*
-│   │       ├── file_api.py          # /api/folders/{id}/file*
-│   │       ├── rag_indexing.py      # /api/rag/files/*, /api/rag/file/*
-│   │       └── rag_query.py         # /api/rag/query
-│   ├── adapter/
-│   │   ├── rag.py                   # Thin facade
-│   │   ├── rag_context.py           # Shared RAG state (embedding / indexer / vector_store_mgr)
-│   │   ├── rag_indexing.py          # Indexing service (folder / file-list / auto-index)
-│   │   ├── rag_query.py             # Query service (flat hybrid + agentic three-mode)
-│   │   ├── rag_maintenance.py       # Deletion + indexed-file listing
-│   │   ├── folder.py / file.py      # Folder / File adapter
-│   │   └── model.py                 # Adapter-level pydantic types
-│   ├── domain/
-│   │   ├── exceptions.py            # DomainException family (translated to HTTP status)
-│   │   └── rag/
-│   │       ├── hierarchical_indexer.py    # Index orchestration (context→hierarchy→embed→write)
-│   │       ├── document_loader.py         # File → Document, three load paths (text/docling/fallback)
-│   │       ├── leaf_splitter.py           # Structural splitting (preserves tables) + token-budget refine
-│   │       ├── hierarchy.py               # Leaf↔parent tree construction
-│   │       ├── docling_loader.py          # Docling wrapper + Whisper ASR + hallucination defense
-│   │       ├── agentic_handlers.py        # MCP three-mode (search/list/read) logic
-│   │       ├── folder_acl.py              # token↔folder permission checks (isolated at the DB query layer)
-│   │       ├── dto.py                     # Cross-layer pure data types (FileRequest, etc.)
-│   │       ├── context_generator.py       # LLM-based contextual-prefix generation
-│   │       ├── index_service.py           # FileIndex DB helpers
-│   │       ├── index_job_manager.py       # Background job control (lifecycle / persistence / SSE)
-│   │       ├── query_engine.py            # Hybrid retrieval (vector + BM25)
-│   │       ├── auto_merging.py            # Merge leaves back into the parent after a hit
-│   │       ├── reranker.py                # Cross-encoder rerank
-│   │       ├── vector_store_manager.py    # PGVector store management
-│   │       └── chunk_lookup.py            # Chunk lookup
-│   ├── fastmcp_tools/                     # MCP tool registration (per-folder + global)
-│   ├── infrastructure/
-│   │   └── cache/                         # Query / folder cache
-│   ├── storage/file_storage.py            # File storage (token/folder isolation)
-│   ├── config/                            # YAML loading + Pydantic models
-│   ├── utils/                             # runtime_paths / db_bootstrap
-│   └── log.py                             # loguru configuration
-├── scripts/                               # One-off test / utility scripts
-├── storage/                               # ★ Landing zone for uploaded files (gitignored)
-├── ROADMAP.md                             # Development progress: delivered / planned
-└── tests/                                 # pytest unit tests (zero external dependencies, see docs/testing/)
+```yaml
+auth:
+  enabled: true
+  issuer:   "http://localhost:4568"          # MCP Center base URL (RS256 JWKS issuer)
+  audience: "http://127.0.0.1:5039/mcp"      # must equal the audience registered in the console
 ```
 
----
-
-## Development / Debugging
-
-### Watch background job progress (SSE)
+**3 — Create a folder and index documents** — from the `/admin` console (*Folders → New Folder → Upload Files*) or over REST:
 
 ```bash
-TOKEN=<your-bearer-token>
-curl -sN -H "Authorization: Bearer $TOKEN" \
-  "http://localhost:5031/api/rag/files/1/index/jobs/<job_id>/events"
+# create a token-scoped folder, then upload + index files (see the API reference)
+curl -X POST http://127.0.0.1:5039/api/folders/ \
+  -H "Authorization: Bearer <TOKEN>" -H "Content-Type: application/json" \
+  -d '{"name":"product-docs"}'
 ```
 
-Every state change (progress / file done / status transition) pushes a `data: {...}` event.
-The connection closes automatically once the job reaches a terminal status.
-
-### Check a single file's current status
+**4 — Connect a client.** With MCP Center in front, an OAuth-capable client needs nothing up front:
 
 ```bash
-curl -s -H "Authorization: Bearer $TOKEN" \
-  "http://localhost:5031/api/rag/file/<file_id>/index/status"
+claude mcp add --transport http agentic-rag http://127.0.0.1:5039/mcp
 ```
 
-Returns one of `indexed` / `indexing` / `queued` / `failed` / `not_indexed`, including
-progress and any error message.
+On first use the client registers with MCP Center and opens the consent screen; after you allow it, the `Agentic_product-docs` tool appears. For scripts / CI, mint a **personal access token** in MCP Center and pass it as a bearer header.
 
-### Re-index (skip_existing=false)
+**5 — Ask.** In the client, call the folder tool:
 
-```bash
-curl -X POST -H "Authorization: Bearer $TOKEN" \
-  "http://localhost:5031/api/rag/files/<folder_id>/index?skip_existing=false"
+```
+Agentic_product-docs  mode="search"  query="how do I rotate the signing key?"
 ```
 
-If content is unchanged (same content_hash), the actual embed is skipped idempotently,
-taking only tens of milliseconds.
+It returns the matched passages (auto-merged where relevant), each with a relevance score and its source file / heading.
 
-### Inspect job persistence (backend DB)
+## How it works
 
-```sql
-SELECT job_id, folder_id, status, total_files, processed_files, last_updated_at
-FROM "IndexJobs"
-ORDER BY started_at DESC
-LIMIT 10;
-```
+Your folder is indexed once, then every query runs through the pipeline:
 
----
+| Stage | What happens |
+|-------|--------------|
+| **Ingest** | Docling parses PDF / DOCX / PPTX / XLSX / images (OCR); audio is transcribed by FireRedASR. |
+| **Chunk** | Hierarchical splitting into small **leaves** + large **parents**; an LLM adds a contextual prefix to each chunk. |
+| **Embed** | Each chunk is embedded (default `intfloat/multilingual-e5-large`, 1024-d) and written to **pgvector**. Chinese text is CKIP-segmented for the BM25 `text_search_tsv`. |
+| **Retrieve** | **Hybrid**: dense vector + sparse BM25, fused with Reciprocal Rank Fusion. |
+| **Merge** | Leaves from the same passage **auto-merge** into their parent; single hits **expand** to neighbours. |
+| **Rerank** | A cross-encoder (`bge-reranker-v2-m3` / `mxbai-rerank-base-v2`) re-scores for final Top-K precision. |
+| **Answer** | For the `answer` path, `gpt-oss-120b` synthesises a response from the retrieved context, gated by a corrective-RAG confidence check. |
 
-## Testing
+**Auth.** Agentic RAG is a *resource server*. FastMCP publishes `/.well-known/oauth-protected-resource/mcp`, which points clients at MCP Center; the server fetches MCP Center's JWKS once and verifies every bearer token offline (RS256 — signature, issuer, audience, expiry, scopes). MCP Center is never on the request path.
 
-The testing methodology follows the [FuSa Group "A High-Level Overview of Software Testing
-Methodologies"](https://fsg.tw/software-testing-methodologies-guide-a-high-level-overview/).
-Full process docs are in [`docs/testing/`](docs/testing/README.md) (test plan, strategy,
-and REQ → TC → pytest traceability).
+## Configuration
 
-```bash
-# Unit tests (zero external dependencies: no DB / vLLM / GPU / network)
-uv run --no-sync pytest
+Settings live in `config/config.yaml`; secrets come from environment variables (`.env`). The ones you are likely to touch:
 
-# With coverage (exits non-zero if below the pyproject fail_under threshold)
-uv run --no-sync pytest --cov --cov-report=term-missing
-```
+| Variable / setting | Default | Purpose |
+|--------------------|---------|---------|
+| `DATABASE_URL` | `postgresql://…/agentic_rag` | PostgreSQL DSN. Requires the **pgvector** extension. Use **sync** `postgresql://` (psycopg2), not `+asyncpg`. |
+| `server.port` | `5039` | HTTP + MCP bind port. The MCP endpoint is `/mcp`. |
+| `auth.enabled` / `auth.issuer` / `auth.audience` | `true` / MCP Center URL / this server's `/mcp` URL | OAuth 2.1 verification against MCP Center. |
+| `rag.embedding.{model,dimension,base_url}` | `intfloat/multilingual-e5-large`, `1024`, `:7075/v1` | Embedding model; `dimension` **must** equal the model's real output dim. |
+| `rag.llm.{model,base_url}` | `openai/gpt-oss-120b`, `:5052/v1` | LLM for Contextual Retrieval and the `answer` path. |
+| `rag.rerank.{model,base_url}` | `mixedbread-ai/mxbai-rerank-base-v2`, `:8787` | Cross-encoder reranker. |
+| `rag.asr.provider` | `fireredasr` | Audio transcription: `fireredasr` (local zh-TW) · `docling-whisper` · `openai-compatible`. |
+| `rag.retrieval.*` | — | Top-K, similarity cutoff, BM25 candidates, `hybrid_fusion` (`rrf`/`concat`), auto-merging. Tunable live from the console, or via the **High Precision / Balanced / High Recall** presets. |
 
-> On GPU machines, keep `--no-sync` (a bare `uv run`'s implicit sync swaps torch for the
-> non-GPU group version); see [`docs/testing/ENVIRONMENTS.md`](docs/testing/ENVIRONMENTS.md).
+GPU selection is a `uv sync --group {rocm-r714|rocm-r713|cuda|cpu}` choice — see the top of `pyproject.toml` and `docs/testing/ENVIRONMENTS.md`.
 
-| Level | Status |
-|------|------|
-| Unit tests | ✅ `tests/test_*.py` — pure-logic automation (chunking / caching / filename safety / config / auth cache / schema) |
-| Integration / system tests | 🔶 Deployment-environment validation (needs pgvector + model services); automation tracked in the [ROADMAP](ROADMAP.md) |
-| Acceptance (RAG quality) | 🔶 Manual acceptance; the regression Q&A set is tracked in the [ROADMAP](ROADMAP.md) |
+## Use the console
 
-Coverage is measured over the modules in unit-test scope; pipeline modules with heavy
-external dependencies are in the `pyproject.toml` omit list (each with a per-file rationale)
-and fall under integration-test scope. See section 5 of
-[`docs/testing/TEST_PLAN.md`](docs/testing/TEST_PLAN.md).
+The **Retrieval Terminal** console is a React SPA served at `/admin` (the previous single-file console remains at `/admin-classic`).
 
----
+| Page | What you do there |
+|------|-------------------|
+| **Overview** | The live retrieval pipeline, corpus readouts, index health, and model-service status. |
+| **Folders** | Create token-scoped folders; open one to upload files, watch per-file index status, view chunks, reindex, or delete. |
+| **Search Playground** | Run a live query against a folder and see the **per-signal retrieval trace** — Vector · BM25 · Hybrid · Rerank ranks side by side — plus an optional RAG answer. |
+| **Index Jobs** | Live stream of indexing jobs with progress; cancel a running job. |
+| **Query Analytics** | Volume, latency, zero-result rate, top queries and knowledge gaps. |
+| **Evaluation** | Auto-generate a question set and score `vector` / `hybrid` / `rerank` on Recall@k · MRR · nDCG@k. |
+| **Settings** | Live, persisted configuration for Embedding / LLM / Contextual Retrieval / Reranker / Speech-to-Text / Retrieval, with retrieval presets and connection tests. |
+| **System Health** | Live connectivity to every external dependency. |
+| **Audit Log** | A timeline of every runtime settings change. |
 
-## Development Progress / Roadmap
+## API reference
 
-Delivered capabilities and planned work (CI, integration-test automation, RAG-quality
-regression, performance benchmarks) are in [`ROADMAP.md`](ROADMAP.md).
+| Group | Endpoints |
+|-------|-----------|
+| **MCP** | `POST /mcp` — per-folder `Agentic_<folder>` tools (`search` / `list` / `read`); `GET /.well-known/oauth-protected-resource/mcp` |
+| **Folders & files** | `/api/folders*` · `/api/folders/{id}/files*` (create, upload, list, download, delete — token-scoped) |
+| **RAG** | `POST /api/rag/query` (hybrid retrieval + rerank) · `/api/rag/files/{id}/index`, `/reindex`, `/index/jobs*` (background indexing + SSE progress) |
+| **Console (admin)** | `/api/admin/overview` · `/api/admin/folders*` · `/api/admin/jobs` · `/api/admin/analytics` · `/api/admin/eval/{run,status,report}` · `/api/admin/settings*` · `/api/admin/health` · `/api/admin/audit` · `/api/admin/probe` |
+| **Operational** | `GET /health` |
 
----
+Set `ENABLE_API_DOCS=true` for the full OpenAPI reference at `/docs`.
 
-## Control Center (/) — Operations Console
+## Architecture
 
-Open **`http://<host>:<port>/`** in a browser (the root URL; `/admin` is an alias of the
-same page) to reach the all-English operations console (no authentication — a product
-decision for intranet deployment; API documentation is served from `/docs`):
+- **FastMCP + FastAPI** on one ASGI app. The FastMCP app is *mounted* so its auth middleware protects `/mcp`; the FastAPI routers serve the REST API and the console.
+- **PostgreSQL + pgvector** for storage; each folder gets its own `data_<folder>_<uuid>` table. Retrieval uses [LlamaIndex](https://github.com/run-llama/llama_index)'s `PGVectorStore` in hybrid mode.
+- **Sync SQLAlchemy** (psycopg2) throughout — do not use `+asyncpg`.
+- **Console**: Vite + React + React Router + Tailwind, built to `static/console` and served at `/admin`.
 
-- **Overview**: KPIs (folders/files/chunks/jobs), index-health distribution, live progress
-  of in-progress jobs, and the **live health** of the four model services (endpoint probe
-  Online/Offline, ASR weights Ready)
-- **Folders**: folder CRUD (creation requires an owner token — folders are token-scoped),
-  file upload (auto-index) / download / delete, incremental indexing and full rebuild,
-  and drill-down into file-level index status and failure reasons
-- **Index Jobs**: recent job progress / messages / start-end times, cancellable while running
-- **Search Playground**: run live retrieval against a folder to see hit chunks / rerank
-  scores / page-number provenance (demonstrating RAG quality)
-- **File-stage visualization**: after upload, the file list shows Parsing→Context→Embedding→Saving
-  in real time (1-second polling) with a mini progress bar; indexed files can display their
-  split chunks (including the CR prefix)
-- **Overview sparkline**: 7-day indexing-volume trend; KPI cards are clickable for navigation
-- **Dangerous-operation guard**: deleting a folder requires typing its name to confirm
-- **Settings**: hot-edit model and retrieval parameters at runtime (see below)
+See [`ROADMAP.md`](ROADMAP.md) for what's under evaluation (Graph RAG, "LLM Wiki").
 
-The management API (`/api/admin/manage/*`) uses **act-as-owner**: it calls the existing REST
-endpoint functions with the folder owner's token, so safety logic for job cancellation /
-soft delete / vector cleanup is never duplicated.
+## Contributing
 
-| Hot-editable | How it takes effect |
-|---|---|
-| LLM / Rerank / ASR models and endpoints | Effective immediately (picked up by the next request) |
-| Retrieval parameters (top_k / cutoff / α / auto-merging / neighbor expansion) | Effective immediately |
-| Contextual Retrieval toggle and behavior | Effective on the next indexing job |
-| **Embedding model/dimension/prefix** | Effective **but with a warning**: the vector space is incompatible, so existing folders must be re-indexed |
-| Infrastructure such as DB / port / auth | Not hot-editable (anything outside the allowlist is rejected); requires a restart |
-
-- Changes are persisted to the DB (`RuntimeSettings` table) and **survive restarts**; an
-  "overridden" badge lets you restore the config.yaml factory value in one click
-- Each model-service block has a "Test connection" (hits `{base_url}/models` to verify reachability)
-- API: `GET/PUT /api/admin/settings`, `DELETE /api/admin/settings/{path}`, `POST /api/admin/probe`
-
-## Configuration Override Precedence
-
-1. **Environment variables** (`RAG_INDEXING_CONCURRENCY`, `RAG_PER_FILE_TIMEOUT_SECONDS`, `RAG_JOB_TIMEOUT_SECONDS`, etc.)
-2. **`config.yaml` `${VAR:-default}` expansion** (deployment secret injection) — ⚠️ the
-   expansion logic is not yet implemented, so placeholders enter the config literally;
-   tracked as [ref-003](docs/testing/defect-reports/ref-003.md) — write literal
-   values until it is implemented
-3. **RuntimeSettings runtime overrides** (/admin hot-edit, DB-persisted — layered on top of the yaml)
-4. **Hard-coded values in `config.yaml`**
-5. **In-code fallbacks**
-
----
+Issues and pull requests are welcome. Code comments are in English; commit history uses the project's own identity. See `docs/` for the testing and environment notes.
 
 ## License
 
