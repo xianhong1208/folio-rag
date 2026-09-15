@@ -447,7 +447,8 @@ async def _stream_answer_events(query: str, results: list):
     from starlette.concurrency import run_in_threadpool
 
     def _sse(obj) -> str:
-        return f"data: {json.dumps(obj, ensure_ascii=False)}\n\n"
+        # default=str: result metadata carries non-JSON types (UUID node_id).
+        return f"data: {json.dumps(obj, ensure_ascii=False, default=str)}\n\n"
 
     if not results:
         yield _sse({"type": "meta", "confidence": "none", "kept": 0, "dropped": 0,
@@ -527,9 +528,16 @@ async def admin_query_folder_stream(folder_id: int, body: dict = Body(..., examp
     results = resp["data"].get("results", [])
 
     async def _gen():
-        yield (f"data: {json.dumps({'type': 'sources', 'results': results, 'total': len(results)}, ensure_ascii=False)}\n\n")
-        async for frame in _stream_answer_events(q, results):
-            yield frame
+        # Headers are already sent once streaming starts, so an exception here can't
+        # become an HTTP error — surface it as an `error` frame instead of a silent
+        # close. default=str: result metadata carries non-JSON types (UUID node_id).
+        try:
+            yield (f"data: {json.dumps({'type': 'sources', 'results': results, 'total': len(results)}, ensure_ascii=False, default=str)}\n\n")
+            async for frame in _stream_answer_events(q, results):
+                yield frame
+        except Exception as e:  # noqa: BLE001
+            logger.warning(f"[ADMIN] query/stream failed for folder {folder_id}: {e}")
+            yield f"data: {json.dumps({'type': 'error', 'error': str(e)}, ensure_ascii=False)}\n\n"
 
     # X-Accel-Buffering: no keeps a reverse proxy (nginx) from buffering the stream.
     return StreamingResponse(
