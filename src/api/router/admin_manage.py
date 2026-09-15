@@ -154,6 +154,51 @@ async def admin_index_folder(
         folder_id, IndexRequest(), skip_existing=False, token=token, folder=folder)
 
 
+@router.post("/api/admin/manage/folders/{folder_id}/rebuild-fts")
+async def admin_rebuild_fts(folder_id: int):
+    """Backfill the folder's CKIP full-text search vector (`text_search_tsv`).
+
+    Folders indexed before the CKIP migration carry llama-index's native
+    ``to_tsvector('simple', text)``, which cannot segment space-less Chinese, so
+    BM25 recall on Chinese queries is poor. This re-segments every stored chunk
+    with CKIP and overwrites the tsvector in place — no re-embedding, no
+    re-parsing, only the search vector changes. New indexing already rebuilds it
+    (hierarchical_indexer step 6b); this is the one-click backfill for existing
+    folders. No-op (409) unless FTS is in CKIP mode.
+
+    Blocking (sync DB + CKIP inference), so it runs in a threadpool off the loop.
+    """
+    folder, _ = _owner(folder_id)
+
+    # Only meaningful in CKIP mode; other FTS configs keep the native tsvector.
+    from src.config.config_manager import Config
+    ret = getattr(getattr(Config.get_config_model(), "rag", None), "retrieval", None)
+    if (getattr(ret, "text_search_config", "simple") or "simple") != "simple":
+        raise HTTPException(
+            409, "FTS is not in CKIP mode "
+            "(rag.retrieval.text_search_config != 'simple'); nothing to rebuild")
+
+    from starlette.concurrency import run_in_threadpool
+    from db.db import get_engine
+    from src.domain.rag.vector_store_manager import (
+        VectorStoreManager, rebuild_text_search_tsv)
+    from src.domain.rag.ckip_segmenter import get_segmenter
+
+    table_name = VectorStoreManager.physical_table_name(
+        folder_id, folder.vector_table_uuid)
+
+    def _work() -> int:
+        return rebuild_text_search_tsv(get_engine(), table_name, get_segmenter())
+
+    try:
+        rows = await run_in_threadpool(_work)
+    except Exception as e:
+        logger.warning(f"[ADMIN] rebuild-fts failed for folder {folder_id}: {e}")
+        raise HTTPException(500, f"Rebuild failed: {e}")
+    return {"data": {"folder_id": folder_id, "rows_updated": rows},
+            "message": f"Rebuilt full-text search for {rows} chunk(s)"}
+
+
 @router.post("/api/admin/manage/folders/{folder_id}/files/{file_id}/retry")
 async def admin_retry_file(folder_id: int, file_id: UUID):
     """Retry indexing a single file (force bypasses the content_hash short-circuit; one-click rerun for failed files)."""

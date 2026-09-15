@@ -1,5 +1,5 @@
 import { useEffect, useState, useCallback, useRef } from 'react'
-import { Folder, Play, Pencil, Trash2, Download, Eye, X } from 'lucide-react'
+import { Folder, Play, Pencil, Trash2, Download, Eye, X, RefreshCw } from 'lucide-react'
 import { get, post, api } from '../services/api'
 import { fmtNum, fmtBytes, fmtTime, shortModel } from '../lib/format'
 import EmptyState from '../components/ui/EmptyState'
@@ -102,6 +102,18 @@ export default function FoldersPage() {
     try { const r = await post(`/api/admin/manage/folders/${fid}/index`, { skip_existing: skip }); toast(r.message || 'Indexing started', 'ok') }
     catch (e) { toast('Reindex failed: ' + e.message, 'bad') }
   }
+  const [rebuilding, setRebuilding] = useState(false)
+  const rebuildFts = async () => {
+    const ok = await confirm({
+      title: 'Rebuild full-text search?', action: 'Rebuild',
+      note: 'Re-segments every indexed chunk with CKIP and rewrites the search vector — no re-embedding, so it is safe and usually quick. Improves Chinese keyword recall for folders indexed before the CKIP upgrade.',
+    })
+    if (!ok) return
+    setRebuilding(true)
+    try { const r = await post(`/api/admin/manage/folders/${cur.id}/rebuild-fts`, {}); toast(r.message || 'Full-text search rebuilt', 'ok') }
+    catch (e) { toast('Rebuild failed: ' + e.message, 'bad') }
+    setRebuilding(false)
+  }
   const editFolder = async (f) => {
     const r = await form({ title: 'Rename Folder', action: 'Save', fields: [{ id: 'name', label: 'Name', defaultValue: f.name, required: true }] })
     if (!r) return
@@ -151,6 +163,9 @@ export default function FoldersPage() {
           </div>
           <div className="ff-actions">
             <div className="search-box"><input placeholder="Search files…" value={fq} onChange={(e) => setFq(e.target.value)} /></div>
+            <button className="btn-ghost" onClick={rebuildFts} disabled={rebuilding} title="Re-segment chunks with CKIP and rebuild the keyword search vector (no re-embedding)">
+              <RefreshCw size={13} style={{ marginRight: 6, verticalAlign: '-2px', animation: rebuilding ? 'spin 1s linear infinite' : 'none' }} />{rebuilding ? 'Rebuilding…' : 'Rebuild FTS'}
+            </button>
             <button className="btn-ghost" onClick={() => reindexFolder(cur.id, false)}>Reindex Folder</button>
             <button className="btn-cyber" onClick={() => fileInput.current?.click()}>Upload Files</button>
             <input type="file" ref={fileInput} multiple hidden onChange={upload} />

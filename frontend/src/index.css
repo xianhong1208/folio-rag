@@ -836,6 +836,7 @@ html.light .toastx { box-shadow: 0 8px 30px rgba(16,24,40,.16); }
 .toastx.bad { border-left-color: var(--alert); }
 .toastx.warn { border-left-color: var(--signal); }
 @keyframes toastin { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; transform: none; } }
+@keyframes spin { to { transform: rotate(360deg); } }
 @media (prefers-reduced-motion: reduce) { .toastx { animation: none; } }
 
 /* Settings sections don't fade-in — keeps scroll-to-section stable and instant */

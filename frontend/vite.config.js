@@ -26,4 +26,10 @@ export default defineConfig({
       '/api': { target: BACKEND, changeOrigin: true },
     },
   },
+  // Vitest reads this same config. Pure-function suites run in Node (no jsdom),
+  // so the test toolchain stays minimal.
+  test: {
+    environment: 'node',
+    include: ['src/**/*.test.{js,jsx}'],
+  },
 })
