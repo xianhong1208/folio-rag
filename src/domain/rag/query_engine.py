@@ -200,6 +200,7 @@ class QueryEngine:
                     # Citation provenance (only present for data indexed via the docling path)
                     page=node.metadata.get("page_no"),
                     headings=node.metadata.get("headings"),
+                    content_type=node.metadata.get("content_type"),
                 )
 
                 result = RAGSearchResult(
@@ -293,6 +294,7 @@ class QueryEngine:
                     "file_name": node.metadata.get("file_name"),
                     "page": node.metadata.get("page_no"),
                     "headings": node.metadata.get("headings"),
+                    "content_type": node.metadata.get("content_type"),
                 },
             })
         return {"results": results, "reranked": reranked,

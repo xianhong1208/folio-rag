@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react'
 import { get, post, stream } from '../services/api'
 import EmptyState from '../components/ui/EmptyState'
+import ChunkText, { ContentBadge } from '../components/ui/ChunkText'
 
 const COLORS = { vector: 'var(--cyber)', bm25: 'var(--signal)', hybrid: 'var(--matrix)', rerank: 'var(--cyber-deep)' }
 
@@ -10,6 +11,7 @@ function Meta({ md }) {
       <span className="chunk-head-crumb">{md.file_name || ''}</span>
       {md.headings?.length ? <span className="c-meta">{md.headings.join(' › ')}</span> : null}
       {md.page != null ? <span className="c-meta">p.{md.page}</span> : null}
+      <ContentBadge type={md.content_type} />
     </>
   )
 }
@@ -48,7 +50,7 @@ function TraceResults({ trace }) {
             <span className="tb-label">{fusionLabel}</span><Bar score={r.hybrid_score} max={hmax} rank={r.hybrid_rank} color={COLORS.hybrid} />
             {r.reranked && <><span className="tb-label">Rerank</span><Bar score={r.rerank_score} max={rmax} rank={i + 1} color={COLORS.rerank} /></>}
           </div>
-          <div className="c-text" style={{ marginTop: 9 }}>{r.text}</div>
+          <ChunkText text={r.text} contentType={(r.metadata || {}).content_type} className="c-text" />
         </div>
       ))}
     </>
@@ -151,7 +153,7 @@ export default function SearchPage() {
                       <span className="c-idx">#{i + 1}</span><Meta md={h.metadata || {}} />
                       <span className="c-meta" style={{ marginLeft: 'auto' }}>score {h.score != null ? h.score.toFixed(3) : '—'}</span>
                     </div>
-                    <div className="c-text">{h.text}</div>
+                    <ChunkText text={h.text} contentType={(h.metadata || {}).content_type} className="c-text" />
                   </div>
                 ))}
       </div>

@@ -49,6 +49,7 @@ class MergedResult:
     # Citation provenance (from leaf node metadata; on a parent merge, taken from the highest-scoring hit leaf)
     page: Optional[int] = None
     headings: Optional[List[str]] = None
+    content_type: Optional[str] = None
 
 
 class AutoMergingRetriever:
@@ -207,9 +208,10 @@ class AutoMergingRetriever:
         used_leaf_ids: set = set()
 
         def _provenance(node) -> dict:
-            """Map leaf metadata page_no/headings → MergedResult citation fields."""
+            """Map leaf metadata page_no/headings/content_type → MergedResult citation fields."""
             md = node.metadata
-            return {"page": md.get("page_no"), "headings": md.get("headings")}
+            return {"page": md.get("page_no"), "headings": md.get("headings"),
+                    "content_type": md.get("content_type")}
 
         for ln in leaf_nodes:
             pid = ln.node.metadata.get("parent_node_id")

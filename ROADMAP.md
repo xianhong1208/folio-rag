@@ -28,8 +28,8 @@ tracked but not started. Items are grounded in the current codebase and its know
   path and the MCP answer flow, so long generations render progressively instead
   of blocking until the final token. Retrieval + CRAG grading stay non-stream;
   only the final generation streams.
-- **Instant revocation.** A revoked token should stop working immediately, not at
-  expiry. Two candidate mechanisms:
+- **Instant revocation.** *Deferred by decision* — revisit when needed. A revoked
+  token should stop working immediately, not at expiry. Two candidate mechanisms:
   - *jti deny-list* (self-contained): a console-managed revocation list checked on
     every verify, keyed on the `jti` that already scopes ownership. Needs no MCP
     Center change and is fully testable locally.

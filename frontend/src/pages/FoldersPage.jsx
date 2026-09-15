@@ -3,6 +3,7 @@ import { Folder, Play, Pencil, Trash2, Download, Eye, X, RefreshCw } from 'lucid
 import { get, post, api } from '../services/api'
 import { fmtNum, fmtBytes, fmtTime, shortModel } from '../lib/format'
 import EmptyState from '../components/ui/EmptyState'
+import ChunkText, { ContentBadge } from '../components/ui/ChunkText'
 import { useModal } from '../contexts/ModalContext'
 import { useToast } from '../contexts/ToastContext'
 import { useI18n } from '../contexts/I18nContext'
@@ -234,8 +235,9 @@ export default function FoldersPage() {
                             <span className="c-idx">#{i + 1}</span>
                             {c.node_role && <span className="c-meta">{c.node_role}</span>}
                             {c.headings?.length ? <span className="c-meta">{c.headings.join(' › ')}</span> : null}
+                            <ContentBadge type={c.content_type} />
                           </div>
-                          <div className="c-text">{c.text}</div>
+                          <ChunkText text={c.text} contentType={c.content_type} className="c-text" />
                         </div>
                       ))}
               </div>

@@ -144,7 +144,7 @@ class LeafSplitter:
             if isinstance(item, dict):
                 text = item.get("text", "")
                 provenance = {
-                    k: item[k] for k in ("headings", "page_no")
+                    k: item[k] for k in ("headings", "page_no", "content_type")
                     if item.get(k) is not None
                 }
             else:

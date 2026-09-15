@@ -190,6 +190,7 @@ def chunks_for_file(folder_id: int, file_id: str, limit: int = 500) -> Dict[str,
             "chars": len(txt or ""),
             "headings": meta.get("headings"),
             "page": meta.get("page_no"),
+            "content_type": meta.get("content_type"),
         })
     return {"chunks": chunks, "total": len(chunks), "file_name": fidx}
 
