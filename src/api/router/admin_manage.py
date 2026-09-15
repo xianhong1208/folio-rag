@@ -65,21 +65,26 @@ def _reject_foreign_token(claims: dict) -> None:
         settings = None
     if settings is None:
         return
+    def _reject(reason: str) -> None:
+        # Log it: a 422 raised here never reaches the error log, and an operator
+        # debugging "my folder wasn't created" needs to see the rejection.
+        logger.warning(
+            f"[ADMIN] folder create rejected: {reason} "
+            f"(jti={str(claims.get('jti', ''))[:12]}…)")
+        raise HTTPException(422, reason)
+
     iss = str(claims.get("iss") or "").rstrip("/")
     if iss and iss != settings.issuer:
-        raise HTTPException(
-            422, f"Token was issued by {iss}, not by this server's issuer "
-                 f"({settings.issuer}).")
+        _reject(f"Token was issued by {iss}, not by this server's issuer ({settings.issuer}).")
     aud = claims.get("aud")
     auds = list(aud) if isinstance(aud, (list, tuple)) else ([aud] if aud else [])
     if auds and settings.audience not in auds:
-        raise HTTPException(
-            422, f"Token audience {auds} is not this server ({settings.audience}) — "
-                 "this looks like a token for another service (e.g. AnyDoc). "
-                 "Use a token issued for Agentic RAG.")
+        _reject(f"Token audience {auds} is not this server ({settings.audience}) — "
+                "this looks like a token for another service (e.g. AnyDoc). "
+                "Use a token issued for Agentic RAG.")
     exp = claims.get("exp")
     if exp and float(exp) < time.time():
-        raise HTTPException(422, "Token has expired.")
+        _reject("Token has expired.")
 
 
 def _owner(folder_id: int):
