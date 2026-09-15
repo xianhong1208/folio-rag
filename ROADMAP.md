@@ -125,6 +125,13 @@ fragmented chunks and weak precision.
   `uv sync --group` (rocm / cuda / cpu).
 - **Console is unauthenticated** — by design, for internal-network use; lock down
   `_AUTH` before exposing it publicly.
+- **The server aborts at shutdown.** Every restart, the old `python3 main.py`
+  dies with SIGABRT raised from inside the process (`si_code=SI_TKILL`, i.e. a
+  native library's `abort()` during interpreter teardown — torch/CUDA-style), which
+  left a ~16 GB `core.<pid>` in the repo root each time. The process now disables
+  its own core dumps by default (`AGENTIC_RAG_CORE_DUMPS=1` re-enables them for
+  debugging). Root-causing it needs stderr captured by the launcher and a native
+  backtrace (gdb) — tracked, not yet done.
 
 ## ✅ Recently shipped
 

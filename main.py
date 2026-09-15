@@ -31,6 +31,26 @@ def _load_dotenv() -> None:
 
 _load_dotenv()
 
+
+# Disable core dumps for this process by default. At interpreter shutdown a native
+# library aborts (SIGABRT with si_code=SI_TKILL, i.e. abort() from inside the
+# process — torch/CUDA-style teardown) and, with the launcher's `ulimit -c
+# unlimited`, that left a ~16 GB core.<pid> in the repo root on every restart.
+# Set AGENTIC_RAG_CORE_DUMPS=1 to keep the launcher's limit when a native
+# backtrace is actually wanted.
+def _disable_core_dumps() -> None:
+    import os
+    if os.environ.get("AGENTIC_RAG_CORE_DUMPS", "").strip().lower() in ("1", "true", "yes"):
+        return
+    try:
+        import resource
+        resource.setrlimit(resource.RLIMIT_CORE, (0, 0))
+    except (ImportError, ValueError, OSError):
+        pass  # non-POSIX platform or not permitted — nothing to do
+
+
+_disable_core_dumps()
+
 import uvicorn
 
 from app import create_app
