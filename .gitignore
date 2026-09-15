@@ -90,3 +90,6 @@ evals/asr/drafts/*
 
 # Node / frontend build deps
 node_modules/
+
+# The generic lib/ rule above must not hide the console source helpers.
+!frontend/src/lib/
