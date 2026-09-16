@@ -7,6 +7,7 @@ import EmptyState from '../components/ui/EmptyState'
 const pct = (x) => (x == null ? '—' : (x * 100).toFixed(1) + '%')
 
 // Best available mode for a summary (rerank > rrf > hybrid > vector) and its nDCG@k.
+// Used only for the multi-run trend line ("best available" per run).
 const bestNdcg = (summary, k) => {
   if (!summary) return null
   for (const m of ['rerank', 'rrf', 'hybrid', 'vector']) {
@@ -14,6 +15,12 @@ const bestNdcg = (summary, k) => {
   }
   return null
 }
+
+// nDCG@k for one *specific* mode (null if absent). Baseline deltas must compare the
+// same mode across runs — comparing the current best mode against a different mode
+// in the previous run produces bogus "improvement" numbers.
+const ndcgOf = (summary, mode, k) =>
+  (summary && summary[mode] && summary[mode]['ndcg@' + k] != null) ? summary[mode]['ndcg@' + k] : null
 
 function Delta({ cur, prev }) {
   if (cur == null || prev == null) return null
@@ -135,7 +142,7 @@ export default function EvalPage() {
                         <td className="num">{pct(r.rec)}</td>
                         <td className="num">{r.mrr != null ? r.mrr.toFixed(3) : '—'}</td>
                         <td className="num">{pct(r.ndcg)}
-                          {r.m === bestMode && prev && <Delta cur={r.ndcg} prev={bestNdcg(prev.summary, prev.k)} />}
+                          {r.m === bestMode && prev && <Delta cur={r.ndcg} prev={ndcgOf(prev.summary, r.m, prev.k)} />}
                         </td>
                       </tr>
                     ))}
