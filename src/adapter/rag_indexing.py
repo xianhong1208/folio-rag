@@ -317,6 +317,7 @@ class RAGIndexingService:
                     chunk_size=chunk_size,
                     chunk_overlap=chunk_overlap,
                     folder_id_override=folder_id_override,
+                    force=force,  # was dropped here: single-file Retry could never force
                     _timings_out=_timings_out,
                     _progress_cb=None,
                 )

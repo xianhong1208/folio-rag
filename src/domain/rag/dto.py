@@ -40,6 +40,8 @@ class RAGChunkMetadata(BaseModel):
     # Citation provenance (only present for data indexed via the docling path; None for old indexes/plain text)
     page: Optional[int] = None
     headings: Optional[List[str]] = None
+    # "table" / "picture" when the chunk carries that Docling item; None for plain text.
+    content_type: Optional[str] = None
 
 
 class RAGSearchResult(BaseModel):

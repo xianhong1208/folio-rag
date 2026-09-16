@@ -836,7 +836,28 @@ html.light .toastx { box-shadow: 0 8px 30px rgba(16,24,40,.16); }
 .toastx.bad { border-left-color: var(--alert); }
 .toastx.warn { border-left-color: var(--signal); }
 @keyframes toastin { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; transform: none; } }
+@keyframes spin { to { transform: rotate(360deg); } }
 @media (prefers-reduced-motion: reduce) { .toastx { animation: none; } }
 
 /* Settings sections don't fade-in — keeps scroll-to-section stable and instant */
 #view-settings .card { animation: none; opacity: 1; transform: none; }
+
+/* Multi-modal chunks: content-type badge + rendered Docling tables */
+.type-badge {
+  font-family: "JetBrains Mono", monospace; font-size: 9px; letter-spacing: .08em;
+  padding: 2px 6px; border-radius: 5px; border: 1px solid; line-height: 1.4;
+}
+.type-badge.table { color: var(--matrix-hi); border-color: var(--matrix-line); }
+.type-badge.picture { color: var(--cyber-hi); border-color: var(--cyber-line); }
+.chunk-table-wrap {
+  overflow-x: auto; margin-top: 9px;
+  border: 1px solid var(--hairline); border-radius: 8px;
+}
+.chunk-table { border-collapse: collapse; width: 100%; font-size: 12px; }
+.chunk-table th, .chunk-table td {
+  border: 1px solid var(--hairline-soft); padding: 5px 9px;
+  text-align: left; vertical-align: top;
+}
+/* Neutral translucent fill reads correctly on both light and dark grounds */
+.chunk-table th { background: rgba(127, 127, 127, .1); color: var(--ink); font-weight: 600; }
+.chunk-table td { color: var(--ink-muted); }

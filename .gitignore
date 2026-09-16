@@ -90,3 +90,9 @@ evals/asr/drafts/*
 
 # Node / frontend build deps
 node_modules/
+
+# The generic lib/ rule above must not hide the console source helpers.
+!frontend/src/lib/
+
+# Core dumps (a crashed server process leaves a multi-GB core.<pid> here)
+core.*

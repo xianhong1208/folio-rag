@@ -41,13 +41,13 @@ def _load_eval_mod():
 _EVAL_TASK = None  # Keep a task reference so it isn't garbage-collected (the Task object stays out of _EVAL, which must remain JSON-serializable for status)
 
 
-async def _run_eval_bg(folder_ref: str, n: int, k: int, regenerate: bool) -> None:
+async def _run_eval_bg(folder_ref: str, n: int, k: int, regenerate: bool, judge: bool = False) -> None:
     """Evaluation body: runs on the main event loop (same loop as the cached PGVectorStore
     async engine, avoiding asyncpg's "attached to a different loop"). Results/errors are written back to _EVAL."""
     try:
         mod = _load_eval_mod()
         _EVAL["result"] = await mod.run_eval_async(
-            folder_ref, n=n, k=k, regenerate=regenerate,
+            folder_ref, n=n, k=k, regenerate=regenerate, judge=judge,
             progress=lambda d, t: _EVAL.update(done=d, total=t))
     except Exception as e:  # noqa: BLE001 — background run; store the error for status to report
         _EVAL["error"] = str(e)
@@ -72,10 +72,11 @@ async def eval_run(body: dict = Body(default={}, example={"folder_id": 1, "n": 1
         raise HTTPException(422, "folder_id (or folder name) is required")
     n, k = int(body.get("n", 15)), int(body.get("k", 10))
     regen = bool(body.get("regenerate", False))
+    judge = bool(body.get("judge", False))
     _EVAL.update(running=True, folder=folder_ref, done=0, total=n,
                  result=None, error=None, started_at=time.time())
     # Run on the main loop (no new thread/loop) so the shared asyncpg connection pool stays on one loop
-    _EVAL_TASK = asyncio.create_task(_run_eval_bg(folder_ref, n, k, regen))
+    _EVAL_TASK = asyncio.create_task(_run_eval_bg(folder_ref, n, k, regen, judge))
     return {"data": {"started": True}, "message": "evaluation started"}
 
 
@@ -100,6 +101,29 @@ async def eval_report(folder_id: int = Query(...)):
         return {"data": None, "message": "no report yet"}
     with open(path, encoding="utf-8") as f:
         return {"data": json.load(f), "message": "ok"}
+
+
+@router.get("/api/admin/eval/history")
+async def eval_history(folder_id: int = Query(...), limit: int = Query(30, ge=1, le=200)):
+    """The folder's past evaluation runs (oldest first) for baseline comparison / trend."""
+    import json
+    import os
+    from db.cached_folderdb import CachedFolderDB
+    folder = CachedFolderDB.get_by_id(folder_id)
+    if not folder:
+        raise HTTPException(404, f"Folder {folder_id} not found")
+    slug = str(folder.name).replace("/", "_")
+    path = os.path.join("reports", f"rag_eval_history_{slug}.jsonl")
+    entries = []
+    if os.path.exists(path):
+        with open(path, encoding="utf-8") as f:
+            for line in f:
+                if line.strip():
+                    try:
+                        entries.append(json.loads(line))
+                    except Exception:
+                        pass
+    return {"data": {"entries": entries[-limit:]}, "message": "ok"}
 
 
 @router.get("/api/admin/overview")

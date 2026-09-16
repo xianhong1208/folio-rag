@@ -24,7 +24,9 @@ _TSV_COLUMN = "text_search_tsv"
 _TSV_REBUILD_BATCH = 256
 
 
-def rebuild_text_search_tsv(engine, table_name: str, segmenter) -> int:
+def rebuild_text_search_tsv(
+    engine, table_name: str, segmenter, file_id: Optional[str] = None
+) -> int:
     """Recompute a PGVector table's `text_search_tsv` from CKIP-segmented text.
 
     llama-index's native `to_tsvector('simple', text)` cannot segment space-less
@@ -49,7 +51,13 @@ def rebuild_text_search_tsv(engine, table_name: str, segmenter) -> int:
         f'ALTER TABLE "{table_name}" '
         f"ALTER COLUMN {_TSV_COLUMN} DROP EXPRESSION IF EXISTS"
     )
-    select_sql = text(f'SELECT id, text FROM "{table_name}"')
+    # file_id scopes the rebuild to one file's rows (the per-file indexing hook);
+    # None re-segments the whole table (the admin Rebuild-FTS backfill). Without
+    # the scope, every single-file add re-ran CKIP over the entire folder.
+    select_sql = text(
+        f'SELECT id, text FROM "{table_name}"'
+        + (" WHERE metadata_->>'file_id' = :fid" if file_id else "")
+    )
     update_sql = text(
         f'UPDATE "{table_name}" '
         f"SET {_TSV_COLUMN} = to_tsvector('simple', :seg) WHERE id = :id"
@@ -58,7 +66,9 @@ def rebuild_text_search_tsv(engine, table_name: str, segmenter) -> int:
         # Detach the generated expression once so the column becomes UPDATEable.
         conn.execute(detach_sql)
         conn.commit()
-        rows = conn.execute(select_sql).fetchall()
+        rows = conn.execute(
+            select_sql, {"fid": str(file_id)} if file_id else {}
+        ).fetchall()
         if not rows:
             return 0
         for start in range(0, len(rows), _TSV_REBUILD_BATCH):

@@ -39,12 +39,52 @@ def _normalize_owner_key(owner_token: str) -> str:
         claims = jwt.decode(
             owner_token, options={"verify_signature": False, "verify_aud": False}
         )
-        jti = claims.get("jti")
-        if jti:
-            return str(jti)
     except Exception:
-        pass
-    return owner_token
+        return owner_token  # not a JWT: an already-final owner key
+    _reject_foreign_token(claims)
+    jti = claims.get("jti")
+    return str(jti) if jti else owner_token
+
+
+def _reject_foreign_token(claims: dict) -> None:
+    """422 when a JWT was issued for another service (issuer/audience) or has expired.
+
+    The console is an operator tool and deliberately never verifies signatures — it
+    only needs the token's ``jti`` as the ownership key. But a folder bound to a
+    token this server's auth will never accept (e.g. an AnyDoc PAT from the same
+    MCP Center: right issuer, wrong audience) is unreachable through REST/MCP by
+    design, so refuse it up front with the reason instead of creating an orphan.
+    No-op when auth is disabled (nothing to compare against).
+    """
+    import time
+    from src.auth.mcp_center_auth import settings_from_config
+    from src.config.config_manager import Config
+    try:
+        settings = settings_from_config(Config.get_config_model())
+    except Exception:
+        settings = None
+    if settings is None:
+        return
+    def _reject(reason: str) -> None:
+        # Log it: a 422 raised here never reaches the error log, and an operator
+        # debugging "my folder wasn't created" needs to see the rejection.
+        logger.warning(
+            f"[ADMIN] folder create rejected: {reason} "
+            f"(jti={str(claims.get('jti', ''))[:12]}…)")
+        raise HTTPException(422, reason)
+
+    iss = str(claims.get("iss") or "").rstrip("/")
+    if iss and iss != settings.issuer:
+        _reject(f"Token was issued by {iss}, not by this server's issuer ({settings.issuer}).")
+    aud = claims.get("aud")
+    auds = list(aud) if isinstance(aud, (list, tuple)) else ([aud] if aud else [])
+    if auds and settings.audience not in auds:
+        _reject(f"Token audience {auds} is not this server ({settings.audience}) — "
+                "this looks like a token for another service (e.g. AnyDoc). "
+                "Use a token issued for Agentic RAG.")
+    exp = claims.get("exp")
+    if exp and float(exp) < time.time():
+        _reject("Token has expired.")
 
 
 def _owner(folder_id: int):
@@ -152,6 +192,51 @@ async def admin_index_folder(
     from src.api.router.rag_indexing import reindex_folder_endpoint
     return await reindex_folder_endpoint(
         folder_id, IndexRequest(), skip_existing=False, token=token, folder=folder)
+
+
+@router.post("/api/admin/manage/folders/{folder_id}/rebuild-fts")
+async def admin_rebuild_fts(folder_id: int):
+    """Backfill the folder's CKIP full-text search vector (`text_search_tsv`).
+
+    Folders indexed before the CKIP migration carry llama-index's native
+    ``to_tsvector('simple', text)``, which cannot segment space-less Chinese, so
+    BM25 recall on Chinese queries is poor. This re-segments every stored chunk
+    with CKIP and overwrites the tsvector in place — no re-embedding, no
+    re-parsing, only the search vector changes. New indexing already rebuilds it
+    (hierarchical_indexer step 6b); this is the one-click backfill for existing
+    folders. No-op (409) unless FTS is in CKIP mode.
+
+    Blocking (sync DB + CKIP inference), so it runs in a threadpool off the loop.
+    """
+    folder, _ = _owner(folder_id)
+
+    # Only meaningful in CKIP mode; other FTS configs keep the native tsvector.
+    from src.config.config_manager import Config
+    ret = getattr(getattr(Config.get_config_model(), "rag", None), "retrieval", None)
+    if (getattr(ret, "text_search_config", "simple") or "simple") != "simple":
+        raise HTTPException(
+            409, "FTS is not in CKIP mode "
+            "(rag.retrieval.text_search_config != 'simple'); nothing to rebuild")
+
+    from starlette.concurrency import run_in_threadpool
+    from db.db import get_engine
+    from src.domain.rag.vector_store_manager import (
+        VectorStoreManager, rebuild_text_search_tsv)
+    from src.domain.rag.ckip_segmenter import get_segmenter
+
+    table_name = VectorStoreManager.physical_table_name(
+        folder_id, folder.vector_table_uuid)
+
+    def _work() -> int:
+        return rebuild_text_search_tsv(get_engine(), table_name, get_segmenter())
+
+    try:
+        rows = await run_in_threadpool(_work)
+    except Exception as e:
+        logger.warning(f"[ADMIN] rebuild-fts failed for folder {folder_id}: {e}")
+        raise HTTPException(500, f"Rebuild failed: {e}")
+    return {"data": {"folder_id": folder_id, "rows_updated": rows},
+            "message": f"Rebuilt full-text search for {rows} chunk(s)"}
 
 
 @router.post("/api/admin/manage/folders/{folder_id}/files/{file_id}/retry")
@@ -312,6 +397,192 @@ def _generate_answer(query: str, results: list) -> dict:
             "confidence": "high" if len(kept) >= 2 else "medium",
             "kept": len(kept), "dropped": dropped,
             "note": f"Answered from {len(kept)} relevant chunk(s)"}
+
+
+def _crag_grade(query: str, results: list) -> dict:
+    """CRAG relevance grading (one LLM call): return {top, kept, dropped}.
+
+    Shared by the streaming answer path. `kept` are the chunks graded relevant to
+    the question; on any grading error every chunk is kept (fail-open, same as the
+    non-streaming path).
+    """
+    import json
+    import re
+    from src.config.config_manager import Config
+    from src.domain.rag.context_generator import ContextGenerator
+    top = results[:6]
+    if not top:
+        return {"top": [], "kept": [], "dropped": 0}
+    llm_cfg = Config.get_config_model().rag.llm
+    client = ContextGenerator._create_sync_client(llm_cfg)
+    model = getattr(llm_cfg, "azure_deployment", None) or llm_cfg.model
+    grades = [True] * len(top)
+    try:
+        gprompt = (
+            "Grade whether each numbered context can help answer the question. "
+            "Reply ONLY a JSON array of booleans (one per context, true = relevant).\n\n"
+            + "\n\n".join(f"[{i+1}] {r['text'][:600]}" for i, r in enumerate(top))
+            + f"\n\nQuestion: {query}\n\nJSON:")
+        gr = client.chat.completions.create(
+            model=model, messages=[{"role": "user", "content": gprompt}],
+            max_tokens=1024, temperature=0)
+        m = re.search(r"\[.*?\]", (gr.choices[0].message.content or ""), re.S)
+        if m:
+            arr = json.loads(m.group(0))
+            grades = [bool(x) for x in arr][:len(top)] + [False] * (len(top) - len(arr))
+    except Exception as e:
+        logger.debug(f"[CRAG] grading skipped, using all context: {e}")
+    finally:
+        try:
+            client.close()
+        except Exception:
+            pass
+    kept = [r for r, g in zip(top, grades) if g]
+    return {"top": top, "kept": kept, "dropped": len(top) - len(kept)}
+
+
+def _generate_stream(query: str, kept: list):
+    """Blocking generator yielding answer text pieces from the LLM (stream=True).
+
+    Runs in a worker thread; the async endpoint bridges it to the event loop.
+    Citations are normalized [n] on the fly (gpt-oss emits 【n†…】).
+    """
+    import re
+    from src.config.config_manager import Config
+    from src.domain.rag.context_generator import ContextGenerator
+    llm_cfg = Config.get_config_model().rag.llm
+    client = ContextGenerator._create_sync_client(llm_cfg)
+    model = getattr(llm_cfg, "azure_deployment", None) or llm_cfg.model
+    ctx = "\n\n".join(f"[{i+1}] {r['text'][:1200]}" for i, r in enumerate(kept))
+    prompt = (
+        "You are a helpful assistant. Answer the question using ONLY the context "
+        "below. Cite sources inline as [n]. If the context lacks the answer, say so.\n\n"
+        f"Context:\n{ctx}\n\nQuestion: {query}\n\nAnswer:")
+    try:
+        stream = client.chat.completions.create(
+            model=model, messages=[{"role": "user", "content": prompt}],
+            max_tokens=2048, temperature=0.2, stream=True)
+        for chunk in stream:
+            if not chunk.choices:
+                continue
+            delta = getattr(chunk.choices[0].delta, "content", None)
+            if delta:
+                # Normalize gpt-oss citations to [n]; safe on partial fragments.
+                yield re.sub(r"【\s*(\d+)\s*†[^】]*】", r"[\1]", delta)
+    finally:
+        try:
+            client.close()
+        except Exception:
+            pass
+
+
+async def _stream_answer_events(query: str, results: list):
+    """Async generator of SSE ``data:`` frames for a streamed CRAG answer.
+
+    Frames: {type: meta|token|done|error}. Retrieval already happened; this grades
+    the chunks, gates on relevance, then streams the generation token by token.
+    """
+    import asyncio
+    import json
+    from starlette.concurrency import run_in_threadpool
+
+    def _sse(obj) -> str:
+        # default=str: result metadata carries non-JSON types (UUID node_id).
+        return f"data: {json.dumps(obj, ensure_ascii=False, default=str)}\n\n"
+
+    if not results:
+        yield _sse({"type": "meta", "confidence": "none", "kept": 0, "dropped": 0,
+                    "note": "No chunks retrieved"})
+        yield _sse({"type": "done", "answer": None})
+        return
+
+    graded = await run_in_threadpool(_crag_grade, query, results)
+    kept, dropped = graded["kept"], graded["dropped"]
+    yield _sse({"type": "meta", "kept": len(kept), "dropped": dropped,
+                "confidence": "high" if len(kept) >= 2 else ("medium" if kept else "low")})
+
+    if not kept:
+        msg = ("The currently indexed content has no sufficient basis to answer this "
+               "question. Consider adding relevant documents or rephrasing the question.")
+        yield _sse({"type": "token", "text": msg})
+        yield _sse({"type": "done", "answer": msg,
+                    "note": "CRAG gate: no retrieved chunk graded relevant"})
+        return
+
+    # Bridge the blocking token generator to the event loop via a queue.
+    queue: asyncio.Queue = asyncio.Queue()
+    loop = asyncio.get_running_loop()
+    SENTINEL = object()
+
+    def _produce():
+        try:
+            for piece in _generate_stream(query, kept):
+                loop.call_soon_threadsafe(queue.put_nowait, piece)
+        except Exception as e:  # noqa: BLE001 - surface generation errors to the client
+            loop.call_soon_threadsafe(queue.put_nowait, {"__err__": str(e)})
+        finally:
+            loop.call_soon_threadsafe(queue.put_nowait, SENTINEL)
+
+    task = asyncio.create_task(run_in_threadpool(_produce))
+    full: list[str] = []
+    try:
+        while True:
+            item = await queue.get()
+            if item is SENTINEL:
+                break
+            if isinstance(item, dict) and "__err__" in item:
+                yield _sse({"type": "error", "error": item["__err__"]})
+                break
+            full.append(item)
+            yield _sse({"type": "token", "text": item})
+    finally:
+        await task
+    answer = "".join(full)
+    yield _sse({"type": "done", "answer": answer or None,
+                "note": f"Answered from {len(kept)} relevant chunk(s)"})
+
+
+@router.post("/api/admin/manage/folders/{folder_id}/query/stream")
+async def admin_query_folder_stream(folder_id: int, body: dict = Body(..., example={"query": "…"})):
+    """Retrieve, then stream a CRAG answer over Server-Sent Events (text/event-stream).
+
+    Retrieval and relevance grading complete first (a `sources` frame carries the
+    matched chunks); only the final generation streams token by token. Same
+    act-as-owner semantics as the non-streaming /query endpoint.
+    """
+    import json
+    from starlette.responses import StreamingResponse
+    folder, token = _owner(folder_id)
+    q = (body.get("query") or "").strip()
+    if len(q) < 2:
+        raise HTTPException(422, "query too short (min 2 chars)")
+
+    from src.api.router.rag_query import query_rag
+    from src.api.router.response import QueryRequest
+    from fastapi import Request as _Req
+    req = QueryRequest(
+        query=q, folder_name=folder.name,
+        top_k=body.get("top_k"), similarity_cutoff=body.get("similarity_cutoff"))
+    scope = {"type": "http", "headers": [], "method": "POST", "path": "/", "query_string": b""}
+    resp = await query_rag(_Req(scope), req, token=token)
+    results = resp["data"].get("results", [])
+
+    async def _gen():
+        # Headers are already sent once streaming starts, so an exception here can't
+        # become an HTTP error — surface it as an `error` frame instead of a silent
+        # close. default=str: result metadata carries non-JSON types (UUID node_id).
+        try:
+            yield (f"data: {json.dumps({'type': 'sources', 'results': results, 'total': len(results)}, ensure_ascii=False, default=str)}\n\n")
+            async for frame in _stream_answer_events(q, results):
+                yield frame
+        except Exception as e:  # noqa: BLE001
+            logger.warning(f"[ADMIN] query/stream failed for folder {folder_id}: {e}")
+            yield f"data: {json.dumps({'type': 'error', 'error': str(e)}, ensure_ascii=False)}\n\n"
+
+    # X-Accel-Buffering: no keeps a reverse proxy (nginx) from buffering the stream.
+    return StreamingResponse(
+        _gen(), media_type="text/event-stream",
+        headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"})
 
 
 @router.post("/api/admin/manage/folders/{folder_id}/jobs/{job_id}/cancel")

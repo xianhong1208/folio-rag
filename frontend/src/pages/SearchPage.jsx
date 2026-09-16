@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react'
-import { get, post } from '../services/api'
+import { get, post, stream } from '../services/api'
 import EmptyState from '../components/ui/EmptyState'
+import ChunkText, { ContentBadge } from '../components/ui/ChunkText'
 
 const COLORS = { vector: 'var(--cyber)', bm25: 'var(--signal)', hybrid: 'var(--matrix)', rerank: 'var(--cyber-deep)' }
 
@@ -10,6 +11,7 @@ function Meta({ md }) {
       <span className="chunk-head-crumb">{md.file_name || ''}</span>
       {md.headings?.length ? <span className="c-meta">{md.headings.join(' › ')}</span> : null}
       {md.page != null ? <span className="c-meta">p.{md.page}</span> : null}
+      <ContentBadge type={md.content_type} />
     </>
   )
 }
@@ -48,7 +50,7 @@ function TraceResults({ trace }) {
             <span className="tb-label">{fusionLabel}</span><Bar score={r.hybrid_score} max={hmax} rank={r.hybrid_rank} color={COLORS.hybrid} />
             {r.reranked && <><span className="tb-label">Rerank</span><Bar score={r.rerank_score} max={rmax} rank={i + 1} color={COLORS.rerank} /></>}
           </div>
-          <div className="c-text" style={{ marginTop: 9 }}>{r.text}</div>
+          <ChunkText text={r.text} contentType={(r.metadata || {}).content_type} className="c-text" />
         </div>
       ))}
     </>
@@ -76,6 +78,24 @@ export default function SearchPage() {
     if (!fid) { setRes({ err: 'No indexed folder — index some files first' }); return }
     if (query.trim().length < 2) return
     setRunning(true); setRes(null)
+
+    // Streaming path: only when generating an answer without the trace view
+    // (the trace needs the full non-streaming trace object).
+    if (answer && !trace) {
+      setRes({ hits: [], answer: '', streaming: true })
+      try {
+        await stream(`/api/admin/manage/folders/${fid}/query/stream`, { query }, (ev) => {
+          if (ev.type === 'sources') setRes((r) => ({ ...r, hits: ev.results || [], total: ev.total }))
+          else if (ev.type === 'meta') setRes((r) => ({ ...r, meta: ev }))
+          else if (ev.type === 'token') setRes((r) => ({ ...r, answer: (r.answer || '') + ev.text }))
+          else if (ev.type === 'done') setRes((r) => ({ ...r, answer: ev.answer ?? r.answer, streaming: false }))
+          else if (ev.type === 'error') setRes((r) => ({ ...r, err: ev.error, streaming: false }))
+        })
+      } catch (e) { setRes({ err: e.message }) }
+      setRunning(false)
+      return
+    }
+
     try {
       const r = await post(`/api/admin/manage/folders/${fid}/query`, { query, answer, trace })
       setRes({ hits: r.data.results || [], trace: r.data.trace, answer: r.data.answer, total: r.data.total_results })
@@ -105,13 +125,27 @@ export default function SearchPage() {
         <span className="sp-sig">vector · BM25/CKIP · rerank · auto-merge</span>
       </div>
 
-      {res?.answer && (
-        <div className="answer-card"><div className="a-label">ANSWER</div><div className="a-text">{res.answer}</div></div>
+      {(res?.answer || res?.streaming) && (
+        <div className="answer-card">
+          <div className="a-label">
+            ANSWER
+            {res.streaming && <span style={{ marginLeft: 8, color: 'var(--cyber)' }}>streaming…</span>}
+            {res.meta && !res.streaming && (res.meta.kept != null) && (
+              <span style={{ marginLeft: 8, color: 'var(--ink-subtle)', fontWeight: 400 }}>
+                {res.meta.kept} kept · {res.meta.dropped} dropped · {res.meta.confidence}
+              </span>
+            )}
+          </div>
+          <div className="a-text">
+            {res.answer || (res.streaming ? '' : null)}
+            {res.streaming && <span style={{ animation: 'blink 1s step-end infinite', color: 'var(--cyber)' }}>▋</span>}
+          </div>
+        </div>
       )}
       <div id="sp-results">
         {res == null ? null
           : res.err ? <EmptyState t="Search failed" d={res.err} />
-            : (res.hits?.length === 0) ? <EmptyState t="No matches" d="Try lowering similarity or rephrasing" />
+            : (res.hits?.length === 0 && !res.streaming) ? <EmptyState t="No matches" d="Try lowering similarity or rephrasing" />
               : res.trace ? <TraceResults trace={res.trace} />
                 : res.hits.map((h, i) => (
                   <div className="chunk-row" key={i}>
@@ -119,7 +153,7 @@ export default function SearchPage() {
                       <span className="c-idx">#{i + 1}</span><Meta md={h.metadata || {}} />
                       <span className="c-meta" style={{ marginLeft: 'auto' }}>score {h.score != null ? h.score.toFixed(3) : '—'}</span>
                     </div>
-                    <div className="c-text">{h.text}</div>
+                    <ChunkText text={h.text} contentType={(h.metadata || {}).content_type} className="c-text" />
                   </div>
                 ))}
       </div>

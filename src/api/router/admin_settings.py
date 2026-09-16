@@ -17,7 +17,7 @@ from typing import Any, Dict, Optional
 
 import httpx
 from fastapi import APIRouter, Body, HTTPException, Request
-from fastapi.responses import HTMLResponse
+from fastapi.responses import HTMLResponse, RedirectResponse
 
 from src.log import get_api_logger, mask_token
 
@@ -125,14 +125,23 @@ async def probe_endpoint(
                 "message": "probe failed"}
 
 
-@router.get("/", response_class=HTMLResponse, include_in_schema=False)
-@router.get("/admin-classic", response_class=HTMLResponse, include_in_schema=False)
-async def admin_page():
-    """Settings console (single page; the token is entered in-page and stored only in the browser's localStorage).
+@router.get("/", include_in_schema=False)
+async def root_redirect():
+    """Front door: send the root URL to the React console at /admin/.
 
-    Product front door: the root URL (http://host:port/) is the settings page — the module router
-    registers before the index router, so this "/" overrides the original landing page (the old API
-    documentation page is now served by /docs Swagger). /admin is an alias for the same page.
+    The module router registers before the index router, so this "/" overrides the
+    original API-docs landing page (now at /docs). 302 (not 301/308) keeps browsers
+    from hard-caching the redirect while the console front door is still settling.
+    """
+    return RedirectResponse("/admin/", status_code=302)
+
+
+@router.get("/admin-classic", response_class=HTMLResponse, include_in_schema=False)
+async def admin_page_classic():
+    """Legacy single-file console — retired from the front door, kept as a temporary
+    escape hatch while the React console (/admin) is validated in real use. Slated
+    for removal per ROADMAP; the token is entered in-page and stored only in the
+    browser's localStorage.
     """
     from src.api.router.admin_page_html import ADMIN_PAGE_HTML
     from src.api.router.index import _logo_data_uri

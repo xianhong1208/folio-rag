@@ -1,8 +1,9 @@
 import { useEffect, useState, useCallback, useRef } from 'react'
-import { Folder, Play, Pencil, Trash2, Download, Eye, X } from 'lucide-react'
+import { Folder, Play, Pencil, Trash2, Download, Eye, X, RefreshCw } from 'lucide-react'
 import { get, post, api } from '../services/api'
 import { fmtNum, fmtBytes, fmtTime, shortModel } from '../lib/format'
 import EmptyState from '../components/ui/EmptyState'
+import ChunkText, { ContentBadge } from '../components/ui/ChunkText'
 import { useModal } from '../contexts/ModalContext'
 import { useToast } from '../contexts/ToastContext'
 
@@ -102,6 +103,18 @@ export default function FoldersPage() {
     try { const r = await post(`/api/admin/manage/folders/${fid}/index`, { skip_existing: skip }); toast(r.message || 'Indexing started', 'ok') }
     catch (e) { toast('Reindex failed: ' + e.message, 'bad') }
   }
+  const [rebuilding, setRebuilding] = useState(false)
+  const rebuildFts = async () => {
+    const ok = await confirm({
+      title: 'Rebuild full-text search?', action: 'Rebuild',
+      note: 'Re-segments every indexed chunk with CKIP and rewrites the search vector — no re-embedding, so it is safe and usually quick. Improves Chinese keyword recall for folders indexed before the CKIP upgrade.',
+    })
+    if (!ok) return
+    setRebuilding(true)
+    try { const r = await post(`/api/admin/manage/folders/${cur.id}/rebuild-fts`, {}); toast(r.message || 'Full-text search rebuilt', 'ok') }
+    catch (e) { toast('Rebuild failed: ' + e.message, 'bad') }
+    setRebuilding(false)
+  }
   const editFolder = async (f) => {
     const r = await form({ title: 'Rename Folder', action: 'Save', fields: [{ id: 'name', label: 'Name', defaultValue: f.name, required: true }] })
     if (!r) return
@@ -125,11 +138,32 @@ export default function FoldersPage() {
     catch (e) { toast('Delete failed: ' + e.message, 'bad') }
   }
   const upload = async (e) => {
-    const list = e.target.files; if (!list?.length) return
-    const fd = new FormData(); for (const f of list) fd.append('files', f)
-    try { await fetch(`/api/admin/manage/folders/${cur.id}/files`, { method: 'POST', body: fd }); toast(`Uploading ${list.length} file(s)`, 'ok'); loadFiles(cur.id) }
-    catch (err) { toast('Upload failed: ' + err.message, 'bad') }
+    const list = [...(e.target.files || [])]
     e.target.value = ''
+    if (!list.length) return
+    // The endpoint takes ONE file per request in field `file` (it used to be posted
+    // as `files`, which the API rejected with 422 — and the result was never checked,
+    // so uploads silently did nothing). Post sequentially so each failure is named.
+    let ok = 0
+    for (const f of list) {
+      const fd = new FormData()
+      fd.append('file', f)
+      fd.append('auto_index', 'true')
+      try {
+        const res = await fetch(`/api/admin/manage/folders/${cur.id}/files`, { method: 'POST', body: fd })
+        if (!res.ok) {
+          let msg = `HTTP ${res.status}`
+          try {
+            const d = await res.json()
+            msg = d.detail?.error || d.detail?.[0]?.msg || (typeof d.detail === 'string' ? d.detail : null) || d.message || msg
+          } catch { /* non-JSON */ }
+          throw new Error(msg)
+        }
+        ok++
+      } catch (err) { toast(`Upload failed: ${f.name} — ${err.message}`, 'bad') }
+    }
+    if (ok) toast(`Uploaded ${ok} file(s) — indexing`, 'ok')
+    loadFiles(cur.id)
   }
 
   // ---- files detail view ----
@@ -151,6 +185,9 @@ export default function FoldersPage() {
           </div>
           <div className="ff-actions">
             <div className="search-box"><input placeholder="Search files…" value={fq} onChange={(e) => setFq(e.target.value)} /></div>
+            <button className="btn-ghost" onClick={rebuildFts} disabled={rebuilding} title="Re-segment chunks with CKIP and rebuild the keyword search vector (no re-embedding)">
+              <RefreshCw size={13} style={{ marginRight: 6, verticalAlign: '-2px', animation: rebuilding ? 'spin 1s linear infinite' : 'none' }} />{rebuilding ? 'Rebuilding…' : 'Rebuild FTS'}
+            </button>
             <button className="btn-ghost" onClick={() => reindexFolder(cur.id, false)}>Reindex Folder</button>
             <button className="btn-cyber" onClick={() => fileInput.current?.click()}>Upload Files</button>
             <input type="file" ref={fileInput} multiple hidden onChange={upload} />
@@ -217,8 +254,9 @@ export default function FoldersPage() {
                             <span className="c-idx">#{i + 1}</span>
                             {c.node_role && <span className="c-meta">{c.node_role}</span>}
                             {c.headings?.length ? <span className="c-meta">{c.headings.join(' › ')}</span> : null}
+                            <ContentBadge type={c.content_type} />
                           </div>
-                          <div className="c-text">{c.text}</div>
+                          <ChunkText text={c.text} contentType={c.content_type} className="c-text" />
                         </div>
                       ))}
               </div>

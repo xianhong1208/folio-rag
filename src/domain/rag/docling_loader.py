@@ -949,29 +949,57 @@ def _split_by_chars(text: str, tokenizer, max_tokens: int) -> List[str]:
     return out
 
 
+def _doc_item_kind(item: Any) -> Optional[str]:
+    """Map a Docling doc_item's label to a coarse content kind, or None.
+
+    Docling labels items (DocItemLabel: TABLE / PICTURE / TEXT / …). We only care
+    about the multi-modal ones. Defensive across Docling versions — the label may be
+    an enum (``.value``/``.name``) or a bare string.
+    """
+    label = getattr(item, "label", None)
+    if label is None:
+        return None
+    name = str(getattr(label, "value", None) or getattr(label, "name", None) or label).lower()
+    if "table" in name:
+        return "table"
+    if "picture" in name or "image" in name or "figure" in name:
+        return "picture"
+    return None
+
+
 def _chunk_provenance(chunk: Any) -> dict:
-    """Extract headings / page_no from a docling chunk object (bare strings return empty meta).
+    """Extract headings / page_no / content_type from a docling chunk object (bare strings return empty meta).
 
     - headings: HierarchicalChunker's meta.headings (the section path, list[str])
     - page_no: the page_no of the first prov of the first doc_item (present for PDF; usually absent for docx etc.)
+    - content_type: "table" when the chunk carries a table doc_item (Docling keeps the
+      table as Markdown in the chunk text; this flag lets the UI badge / render it).
+      Defaults to None for plain text.
     Extraction is defensive throughout — any missing field returns None and doesn't affect chunking.
     """
     headings = None
     page_no = None
+    content_type = None
     meta = getattr(chunk, "meta", None)
     if meta is not None:
         h = getattr(meta, "headings", None)
         if h:
             headings = list(h)
         for item in (getattr(meta, "doc_items", None) or []):
-            for prov in (getattr(item, "prov", None) or []):
-                p = getattr(prov, "page_no", None)
-                if p is not None:
-                    page_no = int(p)
-                    break
-            if page_no is not None:
+            kind = _doc_item_kind(item)
+            if kind == "table":  # a table anywhere in the chunk wins
+                content_type = "table"
+            elif kind == "picture" and content_type is None:
+                content_type = "picture"
+            if page_no is None:  # keep the first doc_item's page (original semantics)
+                for prov in (getattr(item, "prov", None) or []):
+                    p = getattr(prov, "page_no", None)
+                    if p is not None:
+                        page_no = int(p)
+                        break
+            if page_no is not None and content_type == "table":
                 break
-    return {"headings": headings, "page_no": page_no}
+    return {"headings": headings, "page_no": page_no, "content_type": content_type}
 
 
 def _refine_chunks_for_token_budget(
@@ -999,7 +1027,7 @@ def _refine_chunks_for_token_budget(
     def _flush_pending():
         nonlocal pending_buf, pending_meta, pending_tokens
         if pending_buf:
-            output.append({"text": "\n".join(pending_buf), **(pending_meta or {"headings": None, "page_no": None})})
+            output.append({"text": "\n".join(pending_buf), **(pending_meta or {"headings": None, "page_no": None, "content_type": None})})
             pending_buf = []
             pending_meta = None
             pending_tokens = 0

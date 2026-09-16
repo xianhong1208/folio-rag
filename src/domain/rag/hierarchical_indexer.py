@@ -396,11 +396,15 @@ class HierarchicalIndexer:
                 table_name = ChunkLookup._get_table_name(vector_store)
                 engine = ChunkLookup._get_engine(vector_store)
                 segmenter = get_segmenter()
+                # Scope to this file's rows: re-segmenting the whole table on every
+                # add cost ~10 min on a 7k-chunk folder.
                 n = await _to_thread_protected(
-                    rebuild_text_search_tsv, engine, table_name, segmenter
+                    rebuild_text_search_tsv, engine, table_name, segmenter,
+                    document.metadata.get("file_id"),
                 )
                 logger.info(
-                    f"✅ CKIP text_search_tsv rebuilt for {n} row(s) in {table_name}"
+                    f"✅ CKIP text_search_tsv rebuilt for {n} row(s) of "
+                    f"{file_name} in {table_name}"
                 )
             except Exception as e:
                 # Non-fatal: falls back to llama-index's native 'simple' tsvector
