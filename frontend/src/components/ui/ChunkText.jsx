@@ -56,7 +56,11 @@ export default function ChunkText({ text, contentType, className }) {
     const t = parseMarkdownTable(text || '') || parseTripletTable(text || '')
     if (t) {
       return (
-        <div className={'chunk-table-wrap ' + (className || '')}>
+        // Don't reuse the caller's `c-text` class here: under `.chunk-row .c-text`
+        // it carries a 160px max-height clamp meant for long plain-text chunks,
+        // which would squeeze the table into a tiny inner scrollbox. The wrapper
+        // has its own overflow-x + spacing in `.chunk-table-wrap`.
+        <div className="chunk-table-wrap">
           {t.caption && <div className="c-meta" style={{ padding: '6px 9px 0' }}>{t.caption}</div>}
           <table className="chunk-table">
             <thead><tr>{t.header.map((h, i) => <th key={i}>{h}</th>)}</tr></thead>
