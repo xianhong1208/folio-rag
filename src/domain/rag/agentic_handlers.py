@@ -114,6 +114,10 @@ async def handle_search(
                 # Citation provenance: included only when present (older indexed data lacks this metadata)
                 **({"page": r.page} if r.page is not None else {}),
                 **({"headings": r.headings} if r.headings else {}),
+                # content_type ("table"/"picture") lets an MCP agent know a hit's text
+                # is a serialized table/figure, not prose — parity with the REST path.
+                **({"content_type": getattr(r, "content_type", None)}
+                   if getattr(r, "content_type", None) else {}),
                 **(
                     {"merged_from_leaves": len(r.merged_from_leaves)}
                     if r.node_role == "parent"
