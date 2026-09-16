@@ -1,5 +1,5 @@
-import { useEffect, useState, useCallback } from 'react'
-import { useLocation } from 'react-router-dom'
+import { useEffect, useState, useCallback, useRef } from 'react'
+import { useLocation, useNavigate } from 'react-router-dom'
 import { Layers, Sparkles, List, ArrowDownUp, Mic, SlidersHorizontal } from 'lucide-react'
 import { get, post, api } from '../services/api'
 import { fmtNum } from '../lib/format'
@@ -9,6 +9,7 @@ import { useToast } from '../contexts/ToastContext'
 
 const ICON = { layers: Layers, spark: Sparkles, list: List, sort: ArrowDownUp, mic: Mic, sliders: SlidersHorizontal }
 const PARAM_TO_SEC = { embedding: 'rag.embedding', llm: 'rag.llm', contextual: 'rag.contextual_retrieval', reranker: 'rag.rerank', asr: 'rag.asr', retrieval: 'rag.retrieval' }
+const SEC_TO_PARAM = Object.fromEntries(Object.entries(PARAM_TO_SEC).map(([p, s]) => [s, p]))
 
 function Field({ path, f, value, overridden, onChange }) {
   const wide = f.type === 'textarea'
@@ -60,7 +61,12 @@ export default function SettingsPage() {
   const [probe, setProbe] = useState({}) // sec -> {cls,text}
 
   const loc = useLocation()
+  const navigate = useNavigate()
   const sectionParam = loc.pathname.split('/').filter(Boolean).pop()
+  // The section currently scrolled into view (kept in sync by the scrollspy below).
+  // Lets the click-to-scroll effect tell "user clicked a different section" apart
+  // from "the spy just synced the URL to where we already are".
+  const inViewRef = useRef(null)
 
   const loadSettings = useCallback(async () => {
     const r = await get('/api/admin/settings')
@@ -70,9 +76,13 @@ export default function SettingsPage() {
   }, [])
   useEffect(() => { loadSettings().catch(() => {}) }, [loadSettings])
 
-  // Scroll to the section chosen in the sidebar (/settings/<section>)
+  // Scroll to the section chosen in the sidebar (/settings/<section>).
+  // Skip when the URL already matches the section in view — that means the
+  // scrollspy synced the URL to the user's scroll, and scrolling again would
+  // fight them. Only a genuine nav to a *different* section scrolls.
   useEffect(() => {
     if (state == null) return
+    if (sectionParam === inViewRef.current) return
     const sec = PARAM_TO_SEC[sectionParam]
     const t = setTimeout(() => {
       if (!sec) { window.scrollTo({ top: 0 }); return }
@@ -81,6 +91,33 @@ export default function SettingsPage() {
     }, 120)
     return () => clearTimeout(t)
   }, [sectionParam, state])
+
+  // Scrollspy: highlight the sidebar item for whichever section is near the top
+  // of the viewport as the user scrolls (updates the URL with replace, so the
+  // sidebar NavLink active state follows without adding history entries).
+  useEffect(() => {
+    if (state == null) return
+    const secs = Array.from(document.querySelectorAll('section[id^="sec-"]'))
+    if (!secs.length) return
+    const visible = new Set()
+    const io = new IntersectionObserver((entries) => {
+      for (const e of entries) {
+        if (e.isIntersecting) visible.add(e.target)
+        else visible.delete(e.target)
+      }
+      if (!visible.size) return
+      // Topmost currently-visible section wins (viewport-relative, container-agnostic).
+      const top = [...visible].sort(
+        (a, b) => a.getBoundingClientRect().top - b.getBoundingClientRect().top)[0]
+      const param = SEC_TO_PARAM[top.id.slice(4).replaceAll('-', '.')]
+      if (param && param !== inViewRef.current) {
+        inViewRef.current = param
+        navigate('/settings/' + param, { replace: true })
+      }
+    }, { rootMargin: '-72px 0px -60% 0px' })
+    secs.forEach((s) => io.observe(s))
+    return () => io.disconnect()
+  }, [state, navigate])
 
   const onChange = (path, v) => setDirty((d) => ({ ...d, [path]: v }))
   const valOf = (p) => (p in dirty ? dirty[p] : state?.[p]?.value)
