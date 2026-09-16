@@ -861,3 +861,12 @@ html.light .toastx { box-shadow: 0 8px 30px rgba(16,24,40,.16); }
 /* Neutral translucent fill reads correctly on both light and dark grounds */
 .chunk-table th { background: rgba(127, 127, 127, .1); color: var(--ink); font-weight: 600; }
 .chunk-table td { color: var(--ink-muted); }
+
+/* Visible keyboard focus for elements made focusable for a11y (rows, ribbon
+   tiles, breadcrumb) — mouse clicks stay ring-free via :focus-visible. */
+.rowlink:focus-visible,
+.ribbon .ro.clickable:focus-visible,
+.crumbs a[role="button"]:focus-visible {
+  outline: 2px solid var(--cyber);
+  outline-offset: -2px;
+}

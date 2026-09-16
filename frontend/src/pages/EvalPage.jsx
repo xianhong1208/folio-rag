@@ -45,21 +45,27 @@ export default function EvalPage() {
   const [status, setStatus] = useState(null)
   const [running, setRunning] = useState(false)
   const poll = useRef(null)
+  const aliveRef = useRef(true)
+  const reqRef = useRef(0) // guards loadReport against out-of-order responses
 
   useEffect(() => {
+    aliveRef.current = true
     get('/api/admin/folders').then((r) => {
       const fs = r.data.folders.filter((f) => f.indexed_files > 0)
       setFolders(fs); if (fs.length) setFid(String(fs[0].id))
     }).catch(() => {})
-    return () => { if (poll.current) clearInterval(poll.current) }
+    return () => { aliveRef.current = false; if (poll.current) clearInterval(poll.current) }
   }, [])
 
   const loadReport = useCallback(async (id) => {
     if (!id) { setReport(null); setHistory([]); return }
-    try { const r = await get('/api/admin/eval/report?folder_id=' + id); setReport(r.data || null) }
-    catch { setReport(null) }
-    try { const h = await get('/api/admin/eval/history?folder_id=' + id); setHistory((h.data && h.data.entries) || []) }
-    catch { setHistory([]) }
+    // Only the latest loadReport call may write state — a slower earlier response
+    // for a previously-selected folder must not overwrite the newer folder's data.
+    const my = ++reqRef.current
+    try { const r = await get('/api/admin/eval/report?folder_id=' + id); if (my === reqRef.current) setReport(r.data || null) }
+    catch { if (my === reqRef.current) setReport(null) }
+    try { const h = await get('/api/admin/eval/history?folder_id=' + id); if (my === reqRef.current) setHistory((h.data && h.data.entries) || []) }
+    catch { if (my === reqRef.current) setHistory([]) }
   }, [])
   useEffect(() => { loadReport(fid) }, [fid, loadReport])
 
@@ -68,6 +74,9 @@ export default function EvalPage() {
     setRunning(true); setStatus({ message: 'Starting…' })
     try {
       await post('/api/admin/eval/run', { folder_id: Number(fid), n: Number(n), regenerate: regen, judge })
+      // If the user left the page while the POST was in flight, the unmount cleanup
+      // has already run — don't start an interval that nothing will ever clear.
+      if (!aliveRef.current) return
       if (poll.current) clearInterval(poll.current)
       poll.current = setInterval(async () => {
         try {
