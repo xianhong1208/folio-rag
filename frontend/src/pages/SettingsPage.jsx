@@ -19,33 +19,33 @@ function Field({ path, f, value, overridden, onChange }) {
   return (
     <div className={'field' + (wide ? ' wide' : '')}>
       <div className="f-head">
-        <label>{f.label}</label>
+        <label htmlFor={isBool ? undefined : path}>{f.label}</label>
         <div className="grow" />
         {overridden && <span className="ovr" title="Differs from config.yaml">Overridden</span>}
         {isBool && (
-          <label className="toggle"><input type="checkbox" checked={!!value} onChange={(e) => setV(e.target.checked)} /><span /></label>
+          <label className="toggle"><input type="checkbox" aria-label={f.label} checked={!!value} onChange={(e) => setV(e.target.checked)} /><span /></label>
         )}
       </div>
       {f.hint && <div className="hint">{f.hint}</div>}
       {isBool ? null
         : f.type === 'select' ? (
-          <select value={value ?? ''} onChange={(e) => setV(e.target.value)}>
+          <select id={path} value={value ?? ''} onChange={(e) => setV(e.target.value)}>
             {f.options.map((o) => <option key={o} value={o}>{o}</option>)}
           </select>
         ) : f.type === 'textarea' ? (
-          <textarea value={value ?? ''} onChange={(e) => setV(e.target.value)} />
+          <textarea id={path} value={value ?? ''} onChange={(e) => setV(e.target.value)} />
         ) : f.type === 'secret' ? (
-          <input type="password" placeholder="Set — type to replace" value={value ?? ''} onChange={(e) => setV(e.target.value)} />
+          <input id={path} type="password" placeholder="Set — type to replace" value={value ?? ''} onChange={(e) => setV(e.target.value)} />
         ) : f.range ? (
           <div className="slider-wrap">
-            <input type="range" min={f.range[0]} max={f.range[1]} step={f.step || 0.05}
+            <input id={path} type="range" min={f.range[0]} max={f.range[1]} step={f.step || 0.05}
               value={value ?? f.range[0]}
               style={{ '--fill': (((value ?? f.range[0]) - f.range[0]) / (f.range[1] - f.range[0]) * 100) + '%' }}
               onChange={(e) => setV(parseFloat(e.target.value))} />
-            <input type="number" step={f.step || 0.05} value={value ?? ''} onChange={(e) => setV(e.target.value === '' ? null : parseFloat(e.target.value))} />
+            <input type="number" aria-label={f.label + ' (number)'} step={f.step || 0.05} value={value ?? ''} onChange={(e) => setV(e.target.value === '' ? null : parseFloat(e.target.value))} />
           </div>
         ) : (
-          <input type={f.type === 'number' ? 'number' : 'text'} value={value ?? ''}
+          <input id={path} type={f.type === 'number' ? 'number' : 'text'} value={value ?? ''}
             onChange={(e) => setV(f.type === 'number' ? (e.target.value === '' ? null : Number(e.target.value)) : e.target.value)} />
         )}
     </div>

@@ -3,10 +3,14 @@ import { Zap, XCircle } from 'lucide-react'
 import { get, post } from '../services/api'
 import { fmtTime } from '../lib/format'
 import EmptyState from '../components/ui/EmptyState'
+import { useModal } from '../contexts/ModalContext'
+import { useToast } from '../contexts/ToastContext'
 
 const PILL = { running: 'run', pending: 'warn', queued: 'warn', completed: 'ok', failed: 'bad', cancelled: 'mute' }
 
 export default function JobsPage() {
+  const { confirm } = useModal()
+  const toast = useToast()
   const [jobs, setJobs] = useState(null)
 
   const load = useCallback(async () => {
@@ -23,8 +27,13 @@ export default function JobsPage() {
   }, [load])
 
   const cancel = async (j) => {
-    if (!window.confirm('Cancel this job? It stops after the current file; already-indexed files are kept.')) return
-    try { await post(`/api/admin/manage/folders/${j.folder_id}/jobs/${j.job_id}/cancel`); load() } catch (e) { alert('Cancel failed: ' + e.message) }
+    const ok = await confirm({
+      title: 'Cancel this job?', action: 'Cancel job', danger: true,
+      note: 'It stops after the current file; already-indexed files are kept.',
+    })
+    if (!ok) return
+    try { await post(`/api/admin/manage/folders/${j.folder_id}/jobs/${j.job_id}/cancel`); toast('Job cancelled', 'ok'); load() }
+    catch (e) { toast('Cancel failed: ' + e.message, 'bad') }
   }
 
   return (

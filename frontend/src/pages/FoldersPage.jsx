@@ -17,6 +17,7 @@ export default function FoldersPage() {
   const { confirm, form } = useModal()
   const toast = useToast()
   const [folders, setFolders] = useState(null)
+  const [foldersErr, setFoldersErr] = useState(null)
   const [q, setQ] = useState('')
   const [cur, setCur] = useState(null) // {id,name} when viewing files
   const [files, setFiles] = useState(null)
@@ -24,11 +25,15 @@ export default function FoldersPage() {
   const [sel, setSel] = useState(new Set())
   const [chunks, setChunks] = useState(null) // { name, items } | null
   const fileInput = useRef(null)
+  // The folder whose files are currently shown — used to drop a stale files
+  // response that resolves after the user has already switched folders.
+  const curIdRef = useRef(null)
 
   const loadFolders = useCallback(async () => {
-    const r = await get('/api/admin/folders'); setFolders(r.data.folders)
+    try { const r = await get('/api/admin/folders'); setFolders(r.data.folders); setFoldersErr(null) }
+    catch (e) { setFoldersErr(e.message || 'Failed to load folders') }
   }, [])
-  useEffect(() => { loadFolders().catch(() => {}) }, [loadFolders])
+  useEffect(() => { loadFolders() }, [loadFolders])
 
   const loadFiles = useCallback(async (fid) => {
     const [r, sg] = await Promise.all([
@@ -44,7 +49,8 @@ export default function FoldersPage() {
       }
       return f
     })
-    setFiles(fs)
+    // Ignore a response for a folder the user has since navigated away from.
+    if (curIdRef.current === fid) setFiles(fs)
     return fs
   }, [])
 
@@ -58,14 +64,25 @@ export default function FoldersPage() {
         const fs = await loadFiles(cur.id)
         const pending = fs.some((f) => f._stage || ['unindexed', 'running', 'pending'].includes(f.status))
         if (alive && pending) timer = setTimeout(tick, 1500)
-      } catch { /* ignore */ }
+      } catch {
+        // Transient failure — retry instead of freezing the view on "loading…".
+        if (alive) timer = setTimeout(tick, 3000)
+      }
     }
     tick()
     return () => { alive = false; if (timer) clearTimeout(timer) }
   }, [cur, loadFiles])
 
-  const openFolder = (f) => { setCur({ id: f.id, name: f.name }); setFiles(null); setSel(new Set()) }
-  const back = () => { setCur(null); setFiles(null); setSel(new Set()); loadFolders() }
+  // Esc closes the chunk viewer, matching the app's other modals.
+  useEffect(() => {
+    if (!chunks) return
+    const onKey = (e) => { if (e.key === 'Escape') setChunks(null) }
+    window.addEventListener('keydown', onKey)
+    return () => window.removeEventListener('keydown', onKey)
+  }, [chunks])
+
+  const openFolder = (f) => { curIdRef.current = f.id; setCur({ id: f.id, name: f.name }); setFiles(null); setSel(new Set()) }
+  const back = () => { curIdRef.current = null; setCur(null); setFiles(null); setSel(new Set()); loadFolders() }
 
   const toggleSel = (id) => setSel((s) => { const n = new Set(s); n.has(id) ? n.delete(id) : n.add(id); return n })
   const bulkReindex = async () => {
@@ -178,7 +195,8 @@ export default function FoldersPage() {
     const mdl = models.length === 1 ? shortModel(models[0]) : (models.length > 1 ? models.length + ' models' : '—')
     return (
       <div id="folder-files">
-        <div className="crumbs"><a onClick={back} style={{ cursor: 'pointer' }}>Folders</a><span className="sep">/</span><span>{cur.name}</span></div>
+        <div className="crumbs"><a role="button" tabIndex={0} onClick={back} style={{ cursor: 'pointer' }}
+          onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); back() } }}>Folders</a><span className="sep">/</span><span>{cur.name}</span></div>
         <div className="ff-head">
           <div className="ff-title-wrap"><h2>{cur.name}</h2>
             <div className="desc">{list.length} file(s) · {failed ? failed + ' failed' : 'all healthy'}{models.length === 1 ? ' · ' + models[0] : ''}</div>
@@ -284,10 +302,15 @@ export default function FoldersPage() {
           <table>
             <thead><tr><th>Name</th><th>Files</th><th>Size</th><th>Indexed</th><th>Chunks</th><th>Last Indexed</th><th>Actions</th></tr></thead>
             <tbody>
-              {folders == null ? <tr><td className="empty" colSpan={7}>loading…</td></tr>
+              {folders == null && foldersErr
+                ? <tr><td colSpan={7}><EmptyState t="Couldn’t load folders" d={foldersErr} />
+                    <div style={{ textAlign: 'center', marginTop: 8 }}><button className="btn-ghost" onClick={loadFolders}>Retry</button></div></td></tr>
+                : folders == null ? <tr><td className="empty" colSpan={7}>loading…</td></tr>
                 : shown.length === 0 ? <tr><td colSpan={7}><EmptyState t="No folders yet" d="Create one with “+ New Folder”" /></td></tr>
                   : shown.map((f) => (
-                    <tr key={f.id} className="rowlink" onClick={() => openFolder(f)}>
+                    <tr key={f.id} className="rowlink" tabIndex={0} role="button"
+                      onClick={() => openFolder(f)}
+                      onKeyDown={(e) => { if (e.key === 'Enter') openFolder(f) }}>
                       <td className="cell-main name-cell">{f.name}<div className="sub">{f.description || ''}</div></td>
                       <td className="num">{fmtNum(f.file_count)}</td>
                       <td className="num">{fmtBytes(f.total_size_bytes)}</td>
