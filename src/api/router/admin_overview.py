@@ -268,6 +268,14 @@ async def _probe_endpoint_health(base_url: str, api_key: str | None):
     try:
         async with httpx.AsyncClient(timeout=5.0, headers=headers, follow_redirects=False) as c:
             resp = await c.get(f"{base}/models")
+            # Some OpenAI-compatible services (e.g. a vLLM reranker) expose the model
+            # list only under /v1/ and are configured with a base_url that omits it,
+            # so /models 404s even though the service is healthy. Fall back to
+            # /v1/models before reporting, so the check reflects the real state.
+            if resp.status_code == 404 and not base.endswith("/v1"):
+                alt = await c.get(f"{base}/v1/models")
+                if alt.status_code < resp.status_code:
+                    resp = alt
         ms = int((time.perf_counter() - t0) * 1000)
         if resp.status_code < 500:
             return "ok", f"HTTP {resp.status_code}", ms
