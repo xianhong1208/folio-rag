@@ -398,8 +398,16 @@ def run_eval(folder_name: str, n: int = 15, k: int = 10,
                 print(f"  ! {regen_reason}")
             elif stale_dropped:
                 print(f"  ! dropped {stale_dropped} stale item(s) whose gold chunk no longer exists")
-    if items is None:
+    if not items:  # None, an empty cached file, or all-stale (pruned to None)
         items = generate_eval_set(folder, n, eval_path)
+    if not items:
+        # Every question-gen LLM call failed. Do NOT evaluate/append: an empty set
+        # scores 0.000 across the board (n = len(items) or 1) and would poison the
+        # baseline history permanently. Fail loudly instead.
+        raise RuntimeError(
+            "evaluation aborted: no eval questions could be generated "
+            "(LLM question generation failed for every sampled chunk). "
+            "Check the LLM endpoint and retry — nothing was written to history.")
     prev = _read_history(slug)
     rep = asyncio.run(evaluate(folder, items, k, progress=progress, judge=judge))
     rep["regenerate_reason"] = regen_reason
@@ -437,8 +445,15 @@ async def run_eval_async(folder_name: str, n: int = 15, k: int = 10,
         if items:
             alive = await loop.run_in_executor(None, _existing_gold_ids, folder, items)
             items, regen_reason, stale_dropped = _prune_stale(folder, items, alive)
-    if items is None:
+    if not items:  # None, an empty cached file, or all-stale (pruned to None)
         items = await loop.run_in_executor(None, generate_eval_set, folder, n, eval_path)
+    if not items:
+        # See run_eval: refuse to evaluate/append an empty set (would write an
+        # all-zero run to baseline history and skew every later delta).
+        raise RuntimeError(
+            "evaluation aborted: no eval questions could be generated "
+            "(LLM question generation failed for every sampled chunk). "
+            "Check the LLM endpoint and retry — nothing was written to history.")
     prev = _read_history(slug)
     rep = await evaluate(folder, items, k, progress=progress, judge=judge)
     rep["regenerate_reason"] = regen_reason
