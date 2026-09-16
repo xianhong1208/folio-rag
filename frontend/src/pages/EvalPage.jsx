@@ -19,7 +19,7 @@ const bestNdcg = (summary, k) => {
 // nDCG@k for one *specific* mode (null if absent). Baseline deltas must compare the
 // same mode across runs — comparing the current best mode against a different mode
 // in the previous run produces bogus "improvement" numbers.
-const ndcgOf = (summary, mode, k) =>
+export const ndcgOf = (summary, mode, k) =>
   (summary && summary[mode] && summary[mode]['ndcg@' + k] != null) ? summary[mode]['ndcg@' + k] : null
 
 function Delta({ cur, prev }) {
