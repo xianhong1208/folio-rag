@@ -68,7 +68,12 @@ export default function EvalPage() {
           setStatus(s)
           if (!s || !s.running) {
             clearInterval(poll.current); poll.current = null
-            setRunning(false); setStatus(null); loadReport(fid)
+            setRunning(false)
+            // Keep a failed run's error visible (React 18 batches these setStatus
+            // calls, so setStatus(null) here would erase the error before it paints);
+            // clear it only on success. The next run() resets status to "Starting…".
+            setStatus(s && s.error ? s : null)
+            loadReport(fid)
           }
         } catch { clearInterval(poll.current); poll.current = null; setRunning(false) }
       }, 1500)
