@@ -39,10 +39,12 @@ describe('parseMarkdownTable', () => {
 })
 
 describe('parseTripletTable (Docling chunker serialization)', () => {
-  // Verbatim shape of a real indexed xlsx chunk: contextual prefix + triplets.
+  // Verbatim shape of a real indexed xlsx chunk: contextual prefix + triplets,
+  // joined with ". " and with NO trailing period after the last triplet (Docling's
+  // real output — the ". ".join produces no terminal period).
   const chunk = 'mm_table_test.xlsx表格列出各伺服器主機名稱、角色與硬體配置細節。\n\n'
     + 'rag-api-01, Role = API. rag-api-01, CPU cores = 16. rag-api-01, RAM (GB) = 64. '
-    + 'rag-db-01, Role = PostgreSQL+pgvector. rag-db-01, CPU cores = 32. rag-db-01, RAM (GB) = 256.'
+    + 'rag-db-01, Role = PostgreSQL+pgvector. rag-db-01, CPU cores = 32. rag-db-01, RAM (GB) = 256'
 
   it('rebuilds rows and columns in first-seen order', () => {
     const t = parseTripletTable(chunk)
@@ -60,6 +62,25 @@ describe('parseTripletTable (Docling chunker serialization)', () => {
   it('leaves missing cells blank', () => {
     const t = parseTripletTable('a, x = 1. a, y = 2. b, x = 3.')
     expect(t.body).toEqual([['a', '1', '2'], ['b', '3', '']])
+  })
+
+  // Regression: real Docling data contains periods in row labels and values, and
+  // never terminates with a period. The previous regex parser silently dropped or
+  // collided on all three of these.
+  it('keeps the final cell when there is no trailing period', () => {
+    const t = parseTripletTable('r1, A = x. r1, B = y')
+    expect(t.body).toEqual([['r1', 'x', 'y']])
+  })
+
+  it('does not collide float-rendered row labels (1.0 vs 2.0)', () => {
+    const t = parseTripletTable('1.0, Status = Active. 2.0, Status = Idle')
+    expect(t.header).toEqual(['', 'Status'])
+    expect(t.body).toEqual([['1.0', 'Active'], ['2.0', 'Idle']])
+  })
+
+  it('keeps decimal cell values intact', () => {
+    const t = parseTripletTable('Server, RAM = 64.5. Server, CPU = 8')
+    expect(t.body).toEqual([['Server', '64.5', '8']])
   })
 
   it('returns null for prose', () => {
