@@ -180,6 +180,28 @@ class TestEval:
         assert ov._EVAL["running"] is True and ov._EVAL["total"] == 5
         self._reset()
 
+    def test_run_rejects_oversize_n(self, client):
+        # A huge n would fire thousands of sequential LLM calls and hog the single
+        # global eval slot — must be rejected with a clean 422, not started.
+        self._reset()
+        assert client.post("/api/admin/eval/run",
+                           json={"folder_id": 1, "n": 5000}).status_code == 422
+        from src.api.router import admin_overview as ov
+        assert ov._EVAL["running"] is False
+        self._reset()
+
+    def test_run_rejects_oversize_k(self, client):
+        self._reset()
+        assert client.post("/api/admin/eval/run",
+                           json={"folder_id": 1, "k": 1000}).status_code == 422
+        self._reset()
+
+    def test_run_rejects_non_numeric_nk(self, client):
+        self._reset()
+        assert client.post("/api/admin/eval/run",
+                           json={"folder_id": 1, "n": "abc"}).status_code == 422
+        self._reset()
+
     async def test_run_bg_success_and_failure(self):
         from unittest.mock import AsyncMock
         from src.api.router import admin_overview as ov

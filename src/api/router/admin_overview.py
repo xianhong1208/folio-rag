@@ -70,7 +70,19 @@ async def eval_run(body: dict = Body(default={}, example={"folder_id": 1, "n": 1
     folder_ref = str(body.get("folder_id") or body.get("folder") or "").strip()
     if not folder_ref:
         raise HTTPException(422, "folder_id (or folder name) is required")
-    n, k = int(body.get("n", 15)), int(body.get("k", 10))
+    # Bound n/k: each question is one LLM generation + retrieval across four modes,
+    # and there is a single global run slot, so an unbounded n (e.g. 5000) would
+    # monopolize evaluation for every folder. Reject non-numeric / out-of-range
+    # input with a clean 422 instead of a 500 or a runaway run.
+    try:
+        n = int(body.get("n", 15))
+        k = int(body.get("k", 10))
+    except (TypeError, ValueError):
+        raise HTTPException(422, "n and k must be integers")
+    if not (1 <= n <= 100):
+        raise HTTPException(422, "n must be between 1 and 100")
+    if not (1 <= k <= 50):
+        raise HTTPException(422, "k must be between 1 and 50")
     regen = bool(body.get("regenerate", False))
     judge = bool(body.get("judge", False))
     _EVAL.update(running=True, folder=folder_ref, done=0, total=n,
