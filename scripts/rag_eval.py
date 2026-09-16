@@ -269,12 +269,29 @@ def _existing_gold_ids(folder, items: list) -> set:
     return {r[0] for r in rows}
 
 
+# Regenerate (rather than score a shrunk, non-comparable sample) once more than
+# this fraction of a cached eval set has gone stale after a reindex.
+_STALE_REGEN_FRACTION = 0.30
+
+
 def _prune_stale(folder, items: list, alive: set):
-    """Return (items_kept, regen_reason, stale_dropped) for a loaded eval set."""
+    """Return (items_kept, regen_reason, stale_dropped) for a loaded eval set.
+
+    Fully stale, or stale beyond _STALE_REGEN_FRACTION of the set, → regenerate
+    (return None): scoring on a materially smaller sample makes nDCG/Recall/MRR
+    non-comparable to prior history (which recorded a larger n), and small eval sets
+    are already noisy. Light staleness keeps the survivors and reports the drop
+    count (surfaced in the UI) rather than forcing a full regen.
+    """
     kept = [it for it in items if it.get("gold_node_id") in alive]
+    dropped = len(items) - len(kept)
     if not kept:
         return None, _STALE_REASON, 0
-    return kept, None, len(items) - len(kept)
+    if items and dropped / len(items) > _STALE_REGEN_FRACTION:
+        pctv = round(dropped / len(items) * 100)
+        return None, (f"stale eval set — {dropped}/{len(items)} gold chunks ({pctv}%) "
+                      "no longer exist (folder reindexed?); question set regenerated"), 0
+    return kept, None, dropped
 
 
 async def evaluate(folder, items, k: int, progress=None, judge: bool = False) -> dict:
