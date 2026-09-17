@@ -208,8 +208,9 @@ export default function FoldersPage() {
           </div>
           <div className="ff-actions">
             <div className="search-box"><input placeholder="Search files…" value={fq} onChange={(e) => setFq(e.target.value)} /></div>
-            <button className="btn-ghost" onClick={rebuildFts} disabled={rebuilding} title="Re-segment chunks with CKIP and rebuild the keyword search vector (no re-embedding)">
-              <RefreshCw size={13} style={{ marginRight: 6, verticalAlign: '-2px', animation: rebuilding ? 'spin 1s linear infinite' : 'none' }} />{rebuilding ? 'Rebuilding…' : 'Rebuild FTS'}
+            <button className="btn-ghost tip" onClick={rebuildFts} disabled={rebuilding}
+              data-tip="Re-segments existing chunks with CKIP and rebuilds only the keyword-search (BM25) vector — no re-embedding and no re-parsing, unlike Reindex Folder. Use it for folders indexed before the CKIP upgrade to fix Chinese keyword recall.">
+              <RefreshCw size={13} style={{ animation: rebuilding ? 'spin 1s linear infinite' : 'none' }} />{rebuilding ? 'Rebuilding…' : 'Rebuild FTS'}
             </button>
             <button className="btn-ghost" onClick={() => reindexFolder(cur.id, false)}>Reindex Folder</button>
             <button className="btn-cyber" onClick={() => fileInput.current?.click()}>Upload Files</button>
