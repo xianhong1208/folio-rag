@@ -328,11 +328,29 @@
   .btn-cyber:active:not(:disabled) { transform: scale(.96); }
   .btn-cyber:disabled { opacity: .35; cursor: default; filter: saturate(.5); }
   .btn-ghost {
+    display: inline-flex; align-items: center; justify-content: center; gap: 6px; white-space: nowrap;
     font-family: "JetBrains Mono", "PingFang TC", system-ui, sans-serif; font-weight: 600; font-size: 13px;
     color: var(--cyber); background: var(--surface); border: 1px solid var(--hairline); border-radius: 6px;
-    padding: 7px 14px; cursor: pointer; transition: all .2s;
+    padding: 7px 16px; cursor: pointer; transition: all .2s;
   }
   .btn-ghost:hover { border-color: var(--cyber-line); background: var(--cyber-soft); }
+
+  /* Floating hover tooltip (replaces the plain native title on annotated buttons) */
+  .tip { position: relative; }
+  .tip[data-tip]::after {
+    content: attr(data-tip);
+    position: absolute; top: calc(100% + 9px); left: 50%;
+    transform: translateX(-50%) translateY(-4px);
+    width: max-content; max-width: 300px; white-space: normal; text-align: left;
+    background: var(--surface-solid); color: var(--ink-muted);
+    border: 1px solid var(--hairline); border-radius: 9px; padding: 9px 11px;
+    font-family: "JetBrains Mono", monospace; font-size: 11.5px; font-weight: 400; line-height: 1.55;
+    box-shadow: 0 8px 24px rgba(0, 0, 0, .35);
+    opacity: 0; pointer-events: none; transition: opacity .15s ease, transform .15s ease; z-index: 60;
+  }
+  .tip[data-tip]:hover::after, .tip[data-tip]:focus-visible::after {
+    opacity: 1; transform: translateX(-50%) translateY(0);
+  }
   .probe-result { font-size: 12px; color: var(--ink-subtle); }
   .probe-result.ok { color: var(--matrix-hi); }
   .probe-result.bad { color: var(--alert-hi); }
