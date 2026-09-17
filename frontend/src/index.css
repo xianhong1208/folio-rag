@@ -318,6 +318,8 @@
   .card-foot { display: flex; align-items: center; gap: 12px; padding: 13px 22px;
     border-top: 1px solid var(--hairline-soft); background: var(--canvas); }
   .btn-cyber {
+    display: inline-flex; align-items: center; justify-content: center; gap: 6px;
+    white-space: nowrap; flex-shrink: 0;
     font-family: "JetBrains Mono", "PingFang TC", system-ui, sans-serif;
     font-weight: 600; font-size: 13px;
     background: var(--cyber);
