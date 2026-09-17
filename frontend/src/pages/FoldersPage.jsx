@@ -237,7 +237,7 @@ export default function FoldersPage() {
               <th className="selcol"><input type="checkbox" className="selcheck"
                 checked={shown.length > 0 && shown.every((f) => sel.has(f.id))}
                 onChange={(e) => setSel(e.target.checked ? new Set(shown.map((f) => f.id)) : new Set())} /></th>
-              <th>File</th><th>Status</th><th>Chunks</th><th>Size</th><th>Indexed At</th><th>Actions</th>
+              <th>File</th><th className="statuscol">Status</th><th>Chunks</th><th>Size</th><th>Indexed At</th><th>Actions</th>
             </tr></thead>
             <tbody>
               {files == null ? <tr><td className="empty" colSpan={7}>loading…</td></tr>
@@ -246,7 +246,7 @@ export default function FoldersPage() {
                     <tr key={f.id} title={f.error || f.embedding_model || ''}>
                       <td className="selcol"><input type="checkbox" className="selcheck" checked={sel.has(f.id)} onChange={() => toggleSel(f.id)} /></td>
                       <td className="cell-main file-cell">{f.name}{f.error && <div className="sub" style={{ color: 'var(--alert-hi)', whiteSpace: 'normal' }}>{f.error}</div>}</td>
-                      <td>{f._stage ? <>{statusPill(f._stage)}{f._stagePct != null && <span className="stage-bar"><div style={{ width: f._stagePct + '%' }} /></span>}</> : statusPill(f.status)}</td>
+                      <td className="statuscol">{f._stage ? <>{statusPill(f._stage)}{f._stagePct != null && <span className="stage-bar"><div style={{ width: f._stagePct + '%' }} /></span>}</> : statusPill(f.status)}</td>
                       <td className="num">{fmtNum(f.chunks)}</td>
                       <td className="num">{fmtBytes(f.size_bytes)}</td>
                       <td className="num">{fmtTime(f.indexed_at)}</td>
