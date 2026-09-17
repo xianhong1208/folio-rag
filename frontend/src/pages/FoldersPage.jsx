@@ -246,9 +246,7 @@ export default function FoldersPage() {
                     <tr key={f.id} title={f.error || f.embedding_model || ''}>
                       <td className="selcol"><input type="checkbox" className="selcheck" checked={sel.has(f.id)} onChange={() => toggleSel(f.id)} /></td>
                       <td className="cell-main file-cell">{f.name}{f.error && <div className="sub" style={{ color: 'var(--alert-hi)', whiteSpace: 'normal' }}>{f.error}</div>}</td>
-                      <td className="statuscol">{f._stage ? (
-                        <span className="stage-cell">{statusPill(f._stage)}{f._stagePct != null && <span className="stage-bar"><div style={{ width: f._stagePct + '%' }} /></span>}</span>
-                      ) : statusPill(f.status)}</td>
+                      <td className="statuscol">{f._stage ? <>{statusPill(f._stage)}{f._stagePct != null && <span className="stage-bar"><div style={{ width: f._stagePct + '%' }} /></span>}</> : statusPill(f.status)}</td>
                       <td className="num">{fmtNum(f.chunks)}</td>
                       <td className="num">{fmtBytes(f.size_bytes)}</td>
                       <td className="num">{fmtTime(f.indexed_at)}</td>
