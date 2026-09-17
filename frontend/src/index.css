@@ -202,6 +202,11 @@
   .stage-bar { display: inline-block; vertical-align: middle; width: 46px; height: 5px;
     border-radius: 3px; background: var(--elevated); overflow: hidden; margin-left: 6px; }
   .stage-bar > div { height: 100%; background: var(--cyber); border-radius: 3px; transition: width .3s; }
+  /* Stack the progress bar under the stage pill so the bar never adds to the
+     column's width (only the pill does) — keeps the Status column from growing
+     when a longer stage like "Contextualizing" is in progress. */
+  .stage-cell { display: inline-flex; flex-direction: column; align-items: flex-start; gap: 5px; }
+  .stage-cell .stage-bar { margin-left: 0; width: 100%; }
 
   /* Index status distribution bar */
   .distbar { display: flex; height: 10px; border-radius: 6px; overflow: hidden; background: var(--elevated); }
