@@ -109,7 +109,11 @@ export default function OverviewPage() {
 
       <div className="ribbon">
         {ribbon.map((x) => (
-          <div key={x.k} className={'ro' + (x.nav ? ' clickable' : '')} onClick={x.nav ? () => nav(x.nav) : undefined}>
+          <div key={x.k} className={'ro' + (x.nav ? ' clickable' : '')}
+            onClick={x.nav ? () => nav(x.nav) : undefined}
+            role={x.nav ? 'button' : undefined}
+            tabIndex={x.nav ? 0 : undefined}
+            onKeyDown={x.nav ? (e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); nav(x.nav) } } : undefined}>
             <div className="k">{x.k}</div>
             <div className={'v ' + x.cls}>{x.v}</div>
             <div className="d">{x.d}</div>

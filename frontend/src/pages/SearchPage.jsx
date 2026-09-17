@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useState, useRef } from 'react'
 import { get, post, stream } from '../services/api'
 import EmptyState from '../components/ui/EmptyState'
 import ChunkText, { ContentBadge } from '../components/ui/ChunkText'
@@ -65,6 +65,7 @@ export default function SearchPage() {
   const [trace, setTrace] = useState(false)
   const [running, setRunning] = useState(false)
   const [res, setRes] = useState(null) // {hits, trace, answer, err}
+  const abortRef = useRef(null)
 
   useEffect(() => {
     get('/api/admin/folders').then((r) => {
@@ -72,11 +73,17 @@ export default function SearchPage() {
       setFolders(fs)
       if (fs.length) setFid(String(fs[0].id))
     }).catch(() => {})
+    // Abort any in-flight stream when the page unmounts, so the SSE read loop
+    // stops and the backend stops generating for a client that has navigated away.
+    return () => abortRef.current?.abort()
   }, [])
 
   const run = async () => {
     if (!fid) { setRes({ err: 'No indexed folder — index some files first' }); return }
     if (query.trim().length < 2) return
+    abortRef.current?.abort() // cancel a previous run still streaming
+    const ac = new AbortController()
+    abortRef.current = ac
     setRunning(true); setRes(null)
 
     // Streaming path: only when generating an answer without the trace view
@@ -90,17 +97,17 @@ export default function SearchPage() {
           else if (ev.type === 'token') setRes((r) => ({ ...r, answer: (r.answer || '') + ev.text }))
           else if (ev.type === 'done') setRes((r) => ({ ...r, answer: ev.answer ?? r.answer, streaming: false }))
           else if (ev.type === 'error') setRes((r) => ({ ...r, err: ev.error, streaming: false }))
-        })
-      } catch (e) { setRes({ err: e.message }) }
-      setRunning(false)
+        }, ac.signal)
+      } catch (e) { if (!ac.signal.aborted) setRes({ err: e.message }) }
+      if (!ac.signal.aborted) setRunning(false)
       return
     }
 
     try {
       const r = await post(`/api/admin/manage/folders/${fid}/query`, { query, answer, trace })
-      setRes({ hits: r.data.results || [], trace: r.data.trace, answer: r.data.answer, total: r.data.total_results })
-    } catch (e) { setRes({ err: e.message }) }
-    setRunning(false)
+      if (!ac.signal.aborted) setRes({ hits: r.data.results || [], trace: r.data.trace, answer: r.data.answer, total: r.data.total_results })
+    } catch (e) { if (!ac.signal.aborted) setRes({ err: e.message }) }
+    if (!ac.signal.aborted) setRunning(false)
   }
 
   return (
