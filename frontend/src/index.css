@@ -202,11 +202,6 @@
   .stage-bar { display: inline-block; vertical-align: middle; width: 46px; height: 5px;
     border-radius: 3px; background: var(--elevated); overflow: hidden; margin-left: 6px; }
   .stage-bar > div { height: 100%; background: var(--cyber); border-radius: 3px; transition: width .3s; }
-  /* Stack the progress bar under the stage pill so the bar never adds to the
-     column's width (only the pill does) — keeps the Status column from growing
-     when a longer stage like "Contextualizing" is in progress. */
-  .stage-cell { display: inline-flex; flex-direction: column; align-items: flex-start; gap: 5px; }
-  .stage-cell .stage-bar { margin-left: 0; width: 100%; }
 
   /* Index status distribution bar */
   .distbar { display: flex; height: 10px; border-radius: 6px; overflow: hidden; background: var(--elevated); }
@@ -781,9 +776,11 @@
   .js-msg { font-family: "JetBrains Mono", monospace; font-size: 10.5px; color: var(--ink-subtle); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   @media (prefers-reduced-motion: reduce) { .js-fill.live { animation: none; } }
   th.selcol, td.selcol { width: 34px; text-align: center; padding-left: 14px; padding-right: 4px; }
-  /* Reserve a fixed width for Status so the stage pill + progress bar don't widen
-     the column mid-index and shove the later columns around. */
-  th.statuscol, td.statuscol { width: 175px; min-width: 175px; white-space: nowrap; }
+  /* Reserve enough fixed width for the widest stage pill ("Contextualizing" ≈
+     138px) plus the inline progress bar (52px) so the Status column never resizes
+     — horizontally (bar appears) or vertically (bar is inline, one line) — as
+     files move through indexing. */
+  th.statuscol, td.statuscol { width: 225px; min-width: 225px; white-space: nowrap; }
 
   /* ⌘K command palette */
   .cmdk-scrim { position: fixed; inset: 0; z-index: 70; background: rgba(0,0,0,.4);
