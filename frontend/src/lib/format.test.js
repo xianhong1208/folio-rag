@@ -10,7 +10,7 @@ describe('fmtNum', () => {
     expect(fmtNum(0)).toBe('0')
   })
   it('groups thousands', () => {
-    expect(fmtNum(1234567)).toBe((1234567).toLocaleString())
+    expect(fmtNum(1234567)).toBe('1,234,567')
   })
 })
 
