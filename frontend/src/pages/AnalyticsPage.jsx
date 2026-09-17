@@ -1,4 +1,4 @@
-import { useEffect, useState, useCallback } from 'react'
+import { useEffect, useState, useCallback, useRef } from 'react'
 import { BarChart3, Search } from 'lucide-react'
 import { get } from '../services/api'
 import { fmtNum } from '../lib/format'
@@ -10,6 +10,7 @@ export default function AnalyticsPage() {
   const [days, setDays] = useState('30')
   const [d, setD] = useState(null)
   const [err, setErr] = useState(null)
+  const reqRef = useRef(0) // guards against out-of-order responses when filters change fast
 
   useEffect(() => {
     get('/api/admin/folders').then((r) => setFolders(r.data.folders)).catch(() => {})
@@ -17,11 +18,12 @@ export default function AnalyticsPage() {
 
   const load = useCallback(async () => {
     setErr(null)
+    const my = ++reqRef.current
     try {
       const qs = `?days=${days}${fid ? `&folder_id=${fid}` : ''}`
       const r = await get('/api/admin/analytics' + qs)
-      setD(r.data)
-    } catch (e) { setErr(e.message) }
+      if (my === reqRef.current) setD(r.data)
+    } catch (e) { if (my === reqRef.current) setErr(e.message) }
   }, [days, fid])
   useEffect(() => { load() }, [load])
 
