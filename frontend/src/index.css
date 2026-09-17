@@ -492,7 +492,9 @@
   .act-btn:hover { color: var(--cyber-hi); border-color: var(--cyber-line); background: var(--cyber-soft); }
   .act-btn.danger:hover { color: var(--alert-hi); border-color: var(--alert-line); background: var(--alert-soft); }
   .actions { display: flex; gap: 6px; }
-  .card-head .btn-cyber { padding: 8px 16px; }
+  /* Match the primary button's height/size to the selects & search boxes it sits
+     beside in a card header (12px / 7px), so it doesn't tower over the row. */
+  .card-head .btn-cyber { padding: 7px 16px; font-size: 12px; }
 
   /* Modal */
   .modal-scrim {
