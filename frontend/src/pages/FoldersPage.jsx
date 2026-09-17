@@ -28,6 +28,11 @@ export default function FoldersPage() {
   // The folder whose files are currently shown — used to drop a stale files
   // response that resolves after the user has already switched folders.
   const curIdRef = useRef(null)
+  // Bumped to (re)start the file poll after an action that creates work (upload,
+  // reindex). The poll stops itself once nothing is pending, so a new upload into
+  // an already-indexed folder would otherwise never refresh without this.
+  const [pollNonce, setPollNonce] = useState(0)
+  const kickPoll = useCallback(() => setPollNonce((n) => n + 1), [])
 
   const loadFolders = useCallback(async () => {
     try { const r = await get('/api/admin/folders'); setFolders(r.data.folders); setFoldersErr(null) }
@@ -71,7 +76,7 @@ export default function FoldersPage() {
     }
     tick()
     return () => { alive = false; if (timer) clearTimeout(timer) }
-  }, [cur, loadFiles])
+  }, [cur, loadFiles, pollNonce])
 
   // Esc closes the chunk viewer, matching the app's other modals.
   useEffect(() => {
@@ -87,7 +92,7 @@ export default function FoldersPage() {
   const toggleSel = (id) => setSel((s) => { const n = new Set(s); n.has(id) ? n.delete(id) : n.add(id); return n })
   const bulkReindex = async () => {
     const ids = [...sel]
-    try { await Promise.all(ids.map((id) => post(`/api/admin/manage/folders/${cur.id}/files/${id}/retry`, {}))); toast(`Reindexing ${ids.length} file(s)`, 'ok'); setSel(new Set()); loadFiles(cur.id) }
+    try { await Promise.all(ids.map((id) => post(`/api/admin/manage/folders/${cur.id}/files/${id}/retry`, {}))); toast(`Reindexing ${ids.length} file(s)`, 'ok'); setSel(new Set()); kickPoll() }
     catch (e) { toast('Reindex failed: ' + e.message, 'bad') }
   }
   const bulkDelete = async () => {
@@ -117,7 +122,7 @@ export default function FoldersPage() {
     catch (e) { toast('Create failed: ' + e.message, 'bad') }
   }
   const reindexFolder = async (fid, skip) => {
-    try { const r = await post(`/api/admin/manage/folders/${fid}/index`, { skip_existing: skip }); toast(r.message || 'Indexing started', 'ok') }
+    try { const r = await post(`/api/admin/manage/folders/${fid}/index`, { skip_existing: skip }); toast(r.message || 'Indexing started', 'ok'); kickPoll() }
     catch (e) { toast('Reindex failed: ' + e.message, 'bad') }
   }
   const [rebuilding, setRebuilding] = useState(false)
@@ -180,7 +185,7 @@ export default function FoldersPage() {
       } catch (err) { toast(`Upload failed: ${f.name} — ${err.message}`, 'bad') }
     }
     if (ok) toast(`Uploaded ${ok} file(s) — indexing`, 'ok')
-    loadFiles(cur.id)
+    kickPoll() // restart polling so the new file's status refreshes to indexed automatically
   }
 
   // ---- files detail view ----
