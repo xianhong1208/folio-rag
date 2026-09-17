@@ -776,6 +776,9 @@
   .js-msg { font-family: "JetBrains Mono", monospace; font-size: 10.5px; color: var(--ink-subtle); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   @media (prefers-reduced-motion: reduce) { .js-fill.live { animation: none; } }
   th.selcol, td.selcol { width: 34px; text-align: center; padding-left: 14px; padding-right: 4px; }
+  /* Reserve a fixed width for Status so the stage pill + progress bar don't widen
+     the column mid-index and shove the later columns around. */
+  th.statuscol, td.statuscol { width: 175px; min-width: 175px; white-space: nowrap; }
 
   /* ⌘K command palette */
   .cmdk-scrim { position: fixed; inset: 0; z-index: 70; background: rgba(0,0,0,.4);
