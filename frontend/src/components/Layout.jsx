@@ -76,7 +76,7 @@ export default function Layout() {
           ))}
         </nav>
         <div className="side-foot">
-          <div className="side-ver">Agentic RAG v1.0.0</div>
+          <div className="side-ver">Agentic RAG v1.1.0</div>
           <button className="theme-btn" onClick={toggleTheme}>
             {theme === 'dark' ? <Sun size={14} /> : <Moon size={14} />}
             {theme === 'dark' ? 'Light' : 'Dark'}

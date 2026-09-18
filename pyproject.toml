@@ -4,7 +4,7 @@
 
 [project]
 name = "agentic-rag"
-version = "1.0.0"
+version = "1.1.0"
 description = "Agentic RAG MCP Server — Hierarchical chunking + AutoMerging retrieval, designed for gpt-oss-120b"
 # 3.12 is the lowest Python with cp312 wheels for every PyTorch build (rocm/cuda/cpu).
 requires-python = ">=3.12,<3.13"
