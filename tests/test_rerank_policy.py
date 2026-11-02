@@ -107,6 +107,23 @@ class TestRerank:
             assert [n.node.node_id for n in out.nodes] == ["a", "b"]
             assert out.failed and out.top_score is None
 
+    async def test_scores_the_retrieval_text_not_the_display_text(self):
+        seen = {}
+
+        class _Spy:
+            score_threshold = 0.0
+
+            async def ascore(self, query, texts):
+                seen["texts"] = texts
+                return [0.5] * len(texts)
+
+        node = nws("a", text="36-month warranty.", breadcrumb="Aurora › Warranty",
+                   context_prefix="Warranty terms of the Aurora router.")
+        out = await rp.rerank(_Spy(), "q", [node], top_n=1)
+        assert seen["texts"] == ["Warranty terms of the Aurora router.\nAurora › Warranty\n"
+                                 "36-month warranty."]
+        assert out.nodes[0].node.text == "36-month warranty."  # display text untouched
+
     async def test_rerankers_without_ascore_use_arerank(self):
         r = MagicMock(spec=["arerank"])
         r.arerank = AsyncMock(return_value=[nws("b", 0.9), nws("a", 0.1)])
