@@ -33,7 +33,7 @@ export function parseApiError(data, status) {
 
 const LOGIN_MESSAGES = {
   token_expired: 'This token has expired. Issue a new one in MCP Gate.',
-  wrong_audience: 'This token was issued for a different service. Issue a token for Agentic RAG in MCP Gate.',
+  wrong_audience: 'This token was issued for a different service. Issue a token for Folio in MCP Gate.',
   wrong_issuer: 'This token was not issued by the MCP Gate this server trusts.',
   bad_signature: 'The token signature is invalid.',
   unknown_signing_key: 'The token was not signed by the trusted MCP Gate.',

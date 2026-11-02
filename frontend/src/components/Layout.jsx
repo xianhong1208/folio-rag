@@ -6,6 +6,7 @@ import {
 } from 'lucide-react'
 import { useSession } from '../contexts/SessionContext'
 import { sessionLabel, expiresIn } from '../lib/session'
+import { saveTheme } from '../lib/theme'
 
 const NAV = [
   { group: 'Console', items: [
@@ -79,7 +80,7 @@ export default function Layout() {
   const toggleTheme = () => {
     const next = theme === 'dark' ? 'light' : 'dark'
     document.documentElement.className = next
-    try { localStorage.setItem('agentic_theme', next) } catch { /* ignore */ }
+    try { saveTheme(window.localStorage, next) } catch { /* ignore */ }
     setTheme(next)
   }
 
@@ -87,7 +88,7 @@ export default function Layout() {
     <>
       <aside id="sidebar" className={navOpen ? 'open' : undefined}>
         <div className="brand">
-          <div className="logo">Agentic RAG</div>
+          <div className="logo">Folio</div>
           <div className="sub">Retrieval Terminal</div>
         </div>
         <nav>
@@ -112,7 +113,7 @@ export default function Layout() {
           ))}
         </nav>
         <div className="side-foot">
-          <div className="side-ver">Agentic RAG v1.1.0</div>
+          <div className="side-ver">Folio v1.1.0</div>
           <button className="theme-btn" onClick={toggleTheme}>
             {theme === 'dark' ? <Sun size={14} /> : <Moon size={14} />}
             {theme === 'dark' ? 'Light' : 'Dark'}

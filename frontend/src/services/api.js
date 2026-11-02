@@ -1,4 +1,4 @@
-// Agentic RAG admin API client. Same-origin under /admin, hitting /api/admin/* and
+// Folio admin API client. Same-origin under /admin, hitting /api/admin/* and
 // /api/console/session on the backend. Authentication is the HttpOnly session cookie
 // set at sign-in (the browser sends it; the token itself never reaches JS storage).
 // Every non-GET request carries the X-RAG-Console CSRF header the backend requires.
