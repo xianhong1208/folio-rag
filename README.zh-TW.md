@@ -30,7 +30,7 @@ License: MIT&nbsp;·&nbsp;Python 3.12&nbsp;·&nbsp;PostgreSQL + pgvector&nbsp;·
 - **每資料夾一個 MCP 工具,依 token 隔離。** 每個資料夾註冊成 `Agentic_<folder>` 工具;呼叫者看到的工具清單會依其 token 過濾 —— 你只看得到自己擁有的資料夾。歸屬以 token 穩定的 `jti` 為 key。
 - **OAuth 2.1 resource server。** 一個 `RemoteAuthProvider` + `JWTVerifier` 保護 `/mcp`;token 用 MCP Gate 的 JWKS 在本地離線驗證（RS256),並綁定本伺服器的 audience,別台的 token 在這裡無效。
 - **文件 + 音訊匯入。** [Docling](https://github.com/DS4SD/docling) 解析 PDF / DOCX / PPTX / XLSX / 圖片（含 OCR）;**FireRedASR** 在本地做繁體中文語音轉錄（或任何 OpenAI 相容的 `/v1/transcriptions`）。
-- **內建評測 harness。** 從你自己的 chunk 自動生成問題,對 `vector` / `hybrid` / `rerank` 評 **Recall@k · MRR · nDCG@k**,讓你針對真實語料調校檢索。
+- **內建評測 harness。** 從你自己的 chunk 自動生成問題,對正式檢索管線(與 `/api/rag/query` 同一路徑)以及純 `vector`、純 `bm25` 評 **Recall@k · MRR · nDCG@k**,讓你針對真實語料調校檢索。
 - **Retrieval Terminal 主控台。** `/admin` 的 React 單頁主控台:管線總覽、資料夾與檔案、會顯示**逐訊號檢索軌跡**的 Search Playground、即時索引任務串流、查詢分析、評測 harness、即時設定、健康狀態與稽核時間軸。
 - **跑在你的 GPU 上。** PyTorch 以 PEP 735 dependency group 依平台選擇（`rocm-r714` / `rocm-r713` / `cuda` / `cpu`）—— AMD ROCm、NVIDIA CUDA 或純 CPU。
 
@@ -166,7 +166,7 @@ GPU 選擇是 `uv sync --group {rocm-r714|rocm-r713|cuda|cpu}` 的取捨 —— 
 | **Search Playground** | 對資料夾即時查詢,顯示**逐訊號檢索軌跡** —— Vector · BM25 · Hybrid · Rerank 各自名次並列 —— 並可加 RAG 答案。 |
 | **Index Jobs** | 索引任務即時串流與進度;可取消執行中的任務。 |
 | **Query Analytics** | 查詢量、延遲、零結果率、熱門查詢與知識缺口。 |
-| **Evaluation** | 自動生成題組,對 `vector` / `hybrid` / `rerank` 評 Recall@k · MRR · nDCG@k。 |
+| **Evaluation** | 自動生成題組,對 `production`(與 `/api/rag/query` 同一路徑)、純 `vector`、純 `bm25` 評 Recall@k · MRR · nDCG@k;基準差異只與同一題組的歷次結果比較。 |
 | **Settings** | Embedding / LLM / Contextual Retrieval / Reranker / Speech-to-Text / Retrieval 的即時、持久化設定,含檢索預設與連線測試。修改需要 `rag:admin`。 |
 | **System Health** | 每個外部相依的即時連線狀態。 |
 | **Audit Log** | 每次執行期設定變更與變更者的時間軸(`rag:admin`)。 |

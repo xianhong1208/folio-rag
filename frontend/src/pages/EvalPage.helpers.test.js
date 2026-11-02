@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { ndcgOf } from './EvalPage'
+import { ndcgOf, headlineNdcg, modeLabel } from './EvalPage'
 
 // ndcgOf backs the baseline delta: it must read one *specific* mode's nDCG@k so
 // deltas compare like-for-like across runs (not the current best vs a different
@@ -34,5 +34,23 @@ describe('ndcgOf', () => {
     const prev = { rerank: { 'ndcg@10': 0.6 }, rrf: { 'ndcg@10': 0.7 } }
     const curBestMode = 'rrf'
     expect(ndcgOf(prev, curBestMode, 10)).toBe(0.7)
+  })
+})
+
+describe('headlineNdcg', () => {
+  it('prefers the production mode', () => {
+    expect(headlineNdcg({ vector: { 'ndcg@10': 0.9 }, production: { 'ndcg@10': 0.5 } }, 10)).toBe(0.5)
+  })
+  it('falls back to rerank / rrf for runs from before the production mode', () => {
+    expect(headlineNdcg({ rrf: { 'ndcg@10': 0.4 }, hybrid: { 'ndcg@10': 0.9 } }, 10)).toBe(0.4)
+    expect(headlineNdcg({ vector: { 'ndcg@10': 0.9 } }, 10)).toBeNull()
+  })
+})
+
+describe('modeLabel', () => {
+  it('uses the report labels, then built-ins, then the raw key', () => {
+    expect(modeLabel({ mode_labels: { bm25: 'BM25!' } }, 'bm25')).toBe('BM25!')
+    expect(modeLabel(null, 'vector')).toBe('Vector only (dense embeddings)')
+    expect(modeLabel({}, 'rrf')).toBe('rrf')
   })
 })

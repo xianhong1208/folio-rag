@@ -5,9 +5,9 @@ Usage:
     uv run --no-sync python scripts/rag_eval.py --folder <name or ID> --n 20
 
 Samples N indexed leaf chunks, uses the configured LLM to generate one question
-per chunk (gold = that chunk's node_id), then runs vector / hybrid / rrf / rerank
-retrieval and reports Recall@k, MRR, and nDCG@k for each mode. The eval set is
-cached under reports/ and reused so scores are comparable across parameter changes.
+per chunk (gold = that chunk's node_id), then scores three retrieval modes with
+Recall@k, MRR and nDCG@k (see MODES). The eval set is cached under reports/ and
+reused so scores are comparable across parameter changes.
 """
 from __future__ import annotations
 
@@ -149,69 +149,97 @@ def generate_eval_set(folder, n: int, out_path: str):
     return items
 
 
-async def _retr(index, query: str, vmode: str, k: int):
-    from llama_index.core.retrievers import VectorIndexRetriever
-    kwargs = {"sparse_top_k": max(k, 20)} if vmode in ("hybrid", "sparse") else {}
-    r = VectorIndexRetriever(index=index, similarity_top_k=k,
-                             vector_store_query_mode=vmode, vector_store_kwargs=kwargs)
-    nodes = await r.aretrieve(query)
-    return [n for n in nodes if n.node.metadata.get("node_role", "leaf") == "leaf"]
+# Modes scored for every question. "production" is THE number: the same adapter call
+# POST /api/rag/query makes, with the live settings (fusion, rerank, thresholds), so a
+# settings change shows up here exactly as users see it. "vector" and "bm25" isolate
+# the two signals production fuses, via the production QueryEngine's own per-path
+# retrieval (BM25 gets the same CKIP OR-query as production). The old "hybrid" mode
+# (llama-index concat fusion) was dropped: pgvector's concat ranked dense first, so it
+# always equalled "vector" and suggested BM25 added nothing.
+MODES = ("vector", "bm25", "production")
+MODE_LABELS = {
+    "vector": "Vector only (dense embeddings)",
+    "bm25": "Keyword only (BM25)",
+    "production": "Production (/api/rag/query: fusion + rerank when enabled)",
+}
+BEST_MODE = "production"
+# Bumped when modes or scoring change, so history deltas never compare across harnesses.
+HARNESS_VERSION = 2
 
 
-def _rrf(lists, k, rrf_k=60):
-    scores, node_map = {}, {}
-    for lst in lists:
-        for rank, n in enumerate(lst):
-            nid = n.node.node_id
-            scores[nid] = scores.get(nid, 0.0) + 1.0 / (rrf_k + rank + 1)
-            node_map.setdefault(nid, n)
-    return sorted(node_map.values(), key=lambda n: scores[n.node.node_id], reverse=True)[:k]
+class _Retrievers:
+    """The retrieval calls behind each mode, bound to one folder."""
+
+    def __init__(self, folder, k: int):
+        from src.adapter.rag import get_rag_adapter
+        from src.adapter.rag_query import _fusion_config
+        from src.api.router.rag_query import _resolve_retrieval_defaults
+        from src.domain.rag.query_engine import QueryEngine
+
+        self.folder, self.k = folder, k
+        self.adapter = get_rag_adapter()
+        self.defaults = _resolve_retrieval_defaults()
+        fusion, rrf_k, tsc = _fusion_config()
+        ctx = self.adapter._query_svc._ctx
+        # Diagnostics engine for the single-signal modes (no reranker: raw path ranks).
+        self.engine = QueryEngine(
+            vector_store=ctx.get_vector_store(folder.id, folder.user_token),
+            top_k=k, similarity_cutoff=self.defaults["similarity_cutoff"],
+            sparse_top_k=max(k, self.defaults["sparse_top_k"] or 0),
+            hybrid_alpha=self.defaults["hybrid_alpha"], reranker=None,
+            hybrid_fusion=fusion, rrf_k=rrf_k, text_search_config=tsc,
+        )
+
+    async def nodes(self, query: str, mode: str) -> list:
+        """[(node_id, text)] of this mode's top-k, best first."""
+        k = self.k
+        if mode == "vector":
+            got = await self.engine._aretrieve_mode(query, "default", k)
+            return [(n.node.node_id, n.node.text) for n in got[:k]]
+        if mode == "bm25":
+            got = await self.engine._aretrieve_mode(query, "sparse", k)
+            return [(n.node.node_id, n.node.text) for n in got[:k]]
+        if mode == "production":
+            d = self.defaults
+            res = await self.adapter.query_rag(
+                query=query, folder_id=self.folder.id, token=self.folder.user_token,
+                top_k=k, similarity_cutoff=d["similarity_cutoff"], use_cache=False,
+                sparse_top_k=d["sparse_top_k"], hybrid_alpha=d["hybrid_alpha"])
+            return [(r.metadata.node_id, r.text) for r in res.results[:k]]
+        raise ValueError(f"unknown eval mode: {mode}")
 
 
-async def _rank_of_gold(index, reranker, query: str, gold: str, mode: str, k: int):
-    """Return the gold node_id's rank (1-based) in this mode's top-k, or None if absent.
-
-    mode: vector (dense) / hybrid (llama_index concat) / rrf (dense+sparse RRF) /
-          rerank (cross-encoder rerank over the RRF candidates — matches
-          production aquery).
-    """
-    retrieve_k = k * 3 if mode == "rerank" else k
-    if mode == "vector":
-        nodes = (await _retr(index, query, "default", k))[:k]
-    elif mode == "hybrid":
-        nodes = (await _retr(index, query, "hybrid", k))[:k]
-    elif mode in ("rrf", "rerank"):
-        dense = await _retr(index, query, "default", retrieve_k)
-        sparse = await _retr(index, query, "sparse", retrieve_k)
-        nodes = _rrf([dense, sparse], retrieve_k)
-        if mode == "rerank" and reranker and nodes:
-            nodes = await reranker.arerank(query, nodes, top_n=k)
-        else:
-            nodes = nodes[:k]
-    else:
-        nodes = []
-    for i, n in enumerate(nodes):
-        if n.node.node_id == gold:
+def _rank_in(node_ids: list, gold: str):
+    """1-based rank of gold among node_ids, or None."""
+    for i, nid in enumerate(node_ids):
+        if nid == gold:
             return i + 1
     return None
 
 
-async def _retrieve_nodes(index, reranker, query: str, mode: str, k: int):
-    """Return this mode's top-k nodes (same retrieval as _rank_of_gold, but the nodes
-    themselves — used to build answer-generation context for the judge)."""
-    retrieve_k = k * 3 if mode == "rerank" else k
-    if mode == "vector":
-        return (await _retr(index, query, "default", k))[:k]
-    if mode == "hybrid":
-        return (await _retr(index, query, "hybrid", k))[:k]
-    if mode in ("rrf", "rerank"):
-        dense = await _retr(index, query, "default", retrieve_k)
-        sparse = await _retr(index, query, "sparse", retrieve_k)
-        nodes = _rrf([dense, sparse], retrieve_k)
-        if mode == "rerank" and reranker and nodes:
-            return await reranker.arerank(query, nodes, top_n=k)
-        return nodes[:k]
-    return []
+def question_set_id(items: list) -> str:
+    """Stable fingerprint of an eval set (gold ids + questions) — history rows are only
+    comparable when it matches."""
+    import hashlib
+    h = hashlib.sha1()
+    for line in sorted(f"{it.get('gold_node_id')}\t{it.get('query')}" for it in items):
+        h.update(line.encode("utf-8"))
+        h.update(b"\n")
+    return h.hexdigest()[:12]
+
+
+def comparable_previous(history: list, rep: dict):
+    """The latest history row scored on the same question set, k and harness, else None.
+
+    A delta against a run on different questions, a different k or the old mode set is
+    noise, not a regression or a gain — the console hides it instead.
+    """
+    for h in reversed(history):
+        if (h.get("harness") == rep.get("harness")
+                and h.get("question_set") == rep.get("question_set")
+                and h.get("k") == rep.get("k")):
+            return h
+    return None
 
 
 def _answer_and_judge(client, model: str, query: str, contexts: list) -> dict:
@@ -298,7 +326,8 @@ def _append_history(slug: str, rep: dict) -> None:
     entry = {
         "generated_at": rep.get("generated_at"), "n": rep.get("n"), "k": rep.get("k"),
         "summary": rep.get("summary"), "answer_quality": rep.get("answer_quality"),
-        "config": rep.get("config"),
+        "config": rep.get("config"), "modes": rep.get("modes"),
+        "harness": rep.get("harness"), "question_set": rep.get("question_set"),
     }
     p = _history_path(slug)
     os.makedirs(os.path.dirname(p), exist_ok=True)
@@ -357,16 +386,11 @@ async def evaluate(folder, items, k: int, progress=None, judge: bool = False) ->
     judge=True also generates an answer per question over the best retrieval mode and
     LLM-grades faithfulness + relevance (2 extra LLM calls/item — opt-in, slower).
     """
-    from llama_index.core import VectorStoreIndex
-    from src.adapter.rag import get_rag_adapter
-    ctx = get_rag_adapter()._query_svc._ctx
-    vs = ctx.get_vector_store(folder.id, folder.user_token)
-    index = VectorStoreIndex.from_vector_store(vs)
-    reranker = ctx.reranker
-    modes = ["vector", "hybrid", "rrf"] + (["rerank"] if reranker else [])
+    retr = _Retrievers(folder, k)
+    modes = list(MODES)
 
     jclient = jmodel = None
-    best_mode = "rerank" if reranker else "rrf"
+    best_mode = BEST_MODE
     loop = asyncio.get_event_loop()
     faith_sum = rel_sum = 0.0
     faith_n = rel_n = 0
@@ -381,8 +405,12 @@ async def evaluate(folder, items, k: int, progress=None, judge: bool = False) ->
     per_item = []
     for j, it in enumerate(items):
         row = {"query": it["query"], "ranks": {}}
+        best_nodes = []
         for m in modes:
-            rank = await _rank_of_gold(index, reranker, it["query"], it["gold_node_id"], m, k)
+            got = await retr.nodes(it["query"], m)
+            if m == best_mode:
+                best_nodes = got
+            rank = _rank_in([nid for nid, _ in got], it["gold_node_id"])
             row["ranks"][m] = rank
             if rank is not None and rank <= k:
                 agg[m]["recall"] += 1
@@ -390,8 +418,7 @@ async def evaluate(folder, items, k: int, progress=None, judge: bool = False) ->
                 agg[m]["ndcg"] += 1.0 / math.log2(rank + 1)
         if judge:
             try:
-                nodes = await _retrieve_nodes(index, reranker, it["query"], best_mode, k)
-                contexts = [n.node.text for n in nodes[:6]]
+                contexts = [t for _, t in best_nodes[:6]]
                 res = await loop.run_in_executor(
                     None, _answer_and_judge, jclient, jmodel, it["query"], contexts)
                 row["answer"] = res["answer"]
@@ -428,8 +455,10 @@ async def evaluate(folder, items, k: int, progress=None, judge: bool = False) ->
             "n_judged": max(faith_n, rel_n),
         }
     return {"folder": folder.name, "n": len(items), "k": k,
-            "modes": modes, "summary": summary, "per_item": per_item,
-            "answer_quality": answer_quality, "config": _config_snapshot()}
+            "modes": modes, "mode_labels": {m: MODE_LABELS[m] for m in modes},
+            "summary": summary, "per_item": per_item,
+            "answer_quality": answer_quality, "config": _config_snapshot(),
+            "harness": HARNESS_VERSION, "question_set": question_set_id(items)}
 
 
 def _print_report(rep: dict):
@@ -437,10 +466,12 @@ def _print_report(rep: dict):
     print("\n" + "=" * 56)
     print(f"RAG retrieval eval — folder='{rep['folder']}'  n={rep['n']}  k={k}")
     print("=" * 56)
-    print(f"{'mode':<10} {'Recall@%d'%k:>10} {'MRR':>8} {'nDCG@%d'%k:>9}")
+    print(f"{'mode':<11} {'Recall@%d'%k:>10} {'MRR':>8} {'nDCG@%d'%k:>9}")
     for m in rep["modes"]:
         s = rep["summary"][m]
-        print(f"{m:<10} {s['recall@%d'%k]:>10} {s['mrr']:>8} {s['ndcg@%d'%k]:>9}")
+        print(f"{m:<11} {s['recall@%d'%k]:>10} {s['mrr']:>8} {s['ndcg@%d'%k]:>9}")
+    for m in rep["modes"]:
+        print(f"  {m}: {rep.get('mode_labels', {}).get(m, '')}")
     aq = rep.get("answer_quality")
     if aq:
         print("-" * 56)
@@ -488,7 +519,10 @@ def run_eval(folder_name: str, n: int = 15, k: int = 10,
     rep["stale_dropped"] = stale_dropped
     import datetime
     rep["generated_at"] = datetime.datetime.now().isoformat(timespec="seconds")
-    rep["previous"] = prev[-1] if prev else None
+    rep["previous"] = comparable_previous(prev, rep)
+    if prev and rep["previous"] is None:
+        rep["previous_note"] = ("no earlier run on the same question set, k and modes — "
+                                "deltas are hidden")
     out_path = report_path(slug)
     os.makedirs(os.path.dirname(out_path), exist_ok=True)
     with open(out_path, "w", encoding="utf-8") as f:
@@ -535,7 +569,10 @@ async def run_eval_async(folder_name: str, n: int = 15, k: int = 10,
     rep["regenerate_reason"] = regen_reason
     rep["stale_dropped"] = stale_dropped
     rep["generated_at"] = datetime.datetime.now().isoformat(timespec="seconds")
-    rep["previous"] = prev[-1] if prev else None
+    rep["previous"] = comparable_previous(prev, rep)
+    if prev and rep["previous"] is None:
+        rep["previous_note"] = ("no earlier run on the same question set, k and modes — "
+                                "deltas are hidden")
     out_path = report_path(slug)
     os.makedirs(os.path.dirname(out_path), exist_ok=True)
     with open(out_path, "w", encoding="utf-8") as f:
