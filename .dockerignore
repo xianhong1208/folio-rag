@@ -1,14 +1,35 @@
+# Tooling and caches
 .venv
 __pycache__
 *.pyc
 .git
 .gitignore
-.env
-.env.*
 node_modules
 *.egg-info
 .mypy_cache
 .pytest_cache
 .ruff_cache
+.coverage
+htmlcov
 Dockerfile*
 .dockerignore
+
+# Secrets
+.env
+.env.*
+
+# Local runtime artefacts: uploaded documents, logs, eval reports, local data
+# and assets/ (downloaded model weights, local images). None of them belong in
+# an image, and they can hold private material; mount model weights at runtime
+# or download them in the image build instead.
+assets/
+storage/
+reports/
+logs/
+data/
+config/_itest_config.yaml
+
+# config/config.yaml is NOT excluded: the committed template is what the image
+# starts from. A working-tree copy can hold a real password, so build images
+# from a clean checkout (or CI) and supply real values at runtime through
+# DATABASE_URL / *_API_KEY or a mounted config file.

@@ -20,11 +20,11 @@ Security design:
 - SQLAlchemy throughout, no direct psycopg2 — credentials are handled by
   make_url (including special characters); the password is never split out of
   the URL, never lands in any dict/kwargs, and there is no intermediate
-  credential-holding point in the code (SAST: Use Of Hardcoded Password /
-  Insufficiently Protected Credentials).
+  credential-holding point in the code (CWE-259 Use of Hard-coded Password,
+  CWE-522 Insufficiently Protected Credentials).
 - The CREATE DATABASE identifier cannot be a bind param, so it is guarded by
   both the _validate_dbname allowlist and SQL-standard double-quote escaping
-  (SAST: Second-Order SQL Injection).
+  (CWE-89 SQL Injection, including the second-order variant).
 """
 
 from __future__ import annotations

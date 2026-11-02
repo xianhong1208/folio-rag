@@ -66,7 +66,7 @@
   .font-display { font-family: "Chakra Petch", "PingFang TC", "Microsoft JhengHei", system-ui, sans-serif; }
   code, .mono, input, select, textarea { font-family: "JetBrains Mono", ui-monospace, "PingFang TC", monospace; }
 
-  /* ── Layout shell ── */
+  /* ── Layout skeleton ── */
   aside {
     position: fixed; inset: 0 auto 0 0; width: 232px; z-index: 30;
     display: flex; flex-direction: column;
@@ -282,11 +282,11 @@
 
   /* Breadcrumb back link */
 
-  /* ── Settings form (kept) ── */
+  /* ── Settings form (shared) ── */
   .warnnote { display: flex; gap: 8px; align-items: baseline; margin: 0 22px 4px; padding: 9px 14px;
     border-radius: 10px; background: var(--signal-soft); border: 1px solid var(--signal-line);
     color: var(--signal-hi); font-size: 12px; }
-  /* Settings fields = tile grid */
+  /* Settings fields as a tile grid */
   .fields { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; padding: 14px 22px 18px; }
   @media (max-width: 760px) { .fields { grid-template-columns: 1fr; } }
   .field {
@@ -371,7 +371,7 @@
   .probe-result.ok { color: var(--matrix-hi); }
   .probe-result.bad { color: var(--alert-hi); }
 
-  /* Custom scrollbar (dark-console convention) */
+  /* Custom scrollbar (standard for dark consoles) */
   ::-webkit-scrollbar { width: 9px; height: 9px; }
   ::-webkit-scrollbar-track { background: transparent; }
   ::-webkit-scrollbar-thumb { background: var(--elevated); border-radius: 8px;
@@ -379,7 +379,7 @@
   ::-webkit-scrollbar-thumb:hover { background: var(--cyber-line); background-clip: padding-box; }
   * { scrollbar-width: thin; scrollbar-color: var(--elevated) transparent; }
 
-  /* Range slider (0–1 parameters) — cyber track fill + glowing thumb */
+  /* Range slider (0–1 parameters): filled track + glowing thumb */
   .slider-wrap { display: flex; align-items: center; gap: 12px; }
   .slider-wrap input[type=range] {
     flex: 1; -webkit-appearance: none; appearance: none; height: 6px;
@@ -407,7 +407,7 @@
   @keyframes viewin { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; transform: none; } }
   @media (prefers-reduced-motion: reduce) { .view { animation: none; } }
 
-  /* Skeleton shimmer (loading skeleton instead of a "Loading" label) */
+  /* Skeleton shimmer (loading placeholder instead of a 'Loading' label) */
   .skel { position: relative; overflow: hidden; background: var(--elevated);
     border-radius: 8px; min-height: 14px; }
   .skel::after { content: ""; position: absolute; inset: 0;
@@ -427,7 +427,7 @@
   }
   .search-box input:focus { border-color: var(--cyber-line); box-shadow: var(--glow); width: 240px; }
 
-  /* Sortable table header */
+  /* Sortable table headers */
   th.sortable { cursor: pointer; user-select: none; transition: color .2s; }
   th.sortable:hover { color: var(--cyber); }
   th.sortable .arrow { opacity: 0; margin-left: 4px; font-size: 9px; }
@@ -606,7 +606,7 @@
   .preset-btn:hover { border-color: var(--cyber-line); background: var(--cyber-soft); }
   .preset-btn:hover b { color: var(--cyber); }
 
-  /* Query analytics: two tables side by side (stacked on narrow screens) */
+  /* Query analysis: two tables side by side (stacked on narrow screens) */
   .an-tables { display: grid; grid-template-columns: 1fr 1fr; gap: 22px; align-items: start; }
   @media (max-width: 860px) { .an-tables { grid-template-columns: 1fr; } }
   #an-kpis { grid-template-columns: repeat(3, 1fr); }
@@ -615,7 +615,7 @@
     padding: 0 1px; font-weight: 600; }
 
   /* Retrieval trace */
-  /* Each signal = label | track | num, hence three columns (two columns pushed num onto the next row and stopped labels wrapping) */
+  /* Each signal is label | track | num, hence three columns (with two, num wrapped to the start of the next row and labels did not wrap) */
   .trace-bars { display: grid; grid-template-columns: 62px 1fr auto; gap: 5px 10px; margin-top: 8px;
     align-items: center; font-size: 11px; }
   .trace-bars .tb-label { color: var(--ink-muted); font-family: "Chakra Petch",system-ui,sans-serif; font-weight: 600; }
@@ -627,7 +627,7 @@
     border-radius: 5px; padding: 0 5px; background: var(--elevated); color: var(--ink-muted); margin-left: 5px; }
   .rank-chip.miss { opacity: .5; }
 
-  /* Bulk-action bar */
+  /* Bulk action bar */
   .bulkbar { display: flex; align-items: center; gap: 12px; padding: 10px 22px;
     background: var(--cyber-soft); border-bottom: 1px solid var(--cyber-line);
     font-size: 12.5px; color: var(--cyber-hi); font-family: "Chakra Petch",system-ui,sans-serif; font-weight: 600; }
