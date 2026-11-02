@@ -249,6 +249,20 @@ def asr_wants_local_whisper() -> bool:
     return True
 
 
+def _local_pdf_models_wanted() -> bool:
+    """Whether rag.parsing keeps PDF or image parsing on the in-process docling models
+    (config unreadable → the old behaviour: yes)."""
+    try:
+        from src.config.config_manager import Config as _Cfg
+        from src.config.roles import needs_local_docling_models
+        rag = getattr(_Cfg.get_config_model(), "rag", None)
+        if rag is not None:
+            return needs_local_docling_models(rag)
+    except Exception:
+        pass
+    return True
+
+
 def _resolve_tokenizer_path(embedding_model_name: Optional[str]) -> Optional[Path]:
     """Resolve the local HF tokenizer path used by HybridChunker (with fallback).
 
@@ -312,6 +326,12 @@ def get_hf_tokenizer(tokenizer_name: Optional[str]):
     Raises:
         RuntimeError: HF_HUB_OFFLINE=1 and no matching directory found under assets/hf_tokenizers.
     """
+    from src.domain.rag.token_counter import load_light_tokenizer, prefer_light_tokenizer
+    if prefer_light_tokenizer() or not tokenizer_name and _resolve_tokenizer_path(None) is None:
+        # profile: cloud / no transformers installed / nothing to load: the Rust
+        # `tokenizers` package reads tokenizer.json without transformers or torch, and
+        # degrades to a character estimate instead of crashing.
+        return load_light_tokenizer(tokenizer_name, resolve_assets_dir())
     local_tok_path = _resolve_tokenizer_path(tokenizer_name)
     if local_tok_path:
         return _load_local_tokenizer(local_tok_path)
@@ -560,10 +580,14 @@ def _build_converter():
     if _converter is None:
         _apply_docling_env()  # must run first: hf_offline=true sets HF_HUB_OFFLINE=1
 
-        artifacts_path = _resolve_artifacts_path()
+        # PDF/image layout + OCR models are only configured when rag.parsing keeps them
+        # local; under cloud parsing this converter serves Office/Markdown/HTML only and
+        # must not touch the model stack (or torch, via the CUDA check below).
+        local_models = _local_pdf_models_wanted()
+        artifacts_path = _resolve_artifacts_path() if local_models else None
         offline = os.environ.get("HF_HUB_OFFLINE") == "1"
 
-        if not artifacts_path and offline:
+        if local_models and not artifacts_path and offline:
             raise RuntimeError(
                 "[DOCLING] hf_offline=true but assets/docling_models not found. "
                 "Prepare via: `uv run docling-tools models download -o assets/docling_models`"
@@ -581,9 +605,13 @@ def _build_converter():
 
         format_options: dict = {}
 
+        # Audio pipeline: installed only when the Whisper model exists AND config permits.
+        whisper_path = _resolve_whisper_path() if asr_wants_local_whisper() else None
+
         # Compute the GPU/CPU choice from config — passed to all pipeline options so Docling's
         # Layout / TableFormer / OCR / Whisper all run on the configured device
-        accelerator_options = _get_accelerator_options()
+        accelerator_options = (
+            _get_accelerator_options() if (local_models or whisper_path) else None)
 
         if artifacts_path:
             logger.info(f"[DOCLING] Using local artifacts_path: {artifacts_path}")
@@ -599,19 +627,22 @@ def _build_converter():
             # PDF and Image share the same pipeline_options (IMAGE internally goes through StandardPdfPipeline)
             format_options[InputFormat.PDF] = PdfFormatOption(pipeline_options=pdf_pipeline_options)
             format_options[InputFormat.IMAGE] = ImageFormatOption(pipeline_options=pdf_pipeline_options)
-        else:
+        elif local_models:
             logger.warning(
                 "[DOCLING] No local artifacts_path; models will be fetched from HuggingFace Hub "
                 "on first use (online machines only)"
             )
+        else:
+            logger.info("[DOCLING] PDF/image models not configured: rag.parsing sends them to the cloud")
 
-        # Audio pipeline: installed only when the Whisper model exists AND config permits.
         # Not installed when rag.asr.enabled=false or the provider isn't docling-whisper (e.g. cloud),
         # saving local whisper's VRAM/warmup; a missing config keeps the old auto-discover semantics.
-        whisper_path = _resolve_whisper_path() if asr_wants_local_whisper() else None
         if whisper_path is None and not asr_wants_local_whisper():
             logger.info("[DOCLING] Audio pipeline skipped by rag.asr config (disabled or non-local provider)")
         if whisper_path:
+            # Patch whisper.load_model before docling's audio pipeline can load the model.
+            from src.domain.rag.audio_defense import _enable_whisper_anti_hallucination_defaults
+            _enable_whisper_anti_hallucination_defaults()
             logger.info(f"[DOCLING] Audio pipeline enabled, whisper_models at: {whisper_path}")
             # word_timestamps=False: avoids whisper/timing.py's hard dependency on Triton
             # (`triton_ops.dtw_kernel` / `median_filter_cuda`) — that API is unstable across Triton/ROCm
@@ -628,7 +659,8 @@ def _build_converter():
             format_options[InputFormat.AUDIO] = AudioFormatOption(
                 pipeline_options=asr_pipeline_options,
             )
-        else:
+        elif asr_wants_local_whisper():
+            # Only report missing weights when local Whisper is actually configured.
             logger.info("[DOCLING] assets/whisper_models/turbo.pt not found — audio uploads will fallback to SimpleDirectoryReader")
 
         converter_kwargs = {"format_options": format_options} if format_options else {}

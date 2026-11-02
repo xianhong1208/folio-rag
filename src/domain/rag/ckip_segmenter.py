@@ -34,6 +34,15 @@ logger = get_api_logger()
 _DEFAULT_MODEL = "bert-base"
 
 
+def _cloud_profile() -> bool:
+    try:
+        from src.config.config_manager import Config
+        rag = getattr(Config.get_config_model(), "rag", None)
+        return getattr(rag, "profile", "local") == "cloud"
+    except Exception:
+        return False
+
+
 class CkipSegmenter:
     """Lazy, thread-safe wrapper around ckip_transformers CkipWordSegmenter.
 
@@ -64,6 +73,15 @@ class CkipSegmenter:
             if self._ws is not None:
                 return True
             if self._load_failed:
+                return False
+            if _cloud_profile():
+                # profile: cloud loads no in-process model; CKIP is a torch model.
+                self._load_failed = True
+                logger.warning(
+                    "CKIP word segmenter disabled under rag.profile: cloud (it is an "
+                    "in-process torch model) — Chinese BM25 uses unsegmented text; "
+                    "use a model-free segmenter (rag.retrieval.segmenter: bigram)."
+                )
                 return False
             try:
                 # Imported lazily so a missing optional dependency doesn't break
