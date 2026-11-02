@@ -6,6 +6,37 @@ to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Added
+- **Console login.** The `/admin` console now signs in with an MCP Gate access
+  token for this service (`POST /api/console/session`). The token is verified
+  offline once and exchanged for an HttpOnly, SameSite=Strict session cookie
+  that carries only its identity (jti / sub / scopes), never the token. Scripts
+  can call `/api/admin/*` with `Authorization: Bearer <token>` instead.
+  New settings `auth.console.{session_hours, session_secret, secure_cookie,
+  admin_scope}`, all with defaults.
+- **`rag:admin` scope.** Changing runtime settings, probing arbitrary endpoints,
+  and reading the settings audit log and server-wide resources need it; without
+  it Settings and System Health are read-only.
+
+### Changed
+- **The console is scoped to the signed-in token.** It shows and manages only
+  the folders owned by the token's `jti` (the same ones REST / MCP callers with
+  that token reach); folders it creates belong to it. The *Owner Token* field
+  and the console's ability to act as any folder's owner are gone. Cross-folder
+  views (overview, jobs, analytics) cover the whole server only for `rag:admin`.
+- Settings changes are audited under the token's `sub`.
+- Cookie-authenticated console writes require the `X-RAG-Console: 1` header and
+  a same-origin `Origin` / `Referer` (CSRF protection).
+- With `auth.enabled: false` the console stays open (dev mode) and the server
+  logs a warning at startup.
+
+### Fixed
+- Retrying a file's indexing checked folder ownership but not that the file was
+  in that folder.
+- The chunk viewer no longer reads a file name from outside the folder.
+- Eval reports, question sets and history are keyed by folder id: two owners'
+  same-named folders used to share (and could read) each other's results.
+
 ### Removed
 - **The legacy single-file console** (`/admin-classic`, `web/admin_console.html`
   and its loader `src/api/router/admin_page_html.py`). The React console at
