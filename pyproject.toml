@@ -52,6 +52,10 @@ dependencies = [
     "tokenizers>=0.20.0",
     # OpenDocument (odt/ods/odp) parsing
     "odfdo>=3.22.0,<4.0.0",
+    # Simplified -> Traditional conversion (no torch): repairs Simplified drift in LLM-written
+    # contextual prefixes and detects the document's script (src/domain/rag/han_script.py) in
+    # every profile, and converts FireRedASR output in the local one.
+    "opencc>=1.1.9",
     # Page rendering for cloud PDF parsing (and page counts for progress)
     "pymupdf==1.26.7",
     "pillow==12.2.0",
@@ -89,11 +93,10 @@ local = [
     "llama-index-embeddings-huggingface==0.6.1",
     # FireRedASR — vendored official inference code (see [tool.uv.sources]; vendor/fireredasr_src)
     "fireredasr",
-    # FireRedASR AED inference deps (arch-independent); opencc handles Simplified->Traditional.
+    # FireRedASR AED inference deps (arch-independent).
     "kaldiio>=2.18.0",
     "kaldi-native-fbank>=1.15",
     "sentencepiece>=0.2.0",
-    "opencc>=1.1.9",
     # OCR runs via docling's transitive rapidocr (torch backend); no onnxruntime needed.
     # Pinned to 4.x; 5.x needs separate sentence-transformers / llama-index compatibility checks.
     "transformers>=4.46.0,<5.0.0",

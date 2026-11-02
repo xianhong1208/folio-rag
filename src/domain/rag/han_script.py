@@ -43,7 +43,7 @@ def strip_invisible(text: str) -> str:
 def _cc(config: str):
     with _cc_lock:
         if config not in _converters:
-            import opencc  # already a dependency (FireRedASR output)
+            import opencc  # core dependency (no torch), so it works under profile: cloud too
 
             _converters[config] = opencc.OpenCC(f"{config}.json")
         return _converters[config]

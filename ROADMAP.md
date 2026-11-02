@@ -120,7 +120,7 @@ fragmented chunks and weak precision.
   tables depend on it).
 - **Synchronous** SQLAlchemy / psycopg2 — do not use `+asyncpg`.
 - **GPU selection is manual** — PyTorch is chosen per platform via a
-  `uv sync --group` (rocm / cuda / cpu).
+  `uv sync --extra local --group` (rocm / cuda / cpu).
 - **Console sessions outlive token revocation.** The console session is a
   stateless signed cookie, so revoking the token in MCP Gate does not end it
   before its expiry (`auth.console.session_hours`, default 8 h) — the same

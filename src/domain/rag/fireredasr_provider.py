@@ -72,7 +72,7 @@ def _load_model(model_dir: Path):
         except ImportError as e:
             raise RuntimeError(
                 "fireredasr package cannot be imported — in dev run "
-                "`uv sync --group <gpu>` (path dep points at vendor/fireredasr_src); "
+                "`uv sync --extra local --group <gpu>` (path dep points at vendor/fireredasr_src); "
                 "for packaged builds ensure Nuitka bundles fireredasr "
                 "(add --include-package=fireredasr if needed)"
             ) from e

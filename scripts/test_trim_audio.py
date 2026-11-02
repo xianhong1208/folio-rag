@@ -111,7 +111,7 @@ def load_whisper(device: str):
     try:
         import whisper
     except ImportError:
-        sys.exit("[error] openai-whisper not installed; run `uv sync` first")
+        sys.exit("[error] openai-whisper not installed; run `uv sync --extra local --group <gpu>` first")
 
     whisper_dir = PROJECT_ROOT / "assets" / "whisper_models"
     if whisper_dir.is_dir() and any(whisper_dir.glob("*.pt")):

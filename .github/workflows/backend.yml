@@ -75,8 +75,10 @@ jobs:
           path: .hf-cache
           key: hf-${{ runner.os }}-${{ hashFiles('pyproject.toml') }}
           restore-keys: hf-${{ runner.os }}-
-      - name: Install (CPU torch group, locked)
-        run: uv sync --frozen --group cpu
+      - name: Install (local model stack + jieba, CPU torch group, locked)
+        # The unit suite covers the in-process providers too, so it needs the `local`
+        # extra (and `jieba` for the optional segmenter); torch comes from the cpu group.
+        run: uv sync --frozen --extra local --extra jieba --group cpu
       - name: Unit tests (fails below [tool.coverage.report] fail_under)
         # Integration tests skip themselves unless RAG_RUN_DB_ITESTS=1.
         run: uv run --no-sync pytest --cov --cov-report=term --cov-report=json:reports/coverage.json
@@ -119,7 +121,31 @@ jobs:
           path: .hf-cache
           key: hf-${{ runner.os }}-${{ hashFiles('pyproject.toml') }}
           restore-keys: hf-${{ runner.os }}-
-      - name: Install (CPU torch group, locked)
-        run: uv sync --frozen --group cpu
+      - name: Install (local model stack + jieba, CPU torch group, locked)
+        run: uv sync --frozen --extra local --extra jieba --group cpu
       - name: Integration tests
         run: uv run --no-sync pytest tests/integration -p no:cacheprovider
+
+  core:
+    # What `uv sync` without extras installs (rag.profile: cloud): no torch, no
+    # transformers, no CKIP. The unit suite runs on it (tests that need the local stack
+    # skip themselves), including tests/test_cloud_profile_no_local_models.py, which
+    # proves the cloud profile boots, indexes (Office, cloud vision PDF/image, cloud STT)
+    # and answers on that install, imports nothing from the local stack, and segments
+    # Chinese for BM25 with the bigram default. Cheap: no torch download. No coverage
+    # gate here — the `unit` job owns it.
+    name: Core install (cloud profile)
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v6
+        with:
+          version: ${{ env.UV_VERSION }}
+          python-version: ${{ env.PYTHON_VERSION }}
+          enable-cache: true
+          cache-dependency-glob: uv.lock
+      - name: Install (core only, locked)
+        run: uv sync --frozen
+      - name: Unit tests on the core install
+        run: uv run --no-sync pytest -p no:cacheprovider
