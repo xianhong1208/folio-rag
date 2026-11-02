@@ -106,7 +106,7 @@ async def test_unknown_mode_returns_error():
 
 
 async def test_search_response_carries_provenance():
-    """ref: MergedResult's page/headings pass through into the search response;
+    """Citation provenance: MergedResult's page/headings pass through into the search response;
     results without provenance (old indexed data) do not carry these two keys."""
     from src.domain.rag.agentic_handlers import handle_search
     from src.domain.rag.auto_merging import MergedResult

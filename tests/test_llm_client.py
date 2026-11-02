@@ -20,7 +20,7 @@ def _llm(**kw):
 
 
 class TestCreateClient:
-    def test_openai_honours_base_url_k20(self):
+    def test_openai_honours_base_url(self):
         c = create_openai_client(_llm(provider="openai", api_key="sk-x", base_url="https://gw.example/v1"))
         assert str(c.base_url).startswith("https://gw.example/v1")
         assert c.timeout == 12.5 and c.max_retries == 4

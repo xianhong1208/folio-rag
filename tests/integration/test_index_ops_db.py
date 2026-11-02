@@ -144,7 +144,7 @@ class TestInterruptedFiles:
 
 
 class TestRuntimeTablesMigration:
-    """ref: the three runtime tables come from Alembic, matching the ORM."""
+    """The three runtime tables come from Alembic, matching the ORM."""
 
     @pytest.mark.parametrize("table", ["RuntimeSettings", "SettingsAudit", "QueryLogs"])
     def test_table_exists_after_chain(self, engine, table):

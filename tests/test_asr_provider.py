@@ -1,5 +1,5 @@
 
-"""ref -- AsrProvider factory and implementations (docling local + openai-compatible cloud).
+"""AsrProvider factory and implementations (docling local + openai-compatible cloud).
 
 Covers: factory routing by config.provider (openai-compatible without base_url
 errors immediately; unknown provider raises ValueError; fireredasr routes to

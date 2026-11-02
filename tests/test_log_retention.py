@@ -1,4 +1,4 @@
-"""ref: logging.max_size / backup_count actually rotate and prune log files."""
+"""logging.max_size / backup_count actually rotate and prune log files."""
 
 import os
 import sys

@@ -1,4 +1,4 @@
-"""ref: per-folder MCP tool names must match ^[a-zA-Z0-9_-]{1,64}$.
+"""Per-folder MCP tool names must match ^[a-zA-Z0-9_-]{1,64}$.
 
 Claude and OpenAI clients reject other names, and one bad tool can break tool
 listing for the whole server. Folder names may be CJK, contain spaces, or be long.

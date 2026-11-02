@@ -442,7 +442,7 @@ def test_asr_config_defaults():
 
     Deliberately lean: every config field is a permanent maintenance surface;
     trimming/filtering is always on in code, and FireRedASR-specific fields are
-    added only when ref is implemented. The cloud profile added the four fields
+    added only when the FireRedASR provider is implemented. The cloud profile added the four fields
     chunked cloud transcription needs (language hint, segment length, timeout, retries)."""
     from src.config.model import AsrConfig
     cfg = AsrConfig()

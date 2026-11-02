@@ -192,7 +192,7 @@ class TestQueryPlayground:
         {"query": "hello", "similarity_cutoff": 7},
         {"query": "hello", "trace": "maybe"},
         {"query": "   x  "},                              # too short once stripped
-        {"query": "x" * 2001},                            # ref cap
+        {"query": "x" * 2001},                            # query length cap
         {},
     ])
     def test_bad_params_are_422_not_500(self, client, body):
