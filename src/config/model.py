@@ -5,7 +5,10 @@ All Pydantic config models are collected here for reuse across the project.
 """
 
 from typing import List, Optional
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel, ConfigDict, Field
+
+# Secrets are excluded from repr()/str() (repr=False), so logging a whole config
+# object, or an exception message that embeds one, can never print them.
 
 
 class ServerConfig(BaseModel):
@@ -17,7 +20,7 @@ class ServerConfig(BaseModel):
 
 class DatabaseConfig(BaseModel):
     """Database configuration."""
-    url: str
+    url: str = Field(repr=False)  # usually embeds the password
     echo: bool
     pool_size: int
     max_overflow: int
@@ -27,7 +30,7 @@ class DatabaseConfig(BaseModel):
     port: Optional[int] = None
     database: Optional[str] = None
     user: Optional[str] = None
-    password: Optional[str] = None
+    password: Optional[str] = Field(None, repr=False)
 
 
 class DynamicToolsConfig(BaseModel):
@@ -120,7 +123,7 @@ class RAGEmbeddingConfig(BaseModel):
     provider: str  # "openai", "azure", "vllm", "ollama"
     model: str
     dimension: int
-    api_key: Optional[str] = None  # Direct API key
+    api_key: Optional[str] = Field(None, repr=False)  # Direct API key
     api_key_env: Optional[str] = None  # Environment variable name for API key
     base_url: Optional[str] = None  # Also used as azure_endpoint for Azure provider
     api_version: Optional[str] = None  # Azure API version (e.g., "2024-02-01")
@@ -179,7 +182,7 @@ class RAGLLMConfig(BaseModel):
     """RAG LLM configuration (for LLM-dependent features such as Contextual Retrieval)."""
     provider: str = "azure"  # "azure", "openai", "vllm", "ollama"
     model: str = "gpt-4o-mini"
-    api_key: Optional[str] = None
+    api_key: Optional[str] = Field(None, repr=False)
     base_url: Optional[str] = None  # Azure endpoint
     api_version: Optional[str] = "2024-12-01-preview"
     azure_deployment: Optional[str] = None
@@ -202,7 +205,7 @@ class RerankConfig(BaseModel):
     enabled: bool = False
     model: str = "BAAI/bge-reranker-v2-m3"
     base_url: str = "http://localhost:8787"
-    api_key: Optional[str] = None
+    api_key: Optional[str] = Field(None, repr=False)
     top_n: Optional[int] = None  # keep the top N results after reranking (None = keep all)
     score_threshold: float = 0.0  # rerank score threshold
     # Input template applied before POST /v1/score; {text} is the placeholder. Instruction-tuned
@@ -237,7 +240,7 @@ class AsrConfig(BaseModel):
     provider: str = "docling-whisper"
     # ---- Cloud (openai-compatible) only: POST {base_url}/audio/transcriptions ----
     base_url: Optional[str] = None          # e.g. http://host:8000/v1
-    api_key: Optional[str] = None
+    api_key: Optional[str] = Field(None, repr=False)
     model: Optional[str] = None             # cloud model name, e.g. whisper-1
 
 
