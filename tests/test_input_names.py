@@ -1,4 +1,4 @@
-"""ref / ref: uploads and names fail with 4xx, never a 500 carrying SQL details.
+"""Uploads and names fail with 4xx, never a 500 carrying SQL details.
 
 - Unsupported extension → 415, over the size limit → 413 (both ValueError
   subclasses, so older callers that catch ValueError keep working).

@@ -161,7 +161,7 @@ async def test_abort_before_embed_leaves_no_residue(vsm, indexer, folder, file_r
         pass  # UndefinedTable -- the table was never even created, zero residue
 
 
-# ref E2E traceability: real file -> docling chunking with provenance ->
+# Citation provenance end to end: real file -> docling chunking with provenance ->
 # stored -> every record is reverse-lookupable.
 
 async def test_e2e_traceability_real_md_to_store_and_back(

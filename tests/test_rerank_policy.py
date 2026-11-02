@@ -15,7 +15,7 @@ MXBAI = "mixedbread-ai/mxbai-rerank-base-v2"
 
 
 class TestReranker:
-    """ref: a failed rerank must not hand back all 3 × top_k candidates."""
+    """A failed rerank must not hand back all 3 × top_k candidates."""
 
     def _reranker(self):
         from src.domain.rag.reranker import Reranker

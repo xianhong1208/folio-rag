@@ -84,7 +84,7 @@ def test_official_docling_format_parity():
     from docling.datamodel.base_models import InputFormat, FormatToExtensions
 
     _EXCLUDED_FORMATS = {
-        "video": "ref:需掛 VIDEO pipeline(keyframe + ffmpeg 接線),非僅加副檔名",
+        "video": "video:需掛 VIDEO pipeline(keyframe + ffmpeg 接線),非僅加副檔名",
         "xml_uspto": ".xml 歧義家族:泛用 .xml 已走純文字直讀,專業 XML 變體不自動路由",
         "xml_jats": "同 xml_uspto",
         "xml_xbrl": "同 xml_uspto",

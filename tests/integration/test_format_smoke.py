@@ -126,7 +126,7 @@ def test_legacy_office_format(samples, converter, ext):
     assert SENT in text, f".{ext} 解析結果不含哨兵內容"
 
 
-# ref: verify provenance meta-shape (meta.headings, doc_items[].prov[].page_no)
+# Citation provenance: verify the meta shape (meta.headings, doc_items[].prov[].page_no)
 # against real docling output, so a docling upgrade that drifts the chunk schema
 # turns these cases red.
 
@@ -157,7 +157,7 @@ def test_chunk_records_carry_page_no_pdf(samples, converter):
     pdf_path = samples / "t.pdf"
     with fitz.open() as pdf:
         page = pdf.new_page()
-        page.insert_text((72, 72), "SENTINEL provenance text for ref")
+        page.insert_text((72, 72), "SENTINEL provenance text for citations")
         pdf.save(str(pdf_path))
 
     doc = converter.convert(str(pdf_path)).document

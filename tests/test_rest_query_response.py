@@ -74,7 +74,7 @@ async def test_direct_call_returns_json_types_and_leaves_cached_result_untouched
 
 
 class TestQueryLength:
-    """ref: over-long queries are a 4xx, never a 500."""
+    """Over-long queries are a 4xx, never a 500."""
 
     def test_over_cap_rejected_before_retrieval(self, client, adapter):
         from src.domain.rag.query_limits import MAX_QUERY_CHARS

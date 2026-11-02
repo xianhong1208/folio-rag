@@ -331,7 +331,7 @@ class TestServiceViewAndReset:
 
 
 class TestValueConstraints:
-    """ref: the settings API rejects values that would hang or empty the service."""
+    """The settings API rejects values that would hang or empty the service."""
 
     @pytest.mark.parametrize("path, value", [
         ("rag.contextual_retrieval.max_concurrent", 0),      # Semaphore(0) hangs indexing
@@ -483,7 +483,7 @@ class TestValueConstraints:
 
 
 class TestResetMissingSection:
-    """ref: resetting a key whose whole section is absent must not 500 / half-apply."""
+    """Resetting a key whose whole section is absent must not 500 / half-apply."""
 
     def test_yaml_value_walks_schema_when_section_is_none(self):
         cfg = _mk_config()
