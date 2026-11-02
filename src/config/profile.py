@@ -129,9 +129,9 @@ def check_profile(rag_config, refs: Optional[Mapping[str, str]] = None) -> Profi
                 and getattr(retrieval, "text_search_config", "simple") == "simple"
                 and (seg is None or seg == "ckip")):
             report.warnings.append(
-                "rag.retrieval: Chinese BM25 segmentation uses the CKIP model, which loads torch "
-                "in-process on first use (and degrades to unsegmented text when it is not "
-                "installed) — set rag.retrieval.segmenter: bigram for a model-free cloud install")
+                "rag.retrieval: Chinese BM25 segmentation defaults to the CKIP model, an in-process "
+                "torch model that profile: cloud does not load, so Chinese text is indexed "
+                "unsegmented — set rag.retrieval.segmenter: bigram for model-free segmentation")
 
     if refs is not None and profile in ("cloud", "hybrid"):
         for path in literal_secret_paths(rag_config, refs):
