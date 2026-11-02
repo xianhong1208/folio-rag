@@ -2,11 +2,10 @@ import { useEffect, useState, useCallback } from 'react'
 import { Zap, XCircle } from 'lucide-react'
 import { get, post } from '../services/api'
 import { fmtTime } from '../lib/format'
+import { pillClass, statusLabel, jobKindLabel, isJobActive } from '../lib/jobs'
 import EmptyState from '../components/ui/EmptyState'
 import { useModal } from '../contexts/ModalContext'
 import { useToast } from '../contexts/ToastContext'
-
-const PILL = { running: 'run', pending: 'warn', queued: 'warn', completed: 'ok', failed: 'bad', cancelled: 'mute' }
 
 export default function JobsPage() {
   const { confirm } = useModal()
@@ -29,7 +28,7 @@ export default function JobsPage() {
   const cancel = async (j) => {
     const ok = await confirm({
       title: 'Cancel this job?', action: 'Cancel job', danger: true,
-      note: 'It stops after the current file; already-indexed files are kept.',
+      note: 'Stops now: the file being processed is cut off at its next checkpoint and marked failed; files already indexed are kept. To stop a single file instead, use Cancel on its row in Folders.',
     })
     if (!ok) return
     try { await post(`/api/admin/manage/folders/${j.folder_id}/jobs/${j.job_id}/cancel`); toast('Job cancelled', 'ok'); load() }
@@ -47,14 +46,15 @@ export default function JobsPage() {
           {jobs == null ? <div className="sec" style={{ marginTop: 8 }}>loading…</div>
             : jobs.length === 0 ? <EmptyState t="No indexing jobs yet" d="Jobs appear here when folders are indexed" />
               : jobs.map((j) => {
-                const running = ['running', 'pending', 'queued'].includes(j.status)
+                const running = isJobActive(j)
                 const pct = j.total_files ? Math.round(j.processed_files / j.total_files * 100) : 0
                 return (
                   <div key={j.job_id} className="js-row">
-                    <div className="js-status"><span className={'pill ' + (PILL[j.status] || 'mute')}>{j.status}</span></div>
+                    <div className="js-status"><span className={'pill ' + pillClass(j.status)}>{statusLabel(j.status)}</span></div>
                     <div className="js-main">
                       <div className="js-top">
                         <span className="js-folder">{j.folder_name || ('#' + j.folder_id)}</span>
+                        {j.kind && j.kind !== 'index' && <span className="pill mute">{jobKindLabel(j.kind)}</span>}
                         <span className="js-count">{j.processed_files}/{j.total_files}</span>
                         {running && j.owned !== false && (
                           <button className="act-btn danger" title="Cancel job" onClick={() => cancel(j)}><XCircle size={14} /></button>
