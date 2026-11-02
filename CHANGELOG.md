@@ -142,7 +142,9 @@ to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   with spaces, CJK or symbols become `Agentic_<ascii>_<hash>`. Tool
   descriptions are English.
 - The settings API validates ranges and choices (e.g. `max_concurrent ≥ 1`,
-  `score_threshold` 0–1, known providers, http(s) URLs) and answers 422.
+  `score_threshold` 0–1, known providers — including the per-role LLM, vision
+  and `openai-compatible` providers —, rerank API styles, parsing modes,
+  timeouts / retries / page and token caps, http(s) URLs) and answers 422.
 - Index-job progress ticks are written to the database at most every 5 s
   (status changes still immediately); SSE still sees every tick.
 - `logging.max_size` / `logging.backup_count` now rotate and prune log files.

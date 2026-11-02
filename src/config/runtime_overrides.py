@@ -126,17 +126,45 @@ _RANGES: Dict[str, Tuple[float, float]] = {
     "rag.retrieval.default_hybrid_alpha": (0.0, 1.0),
     "rag.retrieval.expand_context_neighbors": (0, 10),
     "rag.retrieval.auto_merging.merge_threshold": (0.0, 1.0),
+    # Per-role HTTP behaviour and cost guards (bounds match the config models).
+    "rag.embedding.timeout": (0.1, 3600),
+    "rag.embedding.max_retries": (0, 10),
+    "rag.llm.timeout": (0.1, 3600),
+    "rag.llm.max_retries": (0, 10),
+    "rag.contextual_retrieval.max_calls_per_file": (0, 10_000_000),
+    "rag.contextual_retrieval.max_tokens_per_day": (0, 10_000_000_000),
+    "rag.rerank.timeout": (0.1, 600),
+    "rag.rerank.max_retries": (0, 5),
+    "rag.asr.segment_seconds": (30, 780),
+    "rag.asr.timeout": (0.1, 3600),
+    "rag.asr.max_retries": (0, 10),
+    "rag.parsing.max_concurrency": (1, 32),
+    "rag.parsing.max_pages_per_file": (0, 1_000_000),
+    "rag.parsing.max_pages_per_day": (0, 100_000_000),
 }
+_LLM_ROLES = ("contextual_llm", "answer_llm", "eval_llm")
 _NULLABLE = {"rag.rerank.top_n", "rag.contextual_retrieval.reasoning_effort",
+             # per-role LLM overrides: empty = inherit rag.llm
+             *(f"rag.{r}.{f}" for r in _LLM_ROLES for f in ("provider", "model", "base_url")),
+             "rag.rerank.endpoint_path", "rag.asr.language",
+             # empty = follow the profile (cloud profile -> cloud parsing)
+             "rag.parsing.pdf", "rag.parsing.images",
              # unset = the profile's default (ckip; bigram under profile: cloud)
              "rag.retrieval.segmenter"}
 
 # Choice lists. Providers are lower-cased and trimmed before the check (the factories
 # compare lower-case names). Embedding providers come from the factory itself.
-LLM_PROVIDERS = ("azure", "openai", "vllm", "ollama")
+LLM_PROVIDERS = ("azure", "openai", "openai-compatible", "vllm", "ollama")
 ASR_PROVIDERS = ("docling-whisper", "openai-compatible", "fireredasr")
+# Vision models are called through the OpenAI-compatible chat API (azure: its own client).
+VISION_PROVIDERS = ("openai-compatible", "openai", "vllm", "ollama", "azure")
+RERANK_APIS = ("score", "cohere", "jina", "generic")
+PARSING_MODES = ("local", "cloud")
 _LOWERCASE_PATHS = ("rag.embedding.provider", "rag.llm.provider", "rag.asr.provider",
-                   "rag.retrieval.segmenter")
+                    *(f"rag.{r}.provider" for r in _LLM_ROLES),
+                    "rag.parsing.vision.provider", "rag.rerank.api",
+                    "rag.parsing.pdf", "rag.parsing.images", "rag.parsing.on_page_failure",
+                    "rag.retrieval.segmenter")
 
 
 def _segmenters():
@@ -150,7 +178,13 @@ def _choices(path: str):
         return tuple(EmbeddingProviderFactory.list_supported_providers())
     return {
         "rag.llm.provider": LLM_PROVIDERS,
+        **{f"rag.{r}.provider": LLM_PROVIDERS for r in _LLM_ROLES},
         "rag.asr.provider": ASR_PROVIDERS,
+        "rag.parsing.vision.provider": VISION_PROVIDERS,
+        "rag.rerank.api": RERANK_APIS,
+        "rag.parsing.pdf": PARSING_MODES,
+        "rag.parsing.images": PARSING_MODES,
+        "rag.parsing.on_page_failure": ("mark", "fail"),
         "rag.retrieval.hybrid_fusion": ("rrf", "concat"),
         "rag.retrieval.segmenter": _segmenters(),
         "rag.contextual_retrieval.reasoning_effort": ("low", "medium", "high"),
@@ -184,6 +218,8 @@ def _check_constraints(path: str, value: Any) -> Any:
     if path.endswith(".base_url") and isinstance(value, str) and value.strip():
         if not value.strip().lower().startswith(("http://", "https://")):
             raise ValueError(f"must be an http(s):// URL (got {value!r})")
+    if path == "rag.rerank.endpoint_path" and isinstance(value, str) and not value.startswith("/"):
+        raise ValueError(f"must start with / (got {value!r})")
     if path.endswith(("_template",)) and isinstance(value, str) and "{text}" not in value:
         raise ValueError("must contain the {text} placeholder")
     if path.endswith((".model", ".provider")) and isinstance(value, str) and not value.strip():
