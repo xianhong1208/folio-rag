@@ -70,6 +70,83 @@ EDITABLE: Dict[str, str] = {
     "rag.retrieval.auto_merging.merge_threshold": "live",
 }
 
+# Value constraints for the editable paths, checked on every write through the settings
+# API (the config models themselves only check types). Without them max_concurrent=0
+# built Semaphore(0) and hung indexing, score_threshold=5 silently emptied every query,
+# and an unknown provider only failed at the next model rebuild.
+# Numeric: (min, max) inclusive; None is allowed only where listed in _NULLABLE.
+_RANGES: Dict[str, Tuple[float, float]] = {
+    "rag.embedding.dimension": (1, 16384),
+    "rag.contextual_retrieval.max_context_length": (1, 10_000),
+    "rag.contextual_retrieval.max_concurrent": (1, 64),
+    "rag.contextual_retrieval.max_doc_chars": (1_000, 10_000_000),
+    "rag.contextual_retrieval.max_tokens": (1, 131_072),
+    "rag.rerank.top_n": (1, 1_000),
+    # Rerank scores from the /v1/score API are probabilities; the console slider is 0–1 too.
+    "rag.rerank.score_threshold": (0.0, 1.0),
+    # 20 matches the REST QueryRequest.top_k ceiling.
+    "rag.retrieval.default_top_k": (1, 20),
+    "rag.retrieval.default_similarity_cutoff": (0.0, 1.0),
+    "rag.retrieval.default_sparse_top_k": (1, 200),
+    "rag.retrieval.default_hybrid_alpha": (0.0, 1.0),
+    "rag.retrieval.expand_context_neighbors": (0, 10),
+    "rag.retrieval.auto_merging.merge_threshold": (0.0, 1.0),
+}
+_NULLABLE = {"rag.rerank.top_n", "rag.contextual_retrieval.reasoning_effort"}
+
+# Choice lists. Providers are lower-cased and trimmed before the check (the factories
+# compare lower-case names). Embedding providers come from the factory itself.
+LLM_PROVIDERS = ("azure", "openai", "vllm", "ollama")
+ASR_PROVIDERS = ("docling-whisper", "openai-compatible", "fireredasr")
+_PROVIDER_PATHS = ("rag.embedding.provider", "rag.llm.provider", "rag.asr.provider")
+
+
+def _choices(path: str):
+    if path == "rag.embedding.provider":
+        from src.domain.rag.embedding.factory import EmbeddingProviderFactory
+        return tuple(EmbeddingProviderFactory.list_supported_providers())
+    return {
+        "rag.llm.provider": LLM_PROVIDERS,
+        "rag.asr.provider": ASR_PROVIDERS,
+        "rag.retrieval.hybrid_fusion": ("rrf", "concat"),
+        "rag.contextual_retrieval.reasoning_effort": ("low", "medium", "high"),
+    }.get(path)
+
+
+def _check_constraints(path: str, value: Any) -> Any:
+    """Normalise and range/choice-check one value; returns the value to write.
+
+    Raises ValueError with a readable reason. Type coercion is left to pydantic.
+    """
+    if path in _PROVIDER_PATHS and isinstance(value, str):
+        value = value.strip().lower()
+    if value is None or (value == "" and path in _NULLABLE):
+        if path in _NULLABLE:
+            return None
+        if path in _RANGES or _choices(path):
+            raise ValueError("a value is required")
+        return value
+    choices = _choices(path)
+    if choices and value not in choices:
+        raise ValueError(f"must be one of {', '.join(choices)} (got {value!r})")
+    if path in _RANGES:
+        lo, hi = _RANGES[path]
+        try:
+            num = float(value)
+        except (TypeError, ValueError):
+            return value  # not a number: let pydantic report the type error
+        if not lo <= num <= hi:
+            raise ValueError(f"must be between {lo:g} and {hi:g} (got {value!r})")
+    if path.endswith(".base_url") and isinstance(value, str) and value.strip():
+        if not value.strip().lower().startswith(("http://", "https://")):
+            raise ValueError(f"must be an http(s):// URL (got {value!r})")
+    if path.endswith(("_template",)) and isinstance(value, str) and "{text}" not in value:
+        raise ValueError("must contain the {text} placeholder")
+    if path.endswith((".model", ".provider")) and isinstance(value, str) and not value.strip():
+        raise ValueError("must not be empty")
+    return value
+
+
 # Fields to mask on display (GET returns "•••" as a placeholder; PUT writes are unaffected)
 SECRET_PATHS = {p for p in EDITABLE if p.endswith("api_key")}
 
@@ -129,17 +206,21 @@ def validate_and_apply(config_model, patch: Dict[str, Any]) -> Tuple[Dict[str, A
         (applied, warnings) — the actually-written {path: value} and warnings for warn-level paths.
 
     Raises:
-        ValueError: Path not whitelisted / type validation failed (message includes details).
+        ValueError: Path not whitelisted / type, range or choice validation failed
+            (message includes details).
     """
     unknown = [p for p in patch if p not in EDITABLE]
     if unknown:
-        raise ValueError(f"Setting path cannot be changed at runtime: {unknown} (see GET /api/admin/settings for the allow-list)")
+        raise ValueError(
+            f"Setting path(s) cannot be changed at runtime: {unknown} "
+            "(see GET /api/admin/settings for the editable list)")
 
     # Validate everything first (pydantic: apply into a section copy to check types); write only if all pass
     staged = []  # [(parent, field, validated_value, path)]
     errors = []
     for path, value in patch.items():
         try:
+            value = _check_constraints(path, value)
             parent, field = _resolve(config_model, path)
             section_cls = type(parent)
             data = parent.model_dump()
