@@ -107,10 +107,15 @@ def check_ready(folder_ref: str):
 
 
 def _gen_question(client, model: str, chunk_text: str) -> str:
+    # The question is asked in the passage's own language, so an English corpus gets
+    # English questions and a Chinese one Chinese questions (it used to be hard-coded
+    # to Traditional Chinese).
     prompt = (
-        "Below is a passage from a document. Write one question a user might ask whose answer is clearly in this passage, "
-        "in the passage's own language. Make it specific (proper nouns are fine); do not refer to 'this passage'."
-        "Output only the question itself, with no prefix.\n\nPassage:\n" + chunk_text[:1500] + "\n\nQuestion:")
+        "Below is a passage from a document. Write ONE question a user might ask whose "
+        "answer is clearly contained in this passage. Write the question in the same "
+        "language as the passage. Be specific (proper nouns are fine) and do not refer "
+        "to \"this passage\" or \"the text\". Output only the question, with no prefix."
+        "\n\nPassage:\n" + chunk_text[:1500] + "\n\nQuestion:")
     # Reasoning models (e.g. gpt-oss) spend reasoning tokens first; too small a
     # max_tokens leaves content None (no budget left for the answer) -> allow 1024.
     r = client.chat.completions.create(
