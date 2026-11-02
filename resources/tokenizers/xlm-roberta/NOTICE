@@ -11,5 +11,5 @@ The model card publishes it under the MIT License. The underlying XLM-R
 SentencePiece model comes from fairseq (MIT License, Copyright (c) Facebook,
 Inc. and its affiliates).
 
-agentic_rag uses it only to count tokens when sizing chunks
+Folio uses it only to count tokens when sizing chunks
 (src/domain/rag/chunk_tokenizer.py). It is never used for embedding.

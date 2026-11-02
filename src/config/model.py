@@ -5,7 +5,7 @@ All Pydantic config models are collected here for reuse across the project.
 """
 
 from typing import List, Literal, Optional, Union
-from pydantic import BaseModel, ConfigDict, Field, model_validator
+from pydantic import BaseModel, ConfigDict, Field, PrivateAttr, model_validator
 
 # Secrets are excluded from repr()/str() (repr=False), so logging a whole config
 # object, or an exception message that embeds one, can never print them.
@@ -98,18 +98,68 @@ class LoggingConfig(BaseModel):
     backup_count: int
 
 
+# Folio defaults for the app fields whose pre-rename defaults are upgraded on load.
+_FOLIO_APP_DEFAULTS = {
+    "name": "Folio",
+    "title": "Folio MCP Server",
+    "description": "Folio — hierarchical RAG with auto-merging retrieval",
+    "tool_prefix": "Folio",
+}
+# What the code and the config template shipped before the project was renamed
+# from Agentic RAG to Folio.
+_PRE_RENAME_APP_VALUES = {
+    "name": ("Agentic RAG",),
+    "title": ("Agentic RAG MCP Server",),
+    "description": (
+        "Agentic RAG — Hierarchical RAG with auto-merging retrieval",
+        "Agentic RAG — Hierarchical chunking + AutoMerging retrieval for LLM agents",
+    ),
+    "tool_prefix": ("Agentic",),
+}
+
+
 class AppConfig(BaseModel):
     """Application configuration.
 
     There is no version field: the single source of truth is [project].version in pyproject.toml,
     parsed by get_version() in src/version.py.
     """
-    name: str = "Agentic RAG"
-    title: str = "Agentic RAG MCP Server"
-    description: str = "Agentic RAG — Hierarchical RAG with auto-merging retrieval"
+    name: str = _FOLIO_APP_DEFAULTS["name"]
+    title: str = _FOLIO_APP_DEFAULTS["title"]
+    description: str = _FOLIO_APP_DEFAULTS["description"]
     lifespan: Optional[str] = None
-    # Per-folder MCP tool name prefix (default Agentic_)
-    tool_prefix: str = "Agentic"
+    # Per-folder MCP tool name prefix: tools are named Folio_<folder>
+    tool_prefix: str = _FOLIO_APP_DEFAULTS["tool_prefix"]
+
+    # "app.<field>: old -> new" for every pre-rename default replaced on load;
+    # main.py logs a deprecation warning for each at startup.
+    _renamed_defaults: List[str] = PrivateAttr(default_factory=list)
+
+    @model_validator(mode="wrap")
+    @classmethod
+    def _upgrade_pre_rename_defaults(cls, data, handler):
+        """Treat the values shipped before the rename to Folio as "not set".
+
+        A config.yaml copied from the old template still says ``tool_prefix:
+        "Agentic"`` and ``name: "Agentic RAG"``. Those were defaults, not a
+        choice, so they load as the Folio defaults; any other value is kept.
+        """
+        upgraded: List[str] = []
+        if isinstance(data, dict):
+            data = dict(data)
+            for field, old_values in _PRE_RENAME_APP_VALUES.items():
+                if data.get(field) in old_values:
+                    new = _FOLIO_APP_DEFAULTS[field]
+                    upgraded.append(f"app.{field}: {data[field]!r} -> {new!r}")
+                    data[field] = new
+        model = handler(data)
+        if isinstance(model, cls):
+            model._renamed_defaults = upgraded
+        return model
+
+    @property
+    def renamed_defaults(self) -> List[str]:
+        return list(self._renamed_defaults)
 
 
 class RouterConfig(BaseModel):
@@ -373,14 +423,14 @@ class IndexingConfig(BaseModel):
     """Behavior control for background indexing jobs."""
     # Max concurrent files per job. Kept low (4) because docling convert is serialized by
     # DOCLING_INFER_LOCK; a high value would starve the shared executor. Override via
-    # RAG_INDEXING_CONCURRENCY.
+    # FOLIO_INDEXING_CONCURRENCY.
     max_concurrent_jobs: int = 4
 
-    # Per-file limit (seconds); override via RAG_PER_FILE_TIMEOUT_SECONDS. Default is effectively
+    # Per-file limit (seconds); override via FOLIO_PER_FILE_TIMEOUT_SECONDS. Default is effectively
     # unlimited (10 days), relying on the 60s keepalive heartbeat instead of a hard timeout.
     per_file_timeout_seconds: int = 864000  # 10 days
 
-    # Whole-job limit (seconds); override via RAG_JOB_TIMEOUT_SECONDS. 0/negative disables.
+    # Whole-job limit (seconds); override via FOLIO_JOB_TIMEOUT_SECONDS. 0/negative disables.
     # Must be >= per_file_timeout_seconds or the job dies before its files finish.
     job_timeout_seconds: int = 864000  # 10 days
 

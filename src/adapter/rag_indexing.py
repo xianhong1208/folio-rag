@@ -6,7 +6,6 @@ Shares the indexer / indexing_service / vector_store_manager provided by RAGCont
 from __future__ import annotations
 
 import asyncio
-import os
 import time
 from typing import Any, Dict, List, Optional, TYPE_CHECKING
 
@@ -24,6 +23,7 @@ from src.domain.exceptions import (
 )
 from src.domain.rag.hierarchical_indexer import IndexingAbortedError
 from src.log import get_adapter_logger, log_err, log_op, log_warn
+from src.utils import env_compat
 
 if TYPE_CHECKING:
     from typing import Callable
@@ -48,7 +48,7 @@ _ABORT_PROBE_INTERVAL_SECONDS = 10.0
 _KEEPALIVE_INTERVAL_SECONDS = 60.0
 
 
-# Max concurrent indexing; env RAG_INDEXING_CONCURRENCY > config.rag.indexing.max_concurrent_jobs > 4
+# Max concurrent indexing; env FOLIO_INDEXING_CONCURRENCY > config.rag.indexing.max_concurrent_jobs > 4
 _INDEXING_SEMAPHORE: Optional[asyncio.Semaphore] = None
 
 # Per-file timeout default (env > config > this). Reference the IndexingConfig field
@@ -71,12 +71,12 @@ async def _run_db(fn, *args, **kwargs):
 
 def _resolve_indexing_concurrency() -> int:
     """Resolve max concurrent indexing jobs: env var > config > default 4."""
-    env_val = os.getenv("RAG_INDEXING_CONCURRENCY")
+    env_val = env_compat.getenv("FOLIO_INDEXING_CONCURRENCY")
     if env_val:
         try:
             return int(env_val)
         except ValueError:
-            logger.warning(f"Invalid RAG_INDEXING_CONCURRENCY={env_val!r}, using config/default")
+            logger.warning(f"Invalid FOLIO_INDEXING_CONCURRENCY={env_val!r}, using config/default")
 
     try:
         from src.config.config_manager import Config
@@ -92,15 +92,15 @@ def _resolve_indexing_concurrency() -> int:
 def _resolve_per_file_timeout() -> int:
     """Resolve the per-file indexing timeout in seconds.
 
-    Priority: env RAG_PER_FILE_TIMEOUT_SECONDS > config.rag.indexing.per_file_timeout_seconds
+    Priority: env FOLIO_PER_FILE_TIMEOUT_SECONDS > config.rag.indexing.per_file_timeout_seconds
     > _PER_FILE_TIMEOUT_DEFAULT (864000s / 10 days). 0 or negative means no limit.
     """
-    env_val = os.getenv("RAG_PER_FILE_TIMEOUT_SECONDS")
+    env_val = env_compat.getenv("FOLIO_PER_FILE_TIMEOUT_SECONDS")
     if env_val:
         try:
             return int(env_val)
         except ValueError:
-            logger.warning(f"Invalid RAG_PER_FILE_TIMEOUT_SECONDS={env_val!r}, using config/default")
+            logger.warning(f"Invalid FOLIO_PER_FILE_TIMEOUT_SECONDS={env_val!r}, using config/default")
     try:
         from src.config.config_manager import Config
         cfg = Config.get_config_model()

@@ -1,4 +1,4 @@
-# agentic-rag — Agentic RAG MCP Server
+# folio-rag — Folio, a hierarchical RAG MCP server
 # Install profiles:
 #   uv sync                                   core only: every model is an HTTP endpoint
 #                                             (rag.profile: cloud) — no torch, no transformers
@@ -8,9 +8,9 @@
 # Only torch/torchvision/torchaudio differ per group; the [tool.uv] sections below map each one to its index.
 
 [project]
-name = "agentic-rag"
+name = "folio-rag"
 version = "1.1.0"
-description = "Agentic RAG MCP Server — Hierarchical chunking + AutoMerging retrieval, designed for gpt-oss-120b"
+description = "Folio MCP Server — hierarchical chunking + auto-merging retrieval, designed for gpt-oss-120b"
 # 3.12 is the lowest Python with cp312 wheels for every PyTorch build (rocm/cuda/cpu).
 requires-python = ">=3.12,<3.13"
 

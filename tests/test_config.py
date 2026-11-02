@@ -129,14 +129,14 @@ def test_dynamic_tools_config_default_disabled():
 def test_app_config_all_defaults():
     """AppConfig built with no arguments uses all defaults"""
     cfg = AppConfig()
-    assert cfg.name == "Agentic RAG"
+    assert cfg.name == "Folio"
     # The version field was removed from AppConfig -- the single source of the
     # version is pyproject.toml (src/version.py get_version()); config no longer
     # carries the version, to avoid dual-source drift
     assert not hasattr(cfg, "version")
-    assert cfg.title == "Agentic RAG MCP Server"
+    assert cfg.title == "Folio MCP Server"
     assert cfg.lifespan is None
-    assert cfg.tool_prefix == "Agentic"
+    assert cfg.tool_prefix == "Folio"
 
 
 def test_rag_chunking_config_defaults():

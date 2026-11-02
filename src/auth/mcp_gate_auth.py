@@ -1,6 +1,6 @@
 """Resource-server side of OAuth 2.1: verify MCP Gate access tokens.
 
-Agentic RAG never issues tokens. It trusts one authorization server (MCP Gate),
+Folio never issues tokens. It trusts one authorization server (MCP Gate),
 fetches its JWKS once and verifies every bearer token OFFLINE. Two consumers use this
 module:
 

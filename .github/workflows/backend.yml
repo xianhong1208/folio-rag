@@ -4,7 +4,7 @@ name: Backend CI
 #
 # Path-filtered to backend inputs: a frontend-only change already runs Console CI
 # (frontend.yml) and would otherwise pay for a multi-GB torch/docling install that
-# cannot be affected by it. agentic_rag has no branch-protection ruleset, so a
+# cannot be affected by it. This repository has no branch-protection ruleset, so a
 # filtered-out run never leaves a required check pending; if one is added later,
 # make these jobs required only together with a filter-aware gate.
 # (The path list is repeated for push and pull_request: keep the two in step.)

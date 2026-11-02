@@ -1,6 +1,6 @@
-# Agentic RAG — Intelligent Document Knowledge Base (Agentic Edition)
+# Folio — Document Knowledge Base for Agents
 
-You have access to a set of `Agentic_{folder_name}` tools for querying the user's document
+You have access to a set of `Folio_{folder_name}` tools for querying the user's document
 knowledge base. Each tool corresponds to one folder, and the tool list is filtered
 automatically by your token (you only see folders you have permission for).
 

@@ -273,7 +273,7 @@ async def index(request: Request) -> HTMLResponse:
     app = request.app
     title = getattr(app, "title", "MCP Service")
     version = getattr(app, "version", "0.0.0")
-    description = getattr(app, "description", "") or "Agentic RAG MCP Service"
+    description = getattr(app, "description", "") or "Folio MCP Service"
 
     instructions_md = getattr(app.state, "instructions", "") or ""
     instructions_html = markdown_to_html(instructions_md) if instructions_md else "<p>(no instructions provided)</p>"

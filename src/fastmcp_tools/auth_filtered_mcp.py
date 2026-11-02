@@ -32,7 +32,7 @@ from db.folderdb import FolderDB
 from src.log import get_api_logger, mask_token
 from src.auth.dependencies import get_remote_verifier_instance
 from src.auth.owner_key import owner_key_from_bearer
-from src.fastmcp_tools.dynamic_tool_manager import DynamicToolManager
+from src.fastmcp_tools.dynamic_tool_manager import DynamicToolManager, configured_tool_prefix
 
 if TYPE_CHECKING:
     from mcp.types import Tool
@@ -58,7 +58,7 @@ class AuthFilteredFastMCP(FastMCP):
         """Determine whether a tool is a dynamically registered per-folder tool.
 
         Primary: check DynamicToolManager.registered_tools. Fallback: check the
-        name prefix (Agentic_).
+        configured name prefix (``Folio_`` by default).
 
         Args:
             tool_name: Tool name.
@@ -70,10 +70,10 @@ class AuthFilteredFastMCP(FastMCP):
             manager = DynamicToolManager.get_instance()
             if tool_name in manager.get_registered_tools():
                 return True
-            # Fallback: the prefix may be inconsistent in some agentic_rag deployments
-            return tool_name.startswith("Agentic_")
         except Exception:
-            return tool_name.startswith("Agentic_")
+            pass
+        # Fallback for a folder tool the manager does not know (yet): the name prefix.
+        return tool_name.startswith(f"{configured_tool_prefix()}_")
 
     # Correct override point for FastMCP v3.x is the public method `list_tools`
     async def list_tools(self, *, run_middleware: bool = True) -> "Sequence[Tool]":

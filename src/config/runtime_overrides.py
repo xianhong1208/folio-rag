@@ -91,7 +91,7 @@ EDITABLE: Dict[str, str] = {
     "rag.parsing.max_pages_per_file": "live",
     "rag.parsing.max_pages_per_day": "live",
     "rag.parsing.on_page_failure": "live",
-    # Retrieval parameters (both REST/agentic read config at request time; ctx scalars synced via rebind)
+    # Retrieval parameters (both REST and MCP queries read config at request time; ctx scalars synced via rebind)
     "rag.retrieval.default_top_k": "live",
     "rag.retrieval.default_similarity_cutoff": "live",
     "rag.retrieval.default_sparse_top_k": "live",
