@@ -11,7 +11,7 @@ from pathlib import Path
 # Packages that pull torch (directly or through transformers / sentence-transformers).
 LOCAL_ONLY = {"docling", "llama-index-embeddings-huggingface", "fireredasr", "transformers",
               "ckip-transformers", "sentence-transformers", "torch", "openai-whisper",
-              "kaldiio", "kaldi-native-fbank", "opencc", "sentencepiece"}
+              "kaldiio", "kaldi-native-fbank", "sentencepiece"}
 
 
 def _project():
@@ -26,6 +26,14 @@ def _name(spec: str) -> str:
 def test_core_dependencies_are_torch_free():
     core = {_name(d) for d in _project()["dependencies"]}
     assert not core & LOCAL_ONLY, f"move to the local extra: {sorted(core & LOCAL_ONLY)}"
+
+
+def test_core_carries_opencc_for_prefix_script_repair():
+    # opencc is a self-contained C++ extension (no torch). The contextual-prefix Simplified ->
+    # Traditional repair and script detection (han_script) run in every profile, including
+    # cloud, where the prefixes come from a cloud LLM.
+    core = {_name(d) for d in _project()["dependencies"]}
+    assert "opencc" in core
 
 
 def test_core_parses_documents_without_models():

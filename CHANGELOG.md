@@ -180,6 +180,10 @@ to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   deployments install with `uv sync --extra local --group <gpu>`; a plain
   `uv sync` is the torch-free core for the cloud profile. A `uv sync --group <gpu>`
   without `--extra local` removes the local stack from an existing venv.
+  `opencc` stays in the core install (no torch): the Simplified → Traditional
+  repair of contextual prefixes runs in every profile. Backend CI installs
+  `--extra local --extra jieba --group cpu`, and a third job runs the unit suite
+  on the core install (the cloud-profile proof included).
 - Startup logs where every model role runs and warms docling only when a role uses
   its local models; CKIP is not loaded under the cloud profile.
 - The unauthenticated `/v1/ocr/general` answers 503 when PDFs/images are parsed
