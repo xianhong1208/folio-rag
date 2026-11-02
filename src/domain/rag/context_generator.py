@@ -143,6 +143,9 @@ class ContextGenerator:
         max_doc_chars: int = 60000,
         max_tokens: int = 1024,
         reasoning_effort: Optional[str] = None,
+        max_calls_per_file: int = 0,
+        max_tokens_per_day: int = 0,
+        budget=None,
     ):
         self._llm_config = llm_config
         self._model = model
@@ -151,6 +154,12 @@ class ContextGenerator:
         self._max_doc_chars = max_doc_chars
         self._max_tokens = max_tokens
         self._reasoning_effort = reasoning_effort
+        # Cost guards (0 = unlimited): chunks past a cap get the fallback prefix, no LLM call.
+        self._max_calls_per_file = max_calls_per_file
+        self._max_tokens_per_day = max_tokens_per_day
+        if budget is None:
+            from src.domain.rag.usage_budget import BUDGET as budget
+        self._budget = budget
         logger.info(
             f"ContextGenerator initialized (model={model}, max_length={max_context_length}, "
             f"max_concurrent={max_concurrent}, max_doc_chars={max_doc_chars}, "
@@ -186,6 +195,8 @@ class ContextGenerator:
                 max_doc_chars=getattr(cr_config, 'max_doc_chars', 60000),
                 max_tokens=getattr(cr_config, 'max_tokens', 1024),
                 reasoning_effort=getattr(cr_config, 'reasoning_effort', None),
+                max_calls_per_file=int(getattr(cr_config, 'max_calls_per_file', 0) or 0),
+                max_tokens_per_day=int(getattr(cr_config, 'max_tokens_per_day', 0) or 0),
             )
         except Exception as e:
             logger.error(f"Failed to create ContextGenerator: {e}")
@@ -217,6 +228,21 @@ class ContextGenerator:
             raw_content = getattr(msg, 'reasoning_content', None)
         return raw_content
 
+    def _admit_tokens(self, prompt: str) -> bool:
+        """Charge an estimated cost (prompt chars / 4 + max_tokens) to today's prefix budget."""
+        limit = getattr(self, "_max_tokens_per_day", 0)
+        if not limit:
+            return True
+        estimate = len(prompt) // 4 + self._max_tokens
+        if self._budget.try_consume("prefix_tokens", estimate, limit):
+            return True
+        if not getattr(self, "_budget_warned", False):
+            self._budget_warned = True
+            logger.warning(
+                f"Contextual-prefix daily token budget ({limit}) exhausted — "
+                "remaining chunks get the file-name fallback prefix until UTC midnight")
+        return False
+
     async def _generate_one(
         self,
         chunk_text: str,
@@ -246,6 +272,8 @@ class ContextGenerator:
                 document_text=doc_text,
                 chunk_text=chunk_text,
             )
+            if not self._admit_tokens(prompt):
+                return _safe_fallback_prefix(chunk_text, file_name)
 
             async with semaphore:
                 # A chunk queued behind the semaphore may have waited a while; re-check once it acquires the slot
@@ -354,9 +382,22 @@ class ContextGenerator:
 
         watcher = asyncio.create_task(_abort_watcher()) if should_abort else None
 
+        cap = getattr(self, "_max_calls_per_file", 0)  # instances built via __new__ in tests lack it
+        if cap and total > cap:
+            logger.warning(
+                f"Context generation for '{file_name}': {total} chunks exceed "
+                f"max_calls_per_file={cap}; chunks after the first {cap} get the fallback prefix")
+
+        async def _capped(chunk_text: str) -> str:
+            _on_one_done()
+            return _safe_fallback_prefix(chunk_text, file_name)
+
         try:
             tasks = []
-            for chunk_text in chunks:
+            for i, chunk_text in enumerate(chunks):
+                if cap and i >= cap:
+                    tasks.append(_capped(chunk_text))
+                    continue
                 tasks.append(self._generate_with_progress(
                     chunk_text, full_document, file_name,
                     client, semaphore, _on_one_done, should_abort,
