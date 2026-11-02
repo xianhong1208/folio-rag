@@ -4,6 +4,9 @@
 The tool carries a mode parameter (search/list/read) plus expand_context.
 """
 
+import hashlib
+import re
+import unicodedata
 from typing import Any, Callable, Dict, Literal, Optional
 
 from fastmcp import FastMCP
@@ -14,6 +17,37 @@ from db.folderdb import FolderDB
 
 logger = get_mcptools_logger()
 
+# MCP clients (Claude, OpenAI) accept tool names matching ^[a-zA-Z0-9_-]{1,64}$ only;
+# one invalid name can make a client reject the whole tool list.
+_TOOL_NAME_MAX = 64
+_UNSAFE = re.compile(r"[^A-Za-z0-9_-]+")
+
+
+def _slug(text: str) -> str:
+    """ASCII-only, underscore-joined form (accents stripped; CJK and symbols dropped)."""
+    ascii_text = unicodedata.normalize("NFKD", text).encode("ascii", "ignore").decode("ascii")
+    return _UNSAFE.sub("_", ascii_text).strip("_")
+
+
+def tool_name_for(prefix: str, folder_name: str) -> str:
+    """Deterministic, client-safe MCP tool name for a folder.
+
+    ``<prefix>_<folder>`` when the folder name is already safe and short enough;
+    otherwise ``<prefix>_<readable ascii part>_<8-hex sha1 of the real name>``. The hash
+    keeps names distinct when the readable part collides (CJK names, "a b" vs "a_b",
+    long names that only differ after the cut) and the name stable across restarts,
+    so tokens with a same-named folder keep sharing one tool.
+    """
+    pre = _slug(prefix or "") or "Agentic"
+    plain = f"{pre}_{folder_name}"
+    if _UNSAFE.search(folder_name) is None and folder_name and len(plain) <= _TOOL_NAME_MAX:
+        return plain
+    digest = hashlib.sha1(folder_name.encode("utf-8")).hexdigest()[:8]
+    room = _TOOL_NAME_MAX - len(pre) - len(digest) - 2  # two underscores
+    readable = _slug(folder_name)[:max(room, 0)].rstrip("_")
+    name = f"{pre}_{readable}_{digest}" if readable else f"{pre}_{digest}"
+    return name[:_TOOL_NAME_MAX]
+
 
 class DynamicToolManager:
     """Singleton that manages per-folder MCP tool registration."""
@@ -23,6 +57,7 @@ class DynamicToolManager:
     _registered_tools: Dict[str, Callable] = {}                # tool_name -> func
     _token_folder_to_tool: Dict[str, str] = {}                 # "{token}:{folder}" -> tool_name
     _token_folder_descriptions: Dict[str, str] = {}            # "{token}:{folder}" -> description
+    _tool_to_folder: Dict[str, str] = {}                       # tool_name -> folder name
     # Monotonic version — incremented on every register/unregister so external
     # caches (e.g., AuthFilteredFastMCP._filter_cache) can detect registry changes
     # without a separate invalidation channel.
@@ -108,14 +143,15 @@ class DynamicToolManager:
         if token_folder_key in self._token_folder_to_tool:
             return True  # already registered
 
-        # Tool name: take the prefix from config (default Agentic_)
+        # Tool name: config prefix (default Agentic) + a client-safe form of the folder name
         config = Config.get_config_model()
         prefix = getattr(getattr(config, "app", None), "tool_prefix", "Agentic")
-        tool_name = f"{prefix}_{folder_name}"
+        tool_name = tool_name_for(prefix, folder_name)
 
         # Tool name already registered by another token? Share the same tool function
         if tool_name in self._registered_tools:
             self._token_folder_to_tool[token_folder_key] = tool_name
+            self._tool_to_folder[tool_name] = folder_name
             logger.info(
                 f"Token {mask_token(user_token)} shares existing tool: {tool_name}"
             )
@@ -129,7 +165,7 @@ class DynamicToolManager:
         default_expand = getattr(retrieval, "expand_context_default", True)
 
         desc_parts = [
-            f"**Smart retrieval tool for the {folder_name} folder**",
+            f"**Search tool for the '{folder_name}' folder**",
             "",
         ]
         if folder_description:
@@ -137,47 +173,46 @@ class DynamicToolManager:
             desc_parts.append("")
 
         desc_parts.extend([
-            "## Three modes (each has its own use case; do not mix them up)",
+            "## Three modes (each has its own use; do not mix them up)",
             "",
-            "### 🔍 `mode=\"search\"` (default, **use this 90% of the time**)",
-            "Natural-language retrieval; hits are auto-merged within a section and neighbouring chunks are expanded",
-            "to get the full surrounding context.",
-            "**When to use**:",
-            "- The user asks 'what is XXX?', 'what does the rule say?', 'is YYY mentioned?'",
-            "- Any need to find answers, clues or passages in the folder",
-            "- You are not sure which file holds the answer",
+            "### `mode=\"search\"` (default; the right choice almost every time)",
+            "Natural-language retrieval. Hits are auto-merged with sibling chunks of the same",
+            "section and expanded with neighbouring chunks for full context.",
+            "**Use when**:",
+            "- the user asks what something is, what a rule says, or whether X is mentioned",
+            "- you need an answer, a lead or a passage from this folder",
+            "- you do not know which file holds the answer",
             "",
-            "### 📋 `mode=\"list\"` (list the folder)",
-            "Lists every file in this folder with file_id, estimated_tokens and indexed_status.",
-            "**When to use**:",
-            "- The user asks 'which files are in this folder?', 'show me the index'",
-            "- You need a file_id for a later read (rare)",
-            "- ❌ Do not call it just to 'look first and decide what to search' — just search",
+            "### `mode=\"list\"` (table of contents)",
+            "Lists every file with its file_id, estimated_tokens and indexed_status.",
+            "**Use when**:",
+            "- the user asks which files the folder contains",
+            "- you need a file_id for a follow-up read (rare)",
+            "- do NOT call it just to look around before searching — search directly",
             "",
-            "### 📖 `mode=\"read\"` (load a whole file, **use sparingly**)",
+            "### `mode=\"read\"` (whole file; use sparingly)",
             "Loads the full text of one file (up to ~30000 tokens).",
-            "**Use only when**:",
-            "- ✅ The user **explicitly asks** for 'the full content', 'the transcript', 'the whole report/document'",
-            "- ✅ The user asks to translate or summarise the whole file line by line",
-            "- ✅ The file is an **audio transcript** (Whisper output) and the user wants the whole conversation",
+            "**Only when**:",
+            "- the user explicitly asks for the complete content, a transcript or the whole document",
+            "- the user wants the whole file translated or summarised line by line",
+            "- the file is an audio transcript and the user wants the full conversation",
             "",
-            "**❌ Never use read in these cases**:",
-            "- To answer a specific question → use search, not read",
-            "- Vague requests like 'tell me more about this file' → use search with a relevant query",
-            "- Unhappy with search results → change the query / adjust cutoff, do not jump to read",
-            "- Exploratory browsing → use list to see the index, not read on whole files",
+            "**Never use read**:",
+            "- to answer a specific question — use search",
+            "- for vague \"tell me more about this file\" requests — search for what matters",
+            "- because search results were weak — rephrase the query or lower the cutoff",
+            "- to browse — use list",
             "",
-            "**Why so strict**: read puts ~3000-30000 tokens into your context at once,",
-            "Most of it is unrelated to the question, wasting token budget and diluting your attention.",
-            "search mode already applies auto-merge + context expansion; what it returns is usually enough.",
+            "**Why**: one read puts ~3000-30000 tokens into your context, mostly unrelated to",
+            "the question. search already merges and expands context and is usually enough.",
             "",
             "## Parameters",
-            "- `query` (str): required for mode=search; ignored for list/read",
+            "- `query` (str): required for mode=search; ignored by list/read",
             "- `mode` (str): search / list / read, default search",
-            "- `file_id` (str): required for mode=read (take it from list or search results)",
-            f"- `top_k` (int): for mode=search, default {default_top_k}",
-            f"- `similarity_cutoff` (float): for mode=search, default {default_cutoff}",
-            f"- `expand_context` (bool): for mode=search, default {str(default_expand).lower()}",
+            "- `file_id` (str): required for mode=read (from list or search results)",
+            f"- `top_k` (int): mode=search, default {default_top_k}",
+            f"- `similarity_cutoff` (float): mode=search, default {default_cutoff}",
+            f"- `expand_context` (bool): mode=search, default {str(default_expand).lower()}",
             "",
             "Response: JSON with mode, results and _hint (suggested next step)",
         ])
@@ -218,6 +253,7 @@ class DynamicToolManager:
 
         self._registered_tools[tool_name] = tool_func
         self._token_folder_to_tool[token_folder_key] = tool_name
+        self._tool_to_folder[tool_name] = folder_name
         DynamicToolManager._registry_version += 1  # bust external caches
 
         logger.info(
@@ -265,6 +301,7 @@ class DynamicToolManager:
             except Exception as e:
                 logger.warning(f"Failed to remove tool {tool_name} from MCP: {e}")
             self._registered_tools.pop(tool_name, None)
+            self._tool_to_folder.pop(tool_name, None)
             logger.info(f"Tool '{tool_name}' fully removed (no remaining users)")
         else:
             logger.info(f"Token {mask_token(user_token)} removed from '{tool_name}' (others still use it)")
@@ -282,9 +319,5 @@ class DynamicToolManager:
         return self._token_folder_descriptions.get(f"{user_token}:{folder_name}")
 
     def get_folder_name_from_tool(self, tool_name: str) -> Optional[str]:
-        config = Config.get_config_model()
-        prefix = getattr(getattr(config, "app", None), "tool_prefix", "Agentic")
-        full_prefix = f"{prefix}_"
-        if tool_name.startswith(full_prefix):
-            return tool_name[len(full_prefix):]
-        return None
+        """Folder name behind a registered tool (tool names are slugged, so this is a lookup)."""
+        return self._tool_to_folder.get(tool_name)

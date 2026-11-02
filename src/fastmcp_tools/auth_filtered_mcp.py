@@ -182,7 +182,7 @@ class AuthFilteredFastMCP(FastMCP):
                 if folder_name:
                     folder_desc = manager.get_folder_description_for_token(folder_name, owner_key)
                     if folder_desc:
-                        new_desc = f"{tool.description}\n\nFolder note: {folder_desc}"
+                        new_desc = f"{tool.description}\n\nFolder notes: {folder_desc}"
                         tool = tool.model_copy(update={"description": new_desc})
                 filtered.append(tool)
 
