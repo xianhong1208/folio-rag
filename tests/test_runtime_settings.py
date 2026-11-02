@@ -357,6 +357,23 @@ class TestValueConstraints:
         ("rag.embedding.model", "   "),
         ("rag.retrieval.segmenter", "mecab"),
         ("rag.rerank.gap_threshold", 1.5),
+        # cloud-profile keys
+        ("rag.llm.provider", "huggingface"),
+        ("rag.answer_llm.provider", "nope"),
+        ("rag.parsing.vision.provider", "huggingface"),
+        ("rag.parsing.vision.base_url", "api.example.com/v1"),
+        ("rag.parsing.vision.model", "  "),
+        ("rag.rerank.api", "voyage"),
+        ("rag.rerank.endpoint_path", "v2/rerank"),
+        ("rag.rerank.max_retries", 9),
+        ("rag.rerank.timeout", 0),
+        ("rag.parsing.pdf", "remote"),
+        ("rag.parsing.on_page_failure", "skip"),
+        ("rag.parsing.max_concurrency", 0),
+        ("rag.parsing.max_pages_per_file", -1),
+        ("rag.asr.segment_seconds", 10),
+        ("rag.llm.max_retries", 11),
+        ("rag.contextual_retrieval.max_calls_per_file", -1),
     ])
     def test_out_of_range_or_unknown_rejected(self, path, value):
         cfg = _mk_config()
@@ -380,6 +397,45 @@ class TestValueConstraints:
         ("rag.retrieval.segmenter", "bigram"),
         ("rag.rerank.gap_threshold", 0.3),
         ("rag.rerank.auto_template", False),
+        ("rag.retrieval.segmenter", None),          # unset = follow the profile
+        ("rag.retrieval.segmenter", ""),
+        # every new cloud-profile setting the console can save
+        ("rag.llm.provider", "openai-compatible"),
+        ("rag.embedding.provider", "openai-compatible"),
+        ("rag.embedding.request_dimensions", True),
+        ("rag.embedding.timeout", 30),
+        ("rag.embedding.max_retries", 0),
+        ("rag.llm.timeout", 90.5),
+        ("rag.llm.max_retries", 3),
+        ("rag.contextual_llm.provider", "openai-compatible"),
+        ("rag.contextual_llm.model", "gpt-4o-mini"),
+        ("rag.contextual_llm.base_url", "https://api.example.com/v1"),
+        ("rag.answer_llm.provider", ""),            # empty = inherit rag.llm
+        ("rag.answer_llm.model", None),
+        ("rag.eval_llm.provider", "azure"),
+        ("rag.eval_llm.base_url", ""),
+        ("rag.contextual_retrieval.max_calls_per_file", 200),
+        ("rag.contextual_retrieval.max_tokens_per_day", 0),
+        ("rag.rerank.api", "cohere"),
+        ("rag.rerank.api", "Jina"),
+        ("rag.rerank.endpoint_path", "/v2/rerank"),
+        ("rag.rerank.endpoint_path", ""),
+        ("rag.rerank.timeout", 5),
+        ("rag.rerank.max_retries", 2),
+        ("rag.asr.language", "zh"),
+        ("rag.asr.language", ""),
+        ("rag.asr.segment_seconds", 600),
+        ("rag.asr.timeout", 300),
+        ("rag.asr.max_retries", 3),
+        ("rag.parsing.pdf", "LOCAL"),               # cloud needs a vision model (profile check)
+        ("rag.parsing.images", ""),                 # empty = follow the profile
+        ("rag.parsing.vision.provider", "vllm"),
+        ("rag.parsing.vision.model", "Qwen2.5-VL"),
+        ("rag.parsing.vision.base_url", "https://vlm.example.com/v1"),
+        ("rag.parsing.max_concurrency", 8),
+        ("rag.parsing.max_pages_per_file", 0),
+        ("rag.parsing.max_pages_per_day", 5000),
+        ("rag.parsing.on_page_failure", "fail"),
     ])
     def test_valid_values_accepted(self, path, value):
         cfg = _mk_config()
@@ -390,6 +446,30 @@ class TestValueConstraints:
         cfg = _mk_config()
         applied, _ = ro.validate_and_apply(cfg, {"rag.llm.provider": "  OpenAI "})
         assert applied["rag.llm.provider"] == "openai" and cfg.rag.llm.provider == "openai"
+
+    def test_every_new_cloud_path_has_a_rule_or_is_free_text(self):
+        """Each editable path is range-checked, choice-checked, nullable or plain text/bool,
+        so the console can save every setting without a 500."""
+        free = {"model", "base_url", "api_key", "query_prefix", "passage_prefix",
+                "query_template", "document_template", "enabled", "auto_template",
+                "request_dimensions", "expand_context_default", "language", "endpoint_path"}
+        for path in ro.EDITABLE:
+            leaf = path.rsplit(".", 1)[1]
+            assert (path in ro._RANGES or ro._choices(path) or path in ro._NULLABLE
+                    or leaf in free), path
+
+    def test_cloud_profile_rejects_explicit_ckip_with_422_text(self):
+        from src.config.model import ParsingConfig, VisionModelConfig
+        cfg = _mk_config()
+        cfg.rag.profile = "cloud"
+        cfg.rag.asr.provider = "openai-compatible"
+        cfg.rag.parsing = ParsingConfig(vision=VisionModelConfig(
+            model="v", base_url="https://vlm.example.com/v1"))
+        with pytest.raises(ValueError, match="rejects this change.*segmenter: ckip"):
+            ro.validate_and_apply(cfg, {"rag.retrieval.segmenter": "ckip"})
+        assert cfg.rag.retrieval.segmenter is None
+        applied, _ = ro.validate_and_apply(cfg, {"rag.retrieval.segmenter": "jieba"})
+        assert applied["rag.retrieval.segmenter"] == "jieba"
 
     def test_segmenter_is_normalised(self):
         cfg = _mk_config()
