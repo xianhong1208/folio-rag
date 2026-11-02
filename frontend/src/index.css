@@ -493,6 +493,7 @@
   .act-btn svg { width: 14px; height: 14px; }
   .act-btn:hover { color: var(--cyber-hi); border-color: var(--cyber-line); background: var(--cyber-soft); }
   .act-btn.danger:hover { color: var(--alert-hi); border-color: var(--alert-line); background: var(--alert-soft); }
+  .act-btn.warn { color: var(--signal-hi); border-color: var(--signal-line); }
   .actions { display: flex; gap: 6px; }
   /* Match the primary button's height/size to the selects & search boxes it sits
      beside in a card header (12px / 7px), so it doesn't tower over the row. */
