@@ -9,8 +9,9 @@ and validates the per-role choices against them:
   reported as warnings, because a hybrid deployment usually holds at least one billable
   cloud key.
 * ``cloud``  — every role must be an HTTP endpoint. In-process providers (HuggingFace
-  embedding, docling-whisper / FireRedASR, local docling PDF/image parsing) are errors,
-  and so is any API key that is not an ``${ENV_VAR}`` reference.
+  embedding, docling-whisper / FireRedASR, local docling PDF/image parsing, the CKIP
+  segmenter) are errors, and so is any API key that is not an ``${ENV_VAR}`` reference.
+  The FTS segmenter defaults to the model-free ``bigram`` there.
 
 Why reject (not warn) literal keys in ``cloud``: a cloud key is a billable credential
 and config.yaml is the file people copy, paste into issues and commit. ``local`` keeps
@@ -125,13 +126,12 @@ def check_profile(rag_config, refs: Optional[Mapping[str, str]] = None) -> Profi
                     "profile: cloud forbids — remove it (cloud is the default) or set it to cloud")
         retrieval = getattr(rag_config, "retrieval", None)
         seg = getattr(retrieval, "segmenter", None) if retrieval is not None else None
-        if (retrieval is not None and getattr(retrieval, "hybrid_search", False)
-                and getattr(retrieval, "text_search_config", "simple") == "simple"
-                and (seg is None or seg == "ckip")):
-            report.warnings.append(
-                "rag.retrieval: Chinese BM25 segmentation defaults to the CKIP model, an in-process "
-                "torch model that profile: cloud does not load, so Chinese text is indexed "
-                "unsegmented — set rag.retrieval.segmenter: bigram for model-free segmentation")
+        if seg == "ckip":
+            report.errors.append(
+                "rag.retrieval.segmenter: ckip is an in-process torch model, which profile: "
+                "cloud never loads — use bigram (the cloud default, no dependency) or jieba "
+                "(`uv sync --extra jieba`), or keep CKIP with profile: hybrid and "
+                "`uv sync --extra local`")
 
     if refs is not None and profile in ("cloud", "hybrid"):
         for path in literal_secret_paths(rag_config, refs):

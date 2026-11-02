@@ -178,14 +178,34 @@ class TestCheckProfile:
     def test_unknown_refs_skip_literal_rule(self):
         assert check_profile(_rag(profile="cloud", parsing=VISION), refs=None).ok
 
-    def test_cloud_warns_about_ckip_segmenter(self):
-        report = check_profile(_rag(profile="cloud", parsing=VISION), refs=None)
-        assert any("segmenter: bigram" in w for w in report.warnings)
-
-    def test_cloud_no_ckip_warning_when_segmenter_is_model_free(self):
+    def test_cloud_defaults_to_bigram_without_a_warning(self):
+        from src.config.roles import effective_segmenter
         rag = _rag(profile="cloud", parsing=VISION)
-        object.__setattr__(rag.retrieval, "segmenter", "bigram")  # field owned by the query layer
-        assert not check_profile(rag, refs=None).warnings
+        report = check_profile(rag, refs=None)
+        assert report.ok and not any("segmenter" in w for w in report.warnings)
+        assert effective_segmenter(rag) == "bigram"
+        assert effective_segmenter(_rag()) == "ckip"           # local default unchanged
+        assert effective_segmenter(_rag(profile="hybrid")) == "ckip"
+
+    def test_cloud_rejects_explicit_ckip_with_the_way_out(self):
+        rag = _rag(profile="cloud", parsing=VISION)
+        rag.retrieval.segmenter = "ckip"
+        report = check_profile(rag, refs=None)
+        assert not report.ok
+        msg = next(e for e in report.errors if "segmenter" in e)
+        assert "bigram" in msg and "jieba" in msg and "--extra local" in msg
+
+    def test_explicit_model_free_segmenters_are_fine_in_cloud(self):
+        for name in ("bigram", "jieba"):
+            rag = _rag(profile="cloud", parsing=VISION)
+            rag.retrieval.segmenter = name
+            assert check_profile(rag, refs=None).ok
+
+    def test_explicit_ckip_is_fine_outside_cloud(self):
+        for profile in ("local", "hybrid"):
+            rag = _rag(profile=profile)
+            rag.retrieval.segmenter = "ckip"
+            assert not any("segmenter" in e for e in check_profile(rag, refs=None).errors)
 
     def test_none_config(self):
         assert check_profile(None).ok
@@ -254,11 +274,15 @@ class TestRoleSummary:
         assert "Embedding" in text and "endpoint https://api.example.com/v1" in text
         assert "pdf=cloud, images=cloud" in text
         assert "Speech-to-text" in text and "off" in text
-        assert "FTS segmenter" in text and "ckip" in text
+        assert "FTS segmenter" in text and "no model — bigram" in text  # cloud default
+
+    def test_startup_lines_local_default_is_ckip(self):
+        text = "\n".join(startup_lines(_rag()))
+        assert "in-process model — ckip" in text
 
     def test_startup_lines_local_and_bigram(self):
         rag = _rag(embedding={"provider": "openai", "model": "m", "dimension": 8})
-        object.__setattr__(rag.retrieval, "segmenter", "bigram")
+        rag.retrieval.segmenter = "bigram"
         text = "\n".join(startup_lines(rag))
         assert "in-process — docling" in text and "(provider default)" in text
         assert "no model — bigram" in text
@@ -328,3 +352,14 @@ def test_yaml_hybrid_literal_key_warns_but_loads(tmp_path, monkeypatch, _clean_c
 def test_parsing_config_defaults():
     p = ParsingConfig()
     assert p.pdf is None and p.on_page_failure == "mark" and p.max_pages_per_file == 500
+
+
+def test_yaml_explicit_ckip_in_cloud_blocks_startup(tmp_path, monkeypatch, _clean_config):
+    monkeypatch.setenv("VISION_KEY", "v-secret")
+    monkeypatch.setenv("EMB_KEY", "e-secret")
+    base = _BASE_YAML.replace("api_key: KEY", 'api_key: "${EMB_KEY}"')
+    ckip = base.replace("hybrid_search: false}", "hybrid_search: true, segmenter: ckip}")
+    assert _load(tmp_path, monkeypatch, ckip) is None
+    Config._config_model = None
+    bigram = base.replace("hybrid_search: false}", "hybrid_search: true, segmenter: bigram}")
+    assert _load(tmp_path, monkeypatch, bigram).rag.retrieval.segmenter == "bigram"

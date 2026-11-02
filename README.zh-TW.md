@@ -127,9 +127,11 @@ Agentic_product-docs  mode="search"  query="要怎麼輪替簽章金鑰?"
 
 | `segmenter` | 說明 |
 |---|---|
-| `ckip` *(預設)* | 中研院 CKIP BERT 模型 —— 繁體中文最準;需要 torch,第一次使用時下載模型。 |
-| `jieba` | 詞典式、純 Python、不需 GPU。選用套件:`uv pip install jieba`（或 `pyproject.toml` 的 `jieba` extra）。 |
-| `bigram` | 中日韓字元兩兩重疊切分 + 英數詞。不需模型、零相依;索引較大。 |
+| `ckip` *(預設)* | 中研院 CKIP BERT 模型 —— 繁體中文最準;需要 torch(`uv sync --extra local`),第一次使用時下載模型。`profile: cloud` 不允許使用。 |
+| `jieba` | 詞典式、純 Python、不需 GPU。選用套件:`uv sync --extra jieba`。 |
+| `bigram` | 中日韓字元兩兩重疊切分 + 英數詞。不需模型、零相依;索引較大。`profile: cloud` 的預設值。 |
+
+`segmenter` 未設定時依 profile 決定:`ckip`,`profile: cloud` 則為 `bigram`。
 
 每個資料夾的資料表會記錄它的關鍵字索引是哪個斷詞器建的。改了 `segmenter`（可在 Settings 即時改）之後,主控台會把用其他斷詞器建索引的資料夾標成 **FTS rebuild needed**;*Rebuild FTS* 會用目前設定的斷詞器重新斷詞 —— 不需重新 embedding。
 
@@ -160,7 +162,7 @@ Agentic_product-docs  mode="search"  query="要怎麼輪替簽章金鑰?"
 | `rag.rerank.score_threshold` / `auto_template` | `0.0` / `true` | 濾掉分數低於門檻的結果（mxbai-rerank-v2 適合 0.5）;自動套用 mxbai-v2 的對話格式 prompt。 |
 | `rag.rerank.gap_threshold` | `0.5` | 知識缺口分析:最高 rerank 分數低於此值即視為「沒有好的匹配」。 |
 | `rag.asr.provider` | `fireredasr` | 音訊轉錄:`fireredasr`（本地繁中）· `docling-whisper` · `openai-compatible`。`rag.asr.enabled: false` 時音檔會以明確訊息標為失敗(不做任何轉錄)。 |
-| `rag.retrieval.segmenter` | `ckip` | 關鍵字檢索的中文斷詞器:`ckip` · `jieba` · `bigram`（見「中文斷詞」）。 |
+| `rag.retrieval.segmenter` | `ckip`(`profile: cloud` 為 `bigram`) | 關鍵字檢索的中文斷詞器:`ckip` · `jieba` · `bigram`（見「中文斷詞」）。 |
 | `rag.docling.ocr_enabled` | `true` | 掃描 PDF 與圖片的 OCR。設 `false` 會真的關掉(重啟後生效);沒有文字層的掃描檔會以明確訊息失敗。 |
 | `rag.contextual_retrieval.max_doc_chars` | `60000` | 每個 chunk 交給 LLM 的文件文字上限。LLM 讀的是大綱加上 chunk 所在章節,以 chunk 為中心最多 12,000 字元。 |
 | `rag.retrieval.*` | — | Top-K、相似度門檻、BM25 候選數、`hybrid_fusion`（`rrf`/`concat`）、auto-merging。可從主控台即時調,或用 **High Precision / Balanced / High Recall** 預設。 |
@@ -233,14 +235,14 @@ rag:
 
   retrieval:
     hybrid_search: true
-    # segmenter: bigram     # model-free Chinese BM25 segmentation (CKIP is not loaded in cloud)
+    # segmenter: bigram     # the cloud default (no model); jieba also works, ckip is rejected
 ```
 
 profile 做了什麼:
 
 - **驗證。** `cloud` 會拒絕在本機程序內載入的 provider（`huggingface` embedding、`fireredasr` /
   `docling-whisper` ASR、本地 PDF/圖片解析）,而且**拒絕不是 `${ENV}` 參照的 API 金鑰** —— 雲端金鑰會計費,
-  而 config.yaml 是最常被複製流傳的檔案。啟動會失敗並列出有問題的設定路徑。`hybrid` 對寫死的金鑰只發警告;
+  而 config.yaml 是最常被複製流傳的檔案。明確設定 `rag.retrieval.segmenter: ckip` 也會被拒絕。啟動會失敗並列出有問題的設定路徑。`hybrid` 對寫死的金鑰只發警告;
   `local`（預設 —— 既有設定不受影響）不做任何新檢查。
 - **不 import 任何本地模型。** HuggingFace embedding、docling 的版面/OCR 模型、Whisper、FireRedASR、CKIP
   只在被選用時才 import;啟動時略過 docling 預熱,並在 log 中列出每個角色跑在哪裡。
@@ -252,8 +254,9 @@ profile 做了什麼:
 - **雲端語音轉文字。** 音訊重新取樣後,在靜音處切段上傳（每個請求都不會超過上傳上限）,有重試;
   轉錄結果在有語音卻為空、或疑似生成迴圈時會重新請求。
 - **每個角色各自的重試與逾時**（`timeout`、`max_retries`）:429 / 5xx / 逾時以指數退避加抖動重試,並遵守 `Retry-After`。
-- **中文 BM25。** CKIP 是本地 torch 模型,cloud profile 不載入它;在選用不需模型的斷詞器
-  （`rag.retrieval.segmenter: bigram`）之前,中文以不斷詞的方式建索引。
+- **中文 BM25。** CKIP 是本地 torch 模型,cloud profile 不載入它,預設改用不需模型的 `bigram` 斷詞;
+  也可選 `jieba`(`uv sync --extra jieba`)。明確設定 `rag.retrieval.segmenter: ckip` 會被拒絕 ——
+  要用 CKIP 請改用 `profile: hybrid` 並 `uv sync --extra local`。
 
 **主控台。** *Settings* 最上方是 **Model Roles** 面板:每個角色跑在哪、provider、模型與端點、
 是否已設定金鑰以及來自哪個環境變數（金鑰值永不回傳）,還有 **Test** 按鈕,用已儲存的設定送出一次最小的真實請求

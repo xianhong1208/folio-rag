@@ -189,9 +189,11 @@ class RAGRetrievalConfig(BaseModel):
     hybrid_search: bool
     text_search_config: str = "simple"  # Chinese is segmented in Python; Postgres tokenizes the space-joined result with `simple`
     # Python-side segmenter for the `simple` config, used by indexing, Rebuild FTS and queries alike:
-    # ckip (accurate, torch model) | jieba (pure Python, optional extra) | bigram (no dependency).
+    # ckip (accurate, torch model, `--extra local`) | jieba (pure Python, `--extra jieba`) |
+    # bigram (no dependency). Unset = the profile's default: ckip, or bigram under
+    # profile: cloud (which loads no in-process model; explicit ckip is rejected there).
     # Changing it flags existing folders for Rebuild FTS (no re-embedding needed).
-    segmenter: Literal["ckip", "jieba", "bigram"] = "ckip"
+    segmenter: Optional[Literal["ckip", "jieba", "bigram"]] = None
     # "rrf" = Reciprocal Rank Fusion (BM25 affects ordering); "concat" = llama_index native
     # (dense dominates, effectively vector-only; legacy).
     hybrid_fusion: str = "rrf"

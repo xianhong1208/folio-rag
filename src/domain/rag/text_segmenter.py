@@ -5,11 +5,15 @@ so space-less Chinese must be segmented in Python before it reaches
 ``to_tsvector``. The segmenter is chosen by ``rag.retrieval.segmenter``:
 
 - ``ckip``   (default) — the Academia Sinica CKIP BERT segmenter. Most accurate
-  on Traditional Chinese; needs torch and a model download on first use.
+  on Traditional Chinese; needs torch (``uv sync --extra local``) and a model
+  download on first use. Not allowed under ``rag.profile: cloud``.
 - ``jieba``  — dictionary-based, pure Python, fast, no GPU. Install the optional
-  extra: ``uv pip install 'agentic-rag[jieba]'`` (or ``pip install jieba``).
+  extra: ``uv sync --extra jieba``.
 - ``bigram`` — overlapping CJK character pairs plus Latin / digit words. No
-  model and no dependency at all; high recall, larger index.
+  model and no dependency at all; high recall, larger index. The default under
+  ``rag.profile: cloud``.
+
+Unset, the segmenter follows the profile (``src/config/roles.effective_segmenter``).
 
 :func:`get_segmenter` is the only entry point: the tsvector writer (indexing and
 Rebuild FTS) and the query side both call it, so a query is always tokenised
@@ -125,12 +129,16 @@ class JiebaSegmenter:
 
 
 def configured_segmenter_name() -> str:
-    """``rag.retrieval.segmenter`` (live), or the default when unset / invalid."""
+    """``rag.retrieval.segmenter`` (live), else the profile's default (ckip; bigram under
+    profile: cloud), else ckip when the config is unreadable or the value invalid."""
     try:
         from src.config.config_manager import Config
+        from src.config.roles import effective_segmenter
 
-        ret = getattr(getattr(Config.get_config_model(), "rag", None), "retrieval", None)
-        name = (getattr(ret, "segmenter", None) or DEFAULT_SEGMENTER).strip().lower()
+        rag = getattr(Config.get_config_model(), "rag", None)
+        if rag is None:
+            return DEFAULT_SEGMENTER
+        name = effective_segmenter(rag)
     except Exception:  # noqa: BLE001
         return DEFAULT_SEGMENTER
     return name if name in SEGMENTERS else DEFAULT_SEGMENTER

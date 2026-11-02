@@ -55,6 +55,25 @@ def resolve_llm(rag_config, role: str) -> Optional[RAGLLMConfig]:
     return RAGLLMConfig.model_validate(data)
 
 
+# rag.retrieval.segmenter when unset: CKIP is an in-process torch model, which the cloud
+# profile never loads, so cloud deployments default to the model-free bigram segmenter.
+DEFAULT_SEGMENTER = "ckip"
+CLOUD_DEFAULT_SEGMENTER = "bigram"
+
+
+def default_segmenter(profile: Optional[str]) -> str:
+    return CLOUD_DEFAULT_SEGMENTER if profile == "cloud" else DEFAULT_SEGMENTER
+
+
+def effective_segmenter(rag_config) -> str:
+    """The FTS segmenter in force: ``rag.retrieval.segmenter`` or the profile default."""
+    retrieval = getattr(rag_config, "retrieval", None)
+    explicit = getattr(retrieval, "segmenter", None) if retrieval is not None else None
+    if explicit:
+        return str(explicit).strip().lower()
+    return default_segmenter(getattr(rag_config, "profile", "local"))
+
+
 def parsing_mode(rag_config, kind: str) -> str:
     """``"local"`` or ``"cloud"`` for ``kind`` in {"pdf", "images"}; unset follows the profile."""
     if kind not in ("pdf", "images"):
@@ -176,10 +195,9 @@ def startup_lines(rag_config) -> List[str]:
             extra = f" [pdf={e['modes']['pdf']}, images={e['modes']['images']}]"
         lines.append(f"  {e['label']:<28} {where} — {e['provider']} / {e['model']}{extra}")
     retrieval = getattr(rag_config, "retrieval", None)
-    if retrieval is not None and getattr(retrieval, "hybrid_search", False):
-        seg = getattr(retrieval, "segmenter", None) or (
-            "ckip" if getattr(retrieval, "text_search_config", "simple") == "simple" else None)
-        if seg:
-            where = "in-process model" if seg == "ckip" else "in-process, no model"
-            lines.append(f"  {'FTS segmenter':<28} {where} — {seg}")
+    if (retrieval is not None and getattr(retrieval, "hybrid_search", False)
+            and getattr(retrieval, "text_search_config", "simple") == "simple"):
+        seg = effective_segmenter(rag_config)
+        where = "in-process model" if seg == "ckip" else "in-process, no model"
+        lines.append(f"  {'FTS segmenter':<28} {where} — {seg}")
     return lines

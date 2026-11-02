@@ -41,7 +41,7 @@ to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   configured templates are the default or the old chat-less form. Scores become
   calibrated, so `score_threshold: 0.5` filters for that model.
 - **Pluggable Chinese segmentation** — `rag.retrieval.segmenter: ckip | jieba |
-  bigram` (default `ckip`, editable live). One function serves indexing,
+  bigram` (default `ckip`, or `bigram` under `profile: cloud`; editable live). One function serves indexing,
   Rebuild FTS and queries; CKIP and jieba are imported only when selected
   (`jieba` is an optional extra) and `bigram` needs no model at all. Each
   folder's table records the segmenter that built its keyword index; the console
@@ -81,7 +81,11 @@ to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   stored, not the key.
 - `tests/test_cloud_profile_no_local_models.py` proves a cloud deployment imports
   no torch, transformers, sentence-transformers, docling models, Whisper,
-  FireRedASR or CKIP.
+  FireRedASR or CKIP, and that Chinese keyword search still segments (bigram).
+- Under `profile: cloud` the Chinese segmenter defaults to the model-free
+  `bigram`; an explicit `rag.retrieval.segmenter: ckip` is rejected at startup
+  and in the console (422), pointing to `bigram` / `jieba` or to
+  `profile: hybrid` with `uv sync --extra local`.
 - **Console login.** The `/admin` console now signs in with an MCP Gate access
   token for this service (`POST /api/console/session`). The token is verified
   offline once and exchanged for an HttpOnly, SameSite=Strict session cookie
@@ -170,6 +174,18 @@ to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   prefixes. Until then they keep working unchanged; the first re-index of a
   file after upgrading is a full one (older chunks have no content hash).
 - `main.py` defaults `PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True`.
+- **Install: the in-process model stack is now the `local` extra.** Local and hybrid
+  deployments install with `uv sync --extra local --group <gpu>`; a plain
+  `uv sync` is the torch-free core for the cloud profile. A `uv sync --group <gpu>`
+  without `--extra local` removes the local stack from an existing venv.
+- Startup logs where every model role runs and warms docling only when a role uses
+  its local models; CKIP is not loaded under the cloud profile.
+- The unauthenticated `/v1/ocr/general` answers 503 when PDFs/images are parsed
+  in the cloud instead of spending the vision budget on anonymous uploads.
+- **The authorization server is now called MCP Gate** (formerly MCP Center). Docs
+  and log messages follow the new name; `src/auth/mcp_center_auth.py` is now
+  `src/auth/mcp_gate_auth.py` and `McpCenterTokenVerifier` is
+  `McpGateTokenVerifier`. Configuration and issued tokens are unaffected.
 
 ### Fixed
 - 4xx instead of 500: playground parameters of the wrong type or range,
@@ -256,20 +272,6 @@ to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - **The legacy single-file console** (`/admin-classic`, `web/admin_console.html`
   and its loader `src/api/router/admin_page_html.py`). The React console at
   `/admin` is the only console.
-
-### Changed
-- **Install: the in-process model stack is now the `local` extra.** Local and hybrid
-  deployments install with `uv sync --extra local --group <gpu>`; a plain
-  `uv sync` is the torch-free core for the cloud profile. A `uv sync --group <gpu>`
-  without `--extra local` removes the local stack from an existing venv.
-- Startup logs where every model role runs and warms docling only when a role uses
-  its local models; CKIP is not loaded under the cloud profile.
-- The unauthenticated `/v1/ocr/general` answers 503 when PDFs/images are parsed
-  in the cloud instead of spending the vision budget on anonymous uploads.
-- **The authorization server is now called MCP Gate** (formerly MCP Center). Docs
-  and log messages follow the new name; `src/auth/mcp_center_auth.py` is now
-  `src/auth/mcp_gate_auth.py` and `McpCenterTokenVerifier` is
-  `McpGateTokenVerifier`. Configuration and issued tokens are unaffected.
 
 ## [1.1.0] — 2026-09-18
 

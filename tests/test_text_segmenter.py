@@ -87,6 +87,15 @@ class TestSelection:
         with patch("src.config.config_manager.Config.get_config_model", side_effect=RuntimeError):
             assert ts.configured_segmenter_name() == "ckip"
 
+    def test_unset_follows_the_profile(self):
+        def cfg(profile):
+            return SimpleNamespace(rag=SimpleNamespace(
+                profile=profile, retrieval=SimpleNamespace(segmenter=None)))
+        for profile, want in (("local", "ckip"), ("hybrid", "ckip"), ("cloud", "bigram")):
+            with patch("src.config.config_manager.Config.get_config_model",
+                       return_value=cfg(profile)):
+                assert ts.configured_segmenter_name() == want
+
     def test_one_instance_per_kind_and_ckip_is_lazy(self):
         sentinel = MagicMock(name="ckip")
         with patch("src.domain.rag.ckip_segmenter.get_segmenter", return_value=sentinel) as ck:
@@ -109,7 +118,8 @@ class TestSelection:
     def test_config_rejects_unknown_segmenter(self):
         from src.config.model import RAGRetrievalConfig
         base = dict(default_top_k=5, default_similarity_cutoff=0.1, hybrid_search=True)
-        assert RAGRetrievalConfig(**base).segmenter == "ckip"
+        # Unset = the profile's default (ckip; bigram under profile: cloud).
+        assert RAGRetrievalConfig(**base).segmenter is None
         with pytest.raises(Exception):
             RAGRetrievalConfig(**base, segmenter="pg_jieba")
 
