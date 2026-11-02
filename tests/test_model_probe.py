@@ -111,6 +111,13 @@ class TestProbes:
         from src.domain.rag.model_probe import _asr_ready
         assert _asr_ready(SimpleNamespace(asr=SimpleNamespace(provider="bogus"))) is False
 
+    def test_default_llm_probe(self):
+        with FakeModelServer() as srv:
+            assert probe_role(_config(srv.url).rag, "llm")["status"] == "ok"
+            srv.fail_next = [(500, None)]
+            assert probe_role(_config(srv.url).rag, "llm")["detail"] == "HTTP 500"
+        assert probe_role(_config(llm=None).rag, "llm")["status"] == "unset"
+
     def test_unknown_role(self):
         with pytest.raises(ValueError):
             probe_role(_config().rag, "summarizer")

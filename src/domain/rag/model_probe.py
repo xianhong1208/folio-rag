@@ -24,7 +24,8 @@ from typing import Any, Dict, Optional
 
 from src.config.roles import LLM_ROLES, resolve_llm, role_summary
 
-ROLES = ("embedding", *LLM_ROLES, "rerank", "vision", "asr")
+# "llm" probes the default rag.llm itself (the base every LLM role inherits from).
+ROLES = ("embedding", "llm", *LLM_ROLES, "rerank", "vision", "asr")
 PROBE_TIMEOUT = 20.0
 
 
@@ -136,6 +137,17 @@ def probe_role(rag, role: str) -> Dict[str, Any]:
     """Run the probe for ``role`` against the saved config (blocking; call off the loop)."""
     if role not in ROLES:
         raise ValueError(f"Unknown role {role!r} (expected one of {ROLES})")
+    if role == "llm":
+        llm = getattr(rag, "llm", None)
+        if llm is None:
+            return _result(role, "unset", "No rag.llm configured")
+        t0 = time.perf_counter()
+        try:
+            status, detail = "ok", _probe_chat(llm)
+        except Exception as e:  # noqa: BLE001
+            status, detail = "down", _err(e)
+        return _result(role, status, detail, int((time.perf_counter() - t0) * 1000),
+                       llm.azure_deployment or llm.model)
     summary = {r["role"]: r for r in role_summary(rag)}[role]
     model = summary.get("model")
     if summary["runs"] == "off":
