@@ -17,7 +17,6 @@ from src.domain.rag.dto import FileRequest
 from src.domain.exceptions import (
     FileIndexNotFoundError,
     FolderNotFoundError,
-    UnauthorizedAccessError,
 )
 from src.infrastructure.cache.cache_service import CacheKeys, CacheService
 from src.log import get_api_logger
@@ -39,13 +38,10 @@ class IndexingService:
             raise FolderNotFoundError(folder_id=folder_id)
 
         # fail-closed: reject any ownerless folder whose user_token is NULL/empty,
-        # consistent with the check in api/dependencies/auth.py
+        # consistent with the check in api/dependencies/auth.py. Reported as "not
+        # found" so a caller cannot probe which folder ids exist.
         if folder.user_token != token:
-            raise UnauthorizedAccessError(
-                resource_type="folder",
-                resource_id=folder_id,
-                reason="Token does not have permission for this folder",
-            )
+            raise FolderNotFoundError(folder_id=folder_id)
         return folder
     
     def get_folder_by_id_unsafe(self, folder_id: int):
