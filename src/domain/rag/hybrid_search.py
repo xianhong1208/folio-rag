@@ -252,14 +252,15 @@ class HybridSearcher:
         """Space-separated query terms, tokenised the way the index was.
 
         With ``text_search_config == "simple"`` the stored tsvector holds
-        Python-segmented tokens, so the query is segmented by the same segmenter.
+        Python-segmented tokens, so the query goes through the same configured
+        segmenter (``rag.retrieval.segmenter``: ckip / jieba / bigram).
         Any other config keeps Postgres's own tsvector, whose parser splits on
         whitespace and punctuation — the raw words are what it needs.
         """
         if settings.text_search_config != "simple":
             return query_text
         try:
-            from src.domain.rag.ckip_segmenter import get_segmenter
+            from src.domain.rag.text_segmenter import get_segmenter
 
             seg = await asyncio.to_thread(get_segmenter().segment, query_text)
             return seg or query_text

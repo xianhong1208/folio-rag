@@ -46,6 +46,7 @@ export const FIELDS = {
   'rag.retrieval.default_sparse_top_k': { label: 'BM25 Candidates', type: 'number' },
   'rag.retrieval.default_hybrid_alpha': { label: 'Hybrid Alpha', type: 'number', step: 0.05, range: [0, 1], hint: 'Deprecated and ignored: dense and BM25 hits are combined by rank (Hybrid Fusion below)' },
   'rag.retrieval.hybrid_fusion': { label: 'Hybrid Fusion', type: 'select', options: ['rrf', 'concat'], hint: 'rrf = Reciprocal Rank Fusion (recommended). concat = dense hits, then BM25-only hits, left for the reranker to order.' },
+  'rag.retrieval.segmenter': { label: 'Chinese Segmenter', type: 'select', options: ['ckip', 'jieba', 'bigram'], hint: 'Keyword-search tokenizer. ckip = most accurate (local model); jieba = fast, pure Python; bigram = no dependency. After a change, run Rebuild FTS on each flagged folder.' },
   'rag.retrieval.expand_context_default': { label: 'Expand Neighbors by Default', type: 'bool' },
   'rag.retrieval.expand_context_neighbors': { label: 'Neighbor Count', type: 'number' },
   'rag.retrieval.auto_merging.enabled': { label: 'Auto-Merging', type: 'bool' },

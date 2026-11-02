@@ -214,7 +214,7 @@ class TestMcpUsesSharedPath:
         retr = AutoMergingRetriever(MagicMock(), merge_threshold=1.1,
                                     expand_context_neighbors=0, searcher=searcher)
         with patch("llama_index.core.retrievers.VectorIndexRetriever", rec), \
-             patch("src.domain.rag.ckip_segmenter.get_segmenter", return_value=seg), \
+             patch("src.domain.rag.text_segmenter.get_segmenter", return_value=seg), \
              patch("db.db.get_async_engine", return_value=engine):
             out = await retr.aquery("退貨政策", SearchSettings(top_k=5), expand_context=False)
         assert [c[0] for c in rec.calls] == ["default"]         # no native "hybrid"

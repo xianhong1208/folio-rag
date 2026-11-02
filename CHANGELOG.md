@@ -7,6 +7,14 @@ to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 ## [Unreleased]
 
 ### Added
+- **Pluggable Chinese segmentation** — `rag.retrieval.segmenter: ckip | jieba |
+  bigram` (default `ckip`, editable live). One function serves indexing,
+  Rebuild FTS and queries; CKIP and jieba are imported only when selected
+  (`jieba` is an optional extra) and `bigram` needs no model at all. Each
+  folder's table records the segmenter that built its keyword index; the console
+  flags folders that need *Rebuild FTS* after a switch
+  (`GET /api/admin/manage/folders/{id}/fts`), and Rebuild FTS uses the
+  configured segmenter.
 - **REST auto-merge.** `POST /api/rag/query` applies the same auto-merge rule as
   the MCP search tool; `auto_merge` (true / false / null = follow
   `rag.retrieval.auto_merging.enabled`) overrides it per request. Merged results

@@ -79,6 +79,10 @@ dependencies = [
     "pygments>=2.20.0",
 ]
 
+[project.optional-dependencies]
+# Alternative Chinese segmenter for keyword search (rag.retrieval.segmenter: jieba).
+jieba = ["jieba>=0.42.1"]
+
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
 testpaths = ["tests"]

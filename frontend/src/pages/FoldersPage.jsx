@@ -2,6 +2,7 @@ import { useEffect, useState, useCallback, useRef } from 'react'
 import { Folder, Play, Pencil, Trash2, Download, Eye, X, RefreshCw } from 'lucide-react'
 import { get, post, api, upload as uploadFile } from '../services/api'
 import { fmtNum, fmtBytes, fmtTime, shortModel } from '../lib/format'
+import { ftsNotice } from '../lib/fts'
 import EmptyState from '../components/ui/EmptyState'
 import ChunkText, { ContentBadge } from '../components/ui/ChunkText'
 import { useModal } from '../contexts/ModalContext'
@@ -78,6 +79,14 @@ export default function FoldersPage() {
     return () => { alive = false; if (timer) clearTimeout(timer) }
   }, [cur, loadFiles, pollNonce])
 
+  // Which segmenter built this folder's keyword index (flags a needed Rebuild FTS).
+  const [fts, setFts] = useState(null)
+  const loadFts = useCallback(async (fid) => {
+    try { const r = await get(`/api/admin/manage/folders/${fid}/fts`); if (curIdRef.current === fid) setFts(r.data) }
+    catch { if (curIdRef.current === fid) setFts(null) }
+  }, [])
+  useEffect(() => { setFts(null); if (cur) loadFts(cur.id) }, [cur, loadFts])
+
   // Esc closes the chunk viewer, matching the app's other modals.
   useEffect(() => {
     if (!chunks) return
@@ -128,13 +137,14 @@ export default function FoldersPage() {
   const rebuildFts = async () => {
     const ok = await confirm({
       title: 'Rebuild full-text search?', action: 'Rebuild',
-      note: 'Re-segments every indexed chunk with CKIP and rewrites the search vector — no re-embedding, so it is safe and usually quick. Improves Chinese keyword recall for folders indexed before the CKIP upgrade.',
+      note: `Re-segments every indexed chunk with the configured Chinese segmenter${fts && fts.configured ? ' (' + fts.configured + ')' : ''} and rewrites the keyword-search vector — no re-embedding, so it is safe and usually quick. Needed after changing the segmenter.`,
     })
     if (!ok) return
     setRebuilding(true)
     try { const r = await post(`/api/admin/manage/folders/${cur.id}/rebuild-fts`, {}); toast(r.message || 'Full-text search rebuilt', 'ok') }
     catch (e) { toast('Rebuild failed: ' + e.message, 'bad') }
     setRebuilding(false)
+    loadFts(cur.id)
   }
   const editFolder = async (f) => {
     const r = await form({ title: 'Rename Folder', action: 'Save', fields: [{ id: 'name', label: 'Name', defaultValue: f.name, required: true }] })
@@ -195,12 +205,13 @@ export default function FoldersPage() {
           onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); back() } }}>Folders</a><span className="sep">/</span><span>{cur.name}</span></div>
         <div className="ff-head">
           <div className="ff-title-wrap"><h2>{cur.name}</h2>
-            <div className="desc">{list.length} file(s) · {failed ? failed + ' failed' : 'all healthy'}{models.length === 1 ? ' · ' + models[0] : ''}</div>
+            <div className="desc">{list.length} file(s) · {failed ? failed + ' failed' : 'all healthy'}{models.length === 1 ? ' · ' + models[0] : ''}
+              {ftsNotice(fts) && <> · <span className="pill warn tip" data-tip={ftsNotice(fts)}>FTS rebuild needed</span></>}</div>
           </div>
           <div className="ff-actions">
             <div className="search-box"><input placeholder="Search files…" value={fq} onChange={(e) => setFq(e.target.value)} /></div>
             <button className="btn-ghost tip" onClick={rebuildFts} disabled={rebuilding}
-              data-tip="Re-segments existing chunks with CKIP and rebuilds only the keyword-search (BM25) vector — no re-embedding and no re-parsing, unlike Reindex Folder. Use it for folders indexed before the CKIP upgrade to fix Chinese keyword recall.">
+              data-tip="Re-segments existing chunks with the configured Chinese segmenter and rebuilds only the keyword-search (BM25) vector — no re-embedding and no re-parsing, unlike Reindex Folder. Needed after changing rag.retrieval.segmenter.">
               <RefreshCw size={13} style={{ animation: rebuilding ? 'spin 1s linear infinite' : 'none' }} />{rebuilding ? 'Rebuilding…' : 'Rebuild FTS'}
             </button>
             <button className="btn-ghost" onClick={() => reindexFolder(cur.id, false)}>Reindex Folder</button>

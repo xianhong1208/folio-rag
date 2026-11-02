@@ -64,6 +64,7 @@ EDITABLE: Dict[str, str] = {
     "rag.retrieval.default_sparse_top_k": "live",
     "rag.retrieval.default_hybrid_alpha": "live",
     "rag.retrieval.hybrid_fusion": "live",
+    "rag.retrieval.segmenter": "live",
     "rag.retrieval.expand_context_default": "live",
     "rag.retrieval.expand_context_neighbors": "live",
     "rag.retrieval.auto_merging.enabled": "live",
