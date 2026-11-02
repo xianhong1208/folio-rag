@@ -5,7 +5,7 @@ All Pydantic config models are collected here for reuse across the project.
 """
 
 from typing import List, Literal, Optional, Union
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 # Secrets are excluded from repr()/str() (repr=False), so logging a whole config
 # object, or an exception message that embeds one, can never print them.
@@ -141,18 +141,26 @@ class ModulesConfig(BaseModel):
 
 class RAGEmbeddingConfig(BaseModel):
     """RAG embedding configuration."""
-    provider: str  # "openai", "azure", "vllm", "ollama"
+    # openai | openai-compatible | azure | vllm | ollama (HTTP) | huggingface / local (in-process)
+    provider: str
     model: str
     dimension: int
-    api_key: Optional[str] = Field(None, repr=False)  # Direct API key
+    api_key: Optional[str] = Field(None, repr=False)  # Prefer "${ENV_VAR}"; literal keys are rejected in profile: cloud
     api_key_env: Optional[str] = None  # Environment variable name for API key
-    base_url: Optional[str] = None  # Also used as azure_endpoint for Azure provider
+    # OpenAI-compatible endpoint (honoured by every HTTP provider, including `openai`);
+    # also used as azure_endpoint for the Azure provider.
+    base_url: Optional[str] = None
     api_version: Optional[str] = None  # Azure API version (e.g., "2024-02-01")
     azure_deployment: Optional[str] = None  # Azure deployment name
     # e5-family needs "query: "/"passage: " prefixes; empty (default) for bge-family.
     # Changing a prefix changes the vector space, so existing indexes need a full reindex.
     query_prefix: str = ""
     passage_prefix: str = ""
+    # Send `dimensions=<dimension>` with each request (Matryoshka models such as
+    # text-embedding-3-*; needed when the model's native size exceeds pgvector's HNSW limit).
+    request_dimensions: bool = False
+    timeout: float = Field(60.0, gt=0)  # per-request timeout (seconds)
+    max_retries: int = Field(3, ge=0, le=10)  # 429 / 5xx / timeout retries (SDK backoff)
 
 
 class RAGChunkingConfig(BaseModel):
@@ -204,13 +212,32 @@ class RAGVectorStoreConfig(BaseModel):
 
 
 class RAGLLMConfig(BaseModel):
-    """RAG LLM configuration (for LLM-dependent features such as Contextual Retrieval)."""
-    provider: str = "azure"  # "azure", "openai", "vllm", "ollama"
+    """Default LLM for every LLM role (contextual prefixes, answers, eval question generation).
+
+    Each role can override any field through ``rag.contextual_llm`` / ``rag.answer_llm`` /
+    ``rag.eval_llm`` (see LLMRoleConfig); unset fields inherit from here.
+    """
+    # openai | openai-compatible | vllm | ollama (all OpenAI-compatible; base_url honoured) | azure
+    provider: str = "azure"
     model: str = "gpt-4o-mini"
     api_key: Optional[str] = Field(None, repr=False)
-    base_url: Optional[str] = None  # Azure endpoint
+    base_url: Optional[str] = None  # OpenAI-compatible endpoint (Azure: the resource endpoint)
     api_version: Optional[str] = "2024-12-01-preview"
     azure_deployment: Optional[str] = None
+    timeout: float = Field(120.0, gt=0)  # per-request timeout (seconds)
+    max_retries: int = Field(2, ge=0, le=10)  # 429 / 5xx / timeout retries (SDK backoff, honours Retry-After)
+
+
+class LLMRoleConfig(BaseModel):
+    """Per-role LLM override. Every field is optional; unset fields inherit from ``rag.llm``."""
+    provider: Optional[str] = None
+    model: Optional[str] = None
+    api_key: Optional[str] = Field(None, repr=False)
+    base_url: Optional[str] = None
+    api_version: Optional[str] = None
+    azure_deployment: Optional[str] = None
+    timeout: Optional[float] = Field(None, gt=0)
+    max_retries: Optional[int] = Field(None, ge=0, le=10)
 
 
 class ContextualRetrievalConfig(BaseModel):
@@ -223,6 +250,11 @@ class ContextualRetrievalConfig(BaseModel):
     reasoning_effort: Optional[str] = None
     # Choose whether to add the context prefix to leaf / parent / all chunks
     apply_to: str = "all"  # "leaf" / "parent" / "all"
+    # Cost guards (0 = unlimited). Chunks over a cap get the deterministic fallback prefix
+    # (file name) instead of an LLM call, and a warning is logged.
+    max_calls_per_file: int = Field(0, ge=0)
+    # Estimated tokens (prompt chars / 4 + max_tokens) per UTC day, process-wide.
+    max_tokens_per_day: int = Field(0, ge=0)
 
 
 class RerankConfig(BaseModel):
@@ -231,6 +263,17 @@ class RerankConfig(BaseModel):
     model: str = "BAAI/bge-reranker-v2-m3"
     base_url: str = "http://localhost:8787"
     api_key: Optional[str] = Field(None, repr=False)
+    # HTTP API style:
+    #   score   — vLLM POST /v1/score {text_1, text_2}            (default; previous behaviour)
+    #   cohere  — Cohere POST /v1/rerank {query, documents}        → results[{index, relevance_score}]
+    #   jina    — Jina POST /v1/rerank {query, documents}          → results[{index, relevance_score}]
+    #   generic — OpenAI-compatible servers exposing POST /rerank (vLLM, Infinity, gateways);
+    #             tolerant parser for results/data and relevance_score/score
+    api: Literal["score", "cohere", "jina", "generic"] = "score"
+    # Explicit path appended to base_url (e.g. "/v2/rerank"); empty = the style's default.
+    endpoint_path: Optional[str] = None
+    timeout: float = Field(10.0, gt=0)  # query-path latency budget per request (seconds)
+    max_retries: int = Field(1, ge=0, le=5)  # retries on 429 / 5xx / timeout before falling back
     top_n: Optional[int] = None  # keep the top N results after reranking (None = keep all)
     score_threshold: float = 0.0  # rerank score threshold
     # Input template applied before POST /v1/score; {text} is the placeholder. Instruction-tuned
@@ -275,6 +318,53 @@ class AsrConfig(BaseModel):
     base_url: Optional[str] = None          # e.g. http://host:8000/v1
     api_key: Optional[str] = Field(None, repr=False)
     model: Optional[str] = None             # cloud model name, e.g. whisper-1
+    language: Optional[str] = None          # ISO-639-1 hint (e.g. "zh"); empty = auto-detect
+    # Long audio is resampled to 16 kHz mono and uploaded in segments cut at silences, so
+    # no single request hits the provider's upload limit (OpenAI: 25 MB ≈ 13 min of 16k pcm).
+    segment_seconds: float = Field(600.0, ge=30.0, le=780.0)
+    timeout: float = Field(300.0, gt=0)     # per-segment request timeout (seconds)
+    max_retries: int = Field(3, ge=0, le=10)  # 429 / 5xx / timeout / empty-or-runaway retries
+
+
+class VisionModelConfig(BaseModel):
+    """Vision-capable chat model used to transcribe PDF pages / images (cloud parsing).
+
+    Called through the OpenAI-compatible ``POST {base_url}/chat/completions`` with an
+    ``image_url`` data-URI part; ``azure`` uses the Azure OpenAI client instead.
+    """
+    provider: str = "openai-compatible"  # openai | openai-compatible | vllm | ollama | azure
+    model: Optional[str] = None
+    base_url: Optional[str] = None
+    api_key: Optional[str] = Field(None, repr=False)
+    api_version: Optional[str] = None
+    azure_deployment: Optional[str] = None
+    timeout: float = Field(120.0, gt=0)
+    max_retries: int = Field(3, ge=0, le=10)
+    max_tokens: int = Field(4096, ge=256)
+
+
+class ParsingConfig(BaseModel):
+    """Where PDFs and images are parsed.
+
+    ``local`` = in-process docling (layout / TableFormer / OCR models); ``cloud`` = every
+    page is rendered and transcribed to Markdown by ``vision``. Unset follows the profile
+    (``cloud`` profile → cloud, otherwise local).
+    """
+    pdf: Optional[Literal["local", "cloud"]] = None
+    images: Optional[Literal["local", "cloud"]] = None
+    vision: Optional[VisionModelConfig] = None
+    dpi: int = Field(150, ge=72, le=300)  # page render resolution sent to the vision model
+    max_concurrency: int = Field(4, ge=1, le=32)  # pages in flight per file
+    # Trailing characters of the previous page passed with each page, so headings, lists
+    # and tables that continue across a page break are recognised as continuations.
+    context_chars: int = Field(800, ge=0, le=8000)
+    max_pages_per_file: int = Field(500, ge=0)  # 0 = unlimited; larger files fail up front
+    max_pages_per_day: int = Field(0, ge=0)  # process-wide UTC-day page budget; 0 = unlimited
+    # A page that still fails after retries is replaced by a visible marker ("mark") or
+    # fails the whole file ("fail"). min_success_ratio fails the file if too few pages parse.
+    on_page_failure: Literal["mark", "fail"] = "mark"
+    min_success_ratio: float = Field(0.5, ge=0.0, le=1.0)
+    prompt: Optional[str] = None  # override the built-in language-neutral transcription prompt
 
 
 class IndexingConfig(BaseModel):
@@ -293,19 +383,42 @@ class IndexingConfig(BaseModel):
     job_timeout_seconds: int = 864000  # 10 days
 
 
+Profile = Literal["local", "hybrid", "cloud"]
+
+
 class RAGConfig(BaseModel):
     """RAG system configuration."""
     enabled: bool = True
+    # Deployment profile (see src/config/profile.py):
+    #   local  — anything goes (default; previous behaviour)
+    #   hybrid — local models and cloud endpoints mixed; literal API keys are warned about
+    #   cloud  — every role is an HTTP endpoint; in-process model providers are refused,
+    #            API keys must be ${ENV} references, and no local model stack is imported
+    profile: Profile = "local"
     embedding: RAGEmbeddingConfig
     chunking: RAGChunkingConfig
     retrieval: RAGRetrievalConfig
     vector_store: RAGVectorStoreConfig
     llm: Optional[RAGLLMConfig] = None
+    # Per-role LLM overrides (unset fields inherit from `llm`)
+    contextual_llm: Optional[LLMRoleConfig] = None
+    answer_llm: Optional[LLMRoleConfig] = None
+    eval_llm: Optional[LLMRoleConfig] = None
     contextual_retrieval: Optional[ContextualRetrievalConfig] = None
     rerank: Optional[RerankConfig] = None
     docling: Optional[DoclingConfig] = None
+    parsing: Optional[ParsingConfig] = None
     asr: Optional[AsrConfig] = None
     indexing: Optional[IndexingConfig] = None
+
+    @model_validator(mode="after")
+    def _apply_profile_defaults(self) -> "RAGConfig":
+        """Profile defaults that need no validation: a cloud deployment without an `asr`
+        section must not fall back to local Whisper, so speech-to-text is off until an
+        OpenAI-compatible endpoint is configured."""
+        if self.profile == "cloud" and self.asr is None:
+            self.asr = AsrConfig(enabled=False, provider="openai-compatible")
+        return self
 
 
 class ConfigModel(BaseModel):
@@ -337,9 +450,15 @@ __all__ = [
     "RAGRetrievalConfig",
     "RAGVectorStoreConfig",
     "RAGLLMConfig",
+    "LLMRoleConfig",
     "ContextualRetrievalConfig",
     "RerankConfig",
     "DoclingConfig",
+    "VisionModelConfig",
+    "ParsingConfig",
+    "AsrConfig",
+    "IndexingConfig",
+    "Profile",
     "RAGConfig",
     "ConfigModel",
 ]

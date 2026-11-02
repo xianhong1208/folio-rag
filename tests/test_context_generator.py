@@ -333,3 +333,40 @@ async def test_generate_batch_order_and_length(mocker: MockerFixture):
     results = await gen.generate_prefixes(chunks, "full document", "file.txt")
 
     assert results == ["CTX"] * len(chunks)
+
+
+# Cost guards (rag.contextual_retrieval.max_calls_per_file / max_tokens_per_day)
+
+async def test_generate_prefixes_caps_llm_calls_per_file(mocker: MockerFixture):
+    """Chunks past max_calls_per_file get no prefix (None) without an LLM call"""
+    from src.domain.rag.usage_budget import DailyBudget
+    gen = _make_generator(max_calls_per_file=2, budget=DailyBudget())
+    mocker.patch.object(ContextGenerator, "_create_sync_client", return_value=None)
+    call = mocker.patch.object(gen, "_call_llm_sync", return_value="CTX")
+    progress = []
+    results = await gen.generate_prefixes(["a", "b", "c"], "doc", "f.txt",
+                                          on_progress=lambda d, t: progress.append((d, t)))
+    assert results == ["CTX", "CTX", None]  # None: the next re-index retries it
+    assert call.call_count == 2 and progress[-1] == (3, 3)
+
+
+async def test_daily_token_budget_falls_back_when_exhausted(mocker: MockerFixture):
+    """Once today's estimated prefix tokens are spent, chunks get no prefix (None)"""
+    from src.domain.rag.usage_budget import DailyBudget
+    budget = DailyBudget()
+    gen = _make_generator(max_tokens=100, max_tokens_per_day=1, budget=budget, max_concurrent=1)
+    mocker.patch.object(ContextGenerator, "_create_sync_client", return_value=None)
+    call = mocker.patch.object(gen, "_call_llm_sync", return_value="CTX")
+    results = await gen.generate_prefixes(["a", "b"], "doc", "f.txt")
+    assert results == [None, None] and call.call_count == 0
+    assert budget.used("prefix_tokens") == 0
+
+
+def test_from_config_passes_cost_guards():
+    cfg = SimpleNamespace(
+        contextual_retrieval=SimpleNamespace(enabled=True, max_context_length=100,
+                                             max_calls_per_file=7, max_tokens_per_day=9000),
+        llm=SimpleNamespace(azure_deployment=None, model="m"),
+    )
+    gen = ContextGenerator.from_config(cfg)
+    assert gen._max_calls_per_file == 7 and gen._max_tokens_per_day == 9000

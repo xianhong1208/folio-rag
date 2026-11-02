@@ -395,6 +395,12 @@ async def health_check():  # read-only status; any console session may view it
         ("Reranker", "sort", eff.get("rag.rerank.base_url"), eff.get("rag.rerank.api_key"),
          bool(eff.get("rag.rerank.enabled"))),
     ]
+    # Cloud document parsing (vision model) — only listed when PDFs/images go to the cloud
+    from src.config.roles import uses_cloud_parsing
+    rag_cfg = getattr(cfg, "rag", None)
+    if rag_cfg is not None and uses_cloud_parsing(rag_cfg):
+        endpoint_specs.append(("Document Parsing", "scan", eff.get("rag.parsing.vision.base_url"),
+                               eff.get("rag.parsing.vision.api_key"), True))
     probe_tasks = [
         _probe_endpoint_health(url, key) if enabled else None
         for _, _, url, key, enabled in endpoint_specs

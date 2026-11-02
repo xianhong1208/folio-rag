@@ -5,6 +5,8 @@
 - PUT  /api/admin/settings        — hot update ({"settings": {path: value}}); all-or-nothing validation
 - DELETE /api/admin/settings/{path} — remove one override, restoring the config.yaml value
 - POST /api/admin/probe           — test model-service connectivity (GET {base_url}/models)
+- POST /api/admin/probe/{role}    — per-role health probe: one minimal real request with the
+                                    saved settings (the key stays server-side)
 - GET  /                          — redirect to the React console at /admin/
 
 Auth: reading settings needs a console session (secrets are always masked); changing
@@ -120,6 +122,31 @@ async def probe_endpoint(
         # at the problem without echoing the raw message (which may contain internal address/path details)
         return {"data": {"reachable": False, "error": type(e).__name__},
                 "message": "probe failed"}
+
+
+@router.post("/api/admin/probe/{role}", dependencies=[Depends(require_console_admin)])
+async def probe_role(role: str):
+    """Per-role health probe against the *saved* configuration.
+
+    Sends one minimal real request for the role (embedding of "ping", a 16-token chat
+    completion, an 8×8 image for the vision model, one rerank pair, 0.5 s of silence for
+    speech-to-text) — enough to prove URL, model and key are right. In-process roles report
+    whether their weights are present without loading them. Only status, latency and a
+    short detail come back; the key is never sent to the browser. Admin-only for the same
+    SSRF reason as /api/admin/probe, and because a probe may be billed.
+    """
+    import asyncio
+
+    from src.config.config_manager import Config
+    from src.domain.rag.model_probe import ROLES, probe_role as _probe
+
+    if role not in ROLES:
+        raise HTTPException(404, f"Unknown role {role!r}; expected one of {list(ROLES)}")
+    rag = getattr(Config.get_config_model(), "rag", None)
+    if rag is None:
+        raise HTTPException(409, "RAG is not configured")
+    result = await asyncio.to_thread(_probe, rag, role)
+    return {"data": result, "message": "probe done"}
 
 
 @router.get("/", include_in_schema=False)

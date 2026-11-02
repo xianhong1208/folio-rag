@@ -395,12 +395,12 @@ async def admin_query_folder(folder_id: int,
 
 
 def _llm():
-    """(client, model) for the configured LLM (rag.llm)."""
-    from src.config.config_manager import Config
+    """(client, model) for the answer LLM (rag.answer_llm over rag.llm)."""
     from src.domain.rag.context_generator import ContextGenerator
-    llm_cfg = Config.get_config_model().rag.llm
+    from src.domain.rag.llm_client import model_name, role_llm
+    llm_cfg = role_llm("answer_llm")  # rag.answer_llm over rag.llm
     client = ContextGenerator._create_sync_client(llm_cfg)
-    return client, getattr(llm_cfg, "azure_deployment", None) or llm_cfg.model
+    return client, model_name(llm_cfg)
 
 
 def _close(client) -> None:

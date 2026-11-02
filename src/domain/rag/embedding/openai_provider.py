@@ -3,18 +3,24 @@
 
 import os
 from typing import Optional
-from llama_index.embeddings.openai import OpenAIEmbedding
+from llama_index.embeddings.openai_like import OpenAILikeEmbedding
 from .base import IEmbeddingProvider
 from src.log import get_api_logger
 
 logger = get_api_logger()
 
 
-class OpenAIEmbeddingProvider(IEmbeddingProvider):
-    """OpenAI embedding provider
+OPENAI_DEFAULT_BASE_URL = "https://api.openai.com/v1"
 
-    Uses OpenAI's API for generating embeddings.
-    Requires OPENAI_API_KEY environment variable.
+
+class OpenAIEmbeddingProvider(IEmbeddingProvider):
+    """OpenAI / OpenAI-compatible embedding provider
+
+    Calls ``POST {base_url}/embeddings``. ``base_url`` is honoured (it used to be
+    dropped); empty means the official OpenAI endpoint. Uses OpenAILikeEmbedding, which
+    accepts any model id — llama-index's OpenAIEmbedding rejects names outside OpenAI's own
+    catalogue, so an OpenAI-compatible cloud serving e.g. BAAI/bge-m3 would fail.
+    Requires an API key (config ``api_key: "${OPENAI_API_KEY}"`` or the env var).
 
     Supported models:
     - text-embedding-3-small (1536 dimensions)
@@ -27,7 +33,10 @@ class OpenAIEmbeddingProvider(IEmbeddingProvider):
         model_name: str = "text-embedding-3-small",
         api_key: Optional[str] = None,
         api_key_env: str = "OPENAI_API_KEY",
-        dimension: int = 1536
+        dimension: int = 1536,
+        base_url: Optional[str] = None,
+        tuning: Optional[dict] = None,
+        provider_name: str = "openai",
     ):
         """Initialize OpenAI provider
 
@@ -40,6 +49,8 @@ class OpenAIEmbeddingProvider(IEmbeddingProvider):
         self._model_name = model_name
         self._dimension = dimension
         self._api_key_env = api_key_env
+        self._base_url = base_url or OPENAI_DEFAULT_BASE_URL
+        self._provider_name = provider_name
 
         # Get API key from parameter or environment
         if api_key is None:
@@ -58,16 +69,20 @@ class OpenAIEmbeddingProvider(IEmbeddingProvider):
 
         # Create embedding model instance
         try:
-            self._embed_model = OpenAIEmbedding(
-                model=model_name,
-                api_key=api_key
+            self._embed_model = OpenAILikeEmbedding(
+                model_name=model_name,
+                api_key=api_key or "missing",
+                api_base=self._base_url,
+                **(tuning or {}),  # timeout / max_retries / dimensions
             )
-            logger.info(f"OpenAI embedding provider initialized: {model_name} (dim={dimension})")
+            logger.info(
+                f"OpenAI-compatible embedding provider initialized: {model_name} at "
+                f"{self._base_url} (dim={dimension})")
         except Exception as e:
             logger.error(f"Failed to initialize OpenAI embedding provider: {e}")
             raise
 
-    def get_embed_model(self) -> OpenAIEmbedding:
+    def get_embed_model(self) -> OpenAILikeEmbedding:
         """Get the OpenAI embedding model instance"""
         return self._embed_model
 
@@ -81,7 +96,7 @@ class OpenAIEmbeddingProvider(IEmbeddingProvider):
 
     def get_provider_name(self) -> str:
         """Get provider name"""
-        return "openai"
+        return self._provider_name
 
     def validate_config(self) -> None:
         """Validate OpenAI configuration

@@ -1,17 +1,19 @@
 
 """Document Loader — three-way loading of a file into a llama_index Document.
 
-Three paths:
+Paths:
 1. Plain-text family (.txt/.json/.csv/...): read directly via read_text_robust with encoding
    tolerance, bypassing docling.
-2. docling-supported formats: docling_convert_once (audio is first silence-trimmed, then passed
+2. PDFs / images when rag.parsing selects cloud (the default under profile: cloud):
+   cloud_parser — a vision model transcribes every page; the pages are re-assembled into
+   one document and chunked by the same chunker as the docling path.
+3. docling-supported formats: docling_convert_once (audio is first silence-trimmed, then passed
    through Whisper hallucination filtering).
-3. Fallback: SimpleDirectoryReader.
+4. Fallback: SimpleDirectoryReader.
 
-Import ordering: this module imports audio_defense at the top — the whisper anti-hallucination
-patch is applied at import time and must run before docling's get_converter(). Since
-hierarchical_indexer imports this module at its top, the chain becomes
-… → hierarchical_indexer → document_loader → audio_defense, preserving the required ordering.
+The whisper anti-hallucination patch (audio_defense) is applied by docling_loader._build_converter
+right before it installs the local Whisper pipeline, so importing this module never imports
+whisper/torch.
 """
 
 from __future__ import annotations
@@ -148,6 +150,30 @@ class DocumentLoader:
                 progress_cb=progress_cb,
             )
 
+        cloud_parser = self._cloud_parser_for(file_name)
+        if cloud_parser is not None:
+            # Same budgets as the local docling path (prefix + breadcrumb + text must fit
+            # the embedding window), and failed pages surface as the file's warning.
+            docling_max_tokens, table_max_tokens = token_budgets(
+                self._leaf_chunk_size, self._has_context_generator)
+            warnings: Dict[str, Any] = {}
+            full_text, chunk_texts = cloud_parser.parse(
+                resolved_path, file_name,
+                max_tokens=docling_max_tokens,
+                tokenizer=self._embedding_model_name,
+                progress_cb=progress_cb,
+                table_max_tokens=table_max_tokens,
+                warnings=warnings,
+            )
+            content = clean_text(full_text)
+            if not content.strip():
+                raise ValueError(f"Empty content extracted from {file_name}")
+            doc = Document(text=content, metadata=base_metadata, doc_id=doc_id)
+            doc.metadata["_docling_chunks"] = chunk_texts
+            if warnings.get("warning"):
+                doc.metadata["_parse_warning"] = warnings["warning"]
+            return doc
+
         if is_docling_supported(file_name):
             docling_max_tokens, table_max_tokens = token_budgets(
                 self._leaf_chunk_size, self._has_context_generator)
@@ -182,6 +208,17 @@ class DocumentLoader:
             shutil.copy2(resolved_path, temp_file_path)
             return self._load_via_simple_reader(
                 temp_dir, file_name, base_metadata, doc_id)
+
+    @staticmethod
+    def _cloud_parser_for(file_name: str):
+        """A CloudDocumentParser when the live config routes this file type to the cloud
+        (read per file, so a console change to rag.parsing applies to the next file)."""
+        from src.config.config_manager import Config
+        from src.domain.rag.cloud_parser import CloudDocumentParser, is_cloud_parsed
+        rag = getattr(Config.get_config_model(), "rag", None)
+        if rag is None or not is_cloud_parsed(rag, file_name):
+            return None
+        return CloudDocumentParser.from_config(rag)
 
     def _load_via_simple_reader(self, temp_dir, file_name, base_metadata, doc_id) -> Document:
         reader = SimpleDirectoryReader(

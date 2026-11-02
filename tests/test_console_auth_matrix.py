@@ -93,7 +93,7 @@ def _admin_routes():
 
 def test_route_inventory_is_complete():
     # If this changes, extend the matrix below (and the report table) for the new route.
-    assert len(_admin_routes()) == 34
+    assert len(_admin_routes()) == 35
 
 
 @pytest.mark.parametrize("method, path", _admin_routes())
@@ -274,6 +274,7 @@ ADMIN_WRITES = [
     ("PUT", "/api/admin/settings", {"settings": {"rag.rerank.enabled": True}}, f"{_SVC}.apply_settings", ({}, [])),
     ("DELETE", "/api/admin/settings/rag.rerank.enabled", None, f"{_SVC}.reset_setting", True),
     ("POST", "/api/admin/probe", {"base_url": "http://svc/v1"}, "src.api.router.admin_settings.httpx.AsyncClient", None),
+    ("POST", "/api/admin/probe/embedding", None, "src.domain.rag.model_probe.probe_role", {}),
     ("GET", "/api/admin/audit", None, f"{_SVC}.audit_log", []),
     ("GET", "/api/admin/resources", None, "db.admin_stats.system_resources", {}),
 ]
@@ -287,7 +288,7 @@ def test_admin_only_endpoints_refuse_non_admin(as_b, method, path, body, target,
     assert not m.called
 
 
-@pytest.mark.parametrize("method, path, body, target, ret", ADMIN_WRITES[:2] + ADMIN_WRITES[3:])
+@pytest.mark.parametrize("method, path, body, target, ret", ADMIN_WRITES[:2] + ADMIN_WRITES[4:])
 def test_admin_only_endpoints_allow_admin(as_admin, method, path, body, target, ret):
     with patch(target, return_value=ret) as m:
         r = as_admin.request(method, path, json=body)

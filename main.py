@@ -1,7 +1,8 @@
 """Agentic RAG MCP Server CLI entry point.
 
 Default run (`uv run python main.py`) does DB bootstrap, auto migration, Docling
-warmup, then starts the FastAPI + FastMCP server. See main() for the CLI flags.
+warmup (only when a role uses docling's local models), then starts the FastAPI +
+FastMCP server. See main() for the CLI flags.
 
 Note: this file deliberately does not use `from __future__ import annotations`.
 Nuitka's libs-loader injection prepends executable code to the top of main.py,
@@ -250,12 +251,22 @@ def main():
             logger.error(f"❌ DB connect failed: {e}")
             logger.warning("⚠️ Server starting anyway — RAG features will fail")
 
-        # Pre-warm Docling (1-2 min on first start).
-        try:
-            from src.domain.rag.docling_loader import warmup_docling
-            warmup_docling()
-        except Exception as e:
-            logger.warning(f"Docling warmup skipped: {e}")
+        # Say where every model role runs (no "weights missing" noise for roles that
+        # are cloud endpoints), then pre-warm docling only if a role needs its local models.
+        rag_conf = getattr(config_obj, "rag", None)
+        from src.config.roles import docling_warmup_needed, startup_lines
+        if rag_conf is not None:
+            for line in startup_lines(rag_conf):
+                logger.info(line)
+        if docling_warmup_needed(rag_conf):
+            # Pre-warm Docling (1-2 min on first start).
+            try:
+                from src.domain.rag.docling_loader import warmup_docling
+                warmup_docling()
+            except Exception as e:
+                logger.warning(f"Docling warmup skipped: {e}")
+        else:
+            logger.info("Docling warm-up skipped: no role parses PDFs/images or audio with local models")
 
         app_instance = create_app(config_obj, transport=transport)
         uvicorn.run(
