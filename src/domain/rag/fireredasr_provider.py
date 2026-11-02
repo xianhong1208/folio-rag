@@ -23,24 +23,18 @@ forward passes on the 1.1B model cause OOM.
 
 from __future__ import annotations
 
-import re
-import subprocess
 import threading
 import wave
 from pathlib import Path
-from typing import Callable, List, Optional, Tuple
+from typing import Callable, List, Optional
 
 from src.log import get_api_logger
 from src.domain.rag.asr_base import AsrProvider, AsrResult
-
-logger = get_api_logger()
-
 # 55s = 60s hard limit minus a 5s safety margin (model card: >60s hallucinates,
 # >200s overflows the positional encoding).
-MAX_SEGMENT_SECONDS = 55.0
-# silencedetect parameters: below -35dB for 0.3s counts as silence (a natural
-# pause in meeting speech).
-_SILENCE_FILTER = "silencedetect=noise=-35dB:d=0.3"
+from src.domain.rag.audio_segments import MAX_SEGMENT_SECONDS  # noqa: F401
+
+logger = get_api_logger()
 
 _model_lock = threading.Lock()
 _model = None  # lazy singleton: (FireRedAsr, use_gpu)
@@ -97,89 +91,15 @@ def _load_model(model_dir: Path):
         return _model
 
 
-# Segment planning (pure functions, unit-testable)
-
-def parse_silences(ffmpeg_stderr: str) -> List[Tuple[float, float]]:
-    """Extract (silence_start, silence_end) pairs from ffmpeg silencedetect stderr.
-
-    The final silence may have only a start (the file ends in silence); drop the
-    incomplete pair, since segment planning only needs silences within the file.
-    """
-    starts = [float(m) for m in re.findall(r"silence_start:\s*([\d.]+)", ffmpeg_stderr)]
-    ends = [float(m) for m in re.findall(r"silence_end:\s*([\d.]+)", ffmpeg_stderr)]
-    return list(zip(starts, ends))
-
-
-def plan_segments(
-    duration: float,
-    silences: List[Tuple[float, float]],
-    max_seg: float = MAX_SEGMENT_SECONDS,
-) -> List[Tuple[float, float]]:
-    """Greedy segmentation: each segment <= max_seg, cutting at the midpoint of
-    the last silence within the window.
-
-    - duration <= max_seg -> single segment
-    - no silence in the window -> hard-cut at max_seg (better to cut mid-word
-      than to feed >60s and trigger hallucination)
-    - the silence midpoint sits at the center of the pause, leaving the speech
-      on both sides intact
-    """
-    if duration <= max_seg:
-        return [(0.0, duration)]
-    cuts = sorted((s + e) / 2.0 for s, e in silences)
-    segments: List[Tuple[float, float]] = []
-    start = 0.0
-    while duration - start > max_seg:
-        window_end = start + max_seg
-        candidates = [c for c in cuts if start < c <= window_end]
-        cut = candidates[-1] if candidates else window_end
-        segments.append((start, cut))
-        start = cut
-    segments.append((start, duration))
-    return segments
-
-
-# Audio preprocessing (ffmpeg)
-
-def _resample_to_wav16k(src: str, dst: Path) -> None:
-    proc = subprocess.run(
-        ["ffmpeg", "-nostdin", "-y", "-i", src,
-         "-ac", "1", "-ar", "16000", "-c:a", "pcm_s16le", str(dst)],
-        capture_output=True, text=True, timeout=600,
-    )
-    if proc.returncode != 0:
-        raise RuntimeError(f"ffmpeg resample failed: {proc.stderr[-500:]}")
-
-
-def _detect_silences(wav_path: Path) -> List[Tuple[float, float]]:
-    proc = subprocess.run(
-        ["ffmpeg", "-nostdin", "-i", str(wav_path),
-         "-af", _SILENCE_FILTER, "-f", "null", "-"],
-        capture_output=True, text=True, timeout=600,
-    )
-    # silencedetect writes to stderr; parse even on a non-zero exit (an empty
-    # list falls back to hard-cutting rather than blocking transcription).
-    return parse_silences(proc.stderr)
-
-
-def _slice_wav(wav_path: Path, segments: List[Tuple[float, float]], out_dir: Path) -> List[Path]:
-    """Slice with the stdlib wave module (16k mono pcm16; read once and split
-    into N pieces, faster than N ffmpeg invocations)."""
-    paths: List[Path] = []
-    with wave.open(str(wav_path), "rb") as w:
-        rate = w.getframerate()
-        params = w.getparams()
-        frames = w.readframes(w.getnframes())
-    width = params.sampwidth  # pcm_s16le → 2
-    for i, (start, end) in enumerate(segments):
-        lo = int(start * rate) * width
-        hi = int(end * rate) * width
-        p = out_dir / f"seg_{i:04d}.wav"
-        with wave.open(str(p), "wb") as out:
-            out.setparams(params)
-            out.writeframes(frames[lo:hi])
-        paths.append(p)
-    return paths
+# Segment planning and ffmpeg helpers are shared with the cloud provider (audio_segments.py);
+# re-exported here under their historical names.
+from src.domain.rag.audio_segments import (  # noqa: E402,F401
+    _detect_silences,
+    _resample_to_wav16k,
+    _slice_wav,
+    parse_silences,
+    plan_segments,
+)
 
 
 class FireRedAsrProvider(AsrProvider):
