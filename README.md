@@ -47,8 +47,10 @@ License: MIT&nbsp;·&nbsp;Python 3.12&nbsp;·&nbsp;PostgreSQL + pgvector&nbsp;·
 git clone https://github.com/xianhong1208/agentic_rag.git
 cd agentic_rag
 
-# 1. Install — torch follows a PEP 735 dependency group per platform, so ALWAYS pass --group.
-uv sync --group rocm-r714    # AMD ROCm 7.1.4 (multi-arch wheel)   | rocm-r713 | cuda | cpu
+# 1. Install — local models need the `local` extra; torch follows a PEP 735 dependency group
+#    per platform, so ALWAYS pass --group with it. (All-cloud deployments: plain `uv sync`,
+#    see "Cloud profile" below.)
+uv sync --extra local --group rocm-r714    # AMD ROCm 7.1.4 (multi-arch wheel) | rocm-r713 | cuda | cpu
 
 # 2. Configure the database and model endpoints
 cp .env.example .env         # set DATABASE_URL (Postgres + pgvector)
@@ -135,8 +137,115 @@ Settings live in `config/config.yaml`; secrets come from environment variables (
 | `rag.rerank.{model,base_url}` | `mixedbread-ai/mxbai-rerank-base-v2`, `:8787` | Cross-encoder reranker. |
 | `rag.asr.provider` | `fireredasr` | Audio transcription: `fireredasr` (local zh-TW) · `docling-whisper` · `openai-compatible`. |
 | `rag.retrieval.*` | — | Top-K, similarity cutoff, BM25 candidates, `hybrid_fusion` (`rrf`/`concat`), auto-merging. Tunable live from the console, or via the **High Precision / Balanced / High Recall** presets. |
+| `rag.profile` | `local` | `local` · `hybrid` · `cloud` — see [Cloud profile](#cloud-profile). |
+| `rag.<role>.{timeout,max_retries}` | per role | Request timeout and retries (429 / 5xx / timeouts, with backoff) for each model role. |
 
-GPU selection is a `uv sync --group {rocm-r714|rocm-r713|cuda|cpu}` choice — see the top of `pyproject.toml` and `docs/testing/ENVIRONMENTS.md`.
+GPU selection is a `uv sync --extra local --group {rocm-r714|rocm-r713|cuda|cpu}` choice — see the top of `pyproject.toml` and `docs/testing/ENVIRONMENTS.md`.
+
+## Cloud profile
+
+Run with every model behind an API and nothing loaded locally — no GPU, no torch, no model
+downloads. Set `rag.profile: cloud` and give each role an OpenAI-compatible endpoint:
+
+```bash
+uv sync                      # core install: no torch / transformers (the local stack is `--extra local`)
+export OPENAI_API_KEY=sk-...  # keys come from the environment, never from config.yaml
+uv run python main.py
+```
+
+```yaml
+rag:
+  profile: cloud            # local (default) | hybrid | cloud
+
+  embedding:                # changing it means re-indexing existing folders
+    provider: openai        # openai | openai-compatible | azure | vllm | ollama
+    model: text-embedding-3-small
+    dimension: 1536
+    base_url: https://api.openai.com/v1      # any OpenAI-compatible gateway works
+    api_key: "${OPENAI_API_KEY}"
+    timeout: 60
+    max_retries: 3
+
+  llm:                      # default for every LLM role
+    provider: openai
+    model: gpt-4o-mini
+    api_key: "${OPENAI_API_KEY}"
+  contextual_llm:           # optional per-role overrides; unset fields inherit from llm
+    model: gpt-4.1-nano
+  # answer_llm: {...}       # Search Playground answers
+  # eval_llm: {...}         # eval question generation / judging
+
+  contextual_retrieval:
+    enabled: true
+    max_calls_per_file: 2000     # cost guards (0 = unlimited)
+    max_tokens_per_day: 5000000
+
+  rerank:
+    enabled: true
+    api: cohere             # score (vLLM /v1/score) | cohere | jina | generic (OpenAI-compatible /rerank)
+    model: rerank-v3.5
+    base_url: https://api.cohere.com
+    endpoint_path: /v2/rerank
+    api_key: "${COHERE_API_KEY}"
+
+  parsing:                  # cloud is the default under profile: cloud
+    vision:
+      provider: openai
+      model: gpt-4o-mini
+      api_key: "${OPENAI_API_KEY}"
+    max_concurrency: 4      # page requests in flight, process-wide
+    max_pages_per_file: 500
+    max_pages_per_day: 5000
+    on_page_failure: mark   # mark = keep the file, mark the page | fail
+
+  asr:
+    provider: openai-compatible
+    base_url: https://api.openai.com/v1
+    model: whisper-1
+    api_key: "${OPENAI_API_KEY}"
+    segment_seconds: 600    # long audio is uploaded in silence-aligned pieces
+
+  retrieval:
+    hybrid_search: true
+    # segmenter: bigram     # model-free Chinese BM25 segmentation (CKIP is not loaded in cloud)
+```
+
+What the profile does:
+
+- **Validation.** `cloud` refuses in-process providers (`huggingface` embedding, `fireredasr` /
+  `docling-whisper` ASR, local PDF/image parsing) and **rejects API keys that are not `${ENV}`
+  references** — a cloud key is a billable credential and config.yaml is the file that gets
+  copied around. Startup fails with the offending paths. `hybrid` only warns about literal keys;
+  `local` (the default — existing configs are unchanged) checks nothing new.
+- **Nothing local is imported.** The HuggingFace embedding provider, docling's layout/OCR
+  models, Whisper, FireRedASR and CKIP are imported only when selected; startup skips the docling
+  warm-up and logs where every role runs. `tests/test_cloud_profile_no_local_models.py` proves it
+  by running the whole pipeline on an install without the local stack.
+- **Cloud PDF and image parsing.** Every page is transcribed to Markdown by the vision model,
+  and the pages are stitched into **one** document before chunking, so headings, breadcrumbs and
+  tables continue across page breaks. Each page is sent the previous page's tail and the current
+  heading path; pages run in ordered blocks for bounded concurrency; failed pages are retried with
+  backoff and, if they still fail, marked in the text instead of failing the file. Chunks keep the
+  page they start on for citations. Per-file and per-day page caps bound the cost. The
+  unauthenticated `/v1/ocr/general` endpoint is not routed to the paid model.
+- **Cloud speech-to-text.** Audio is resampled and uploaded in segments cut at silences (so no
+  request exceeds an upload limit), with retries, and re-asked when a transcript is empty despite
+  speech or loops.
+- **Retries and timeouts per role** (`timeout`, `max_retries`): 429 / 5xx / timeouts back off
+  exponentially with jitter and honour `Retry-After`.
+- **Chinese BM25.** CKIP is a local torch model, so the cloud profile does not load it and Chinese
+  text is indexed unsegmented until a model-free segmenter is selected
+  (`rag.retrieval.segmenter: bigram`).
+
+**Console.** *Settings* opens with a **Model Roles** panel: where each role runs, its provider,
+model and endpoint, whether a key is set and which environment variable it comes from (keys are
+never returned), and a **Test** button that sends one minimal real request with the saved settings
+(an embedding — dimension checked —, a 16-token chat, an 8×8 image for the vision model, one rerank
+pair, half a second of silence for speech-to-text). Key fields accept `${ENV_VAR}`; the server
+stores the reference, never the key. Changes need the `rag:admin` scope.
+
+Daily caps are kept in memory and reset at UTC midnight or on restart — they are a runaway guard,
+not billing.
 
 ## Use the console
 
