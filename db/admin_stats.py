@@ -18,6 +18,9 @@ log = get_db_logger()
 
 # Any non-terminal status counts as "in progress" (matches IndexingJobManager's state machine)
 _JOB_ACTIVE = ("pending", "running", "queued")
+# FileIndex statuses that need attention (and a Retry) in the console: a failed parse,
+# a file the server restart interrupted, or one the user cancelled.
+_FILE_NEEDS_RETRY = ("failed", "interrupted", "cancelled")
 
 
 def _ensure_bound() -> None:
@@ -57,7 +60,7 @@ def overview(owner: Optional[str] = None) -> Dict[str, Any]:
             .filter(IndexJob.status.in_(_JOB_ACTIVE)) \
             .order_by(IndexJob.last_updated_at.desc()).limit(5).all()
     indexed = by_status.get("indexed", {"files": 0, "chunks": 0})
-    failed = by_status.get("failed", {"files": 0, "chunks": 0})
+    failed = {"files": sum(by_status.get(k, {"files": 0})["files"] for k in _FILE_NEEDS_RETRY)}
     return {
         "folders": folders,
         "files": files,
@@ -85,7 +88,7 @@ def folders_with_index_stats(owner: Optional[str] = None) -> List[Dict[str, Any]
         idx = s.query(
             FileIndex.folder_id.label("fid"),
             func.count(FileIndex.id).filter(FileIndex.status == "indexed").label("indexed"),
-            func.count(FileIndex.id).filter(FileIndex.status == "failed").label("failed"),
+            func.count(FileIndex.id).filter(FileIndex.status.in_(_FILE_NEEDS_RETRY)).label("failed"),
             func.coalesce(func.sum(FileIndex.num_chunks), 0).label("chunks"),
             func.max(FileIndex.indexed_at).label("last_indexed"),
         ).group_by(FileIndex.folder_id).subquery()
@@ -267,6 +270,7 @@ def _job_dict(j: IndexJob) -> Dict[str, Any]:
         "job_id": str(j.job_id),
         "folder_id": j.folder_id,
         "status": j.status,
+        "kind": getattr(j, "kind", None) or "index",
         "total_files": j.total_files or 0,
         "processed_files": j.processed_files or 0,
         "current_file_name": j.current_file_name,

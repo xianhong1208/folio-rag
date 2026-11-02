@@ -178,12 +178,17 @@ class FileIndexDB(BaseDB):
         embedding_model: Optional[str] = None,
         chunk_size: Optional[int] = None,
         chunk_overlap: Optional[int] = None,
+        status: str = "failed",
     ):
-        """Mark a file's indexing as failed.
+        """Mark a file's indexing as failed (or another non-indexed outcome).
 
-        Three paths: row exists -> update to status='failed'; no row but
-        folder_id given -> create a failed row (so /indexed-files can see it);
+        Three paths: row exists -> update to ``status``; no row but
+        folder_id given -> create a row (so /indexed-files can see it);
         no row and no folder_id -> warn and return None (legacy behavior).
+
+        ``status`` is "failed" by default; the job manager also records
+        "interrupted" (server restart mid-job) and "cancelled" (user cancelled
+        the file). All three are retryable and none counts as indexed.
         """
         try:
             index_record = cls.get_by_file(file_id)
@@ -203,7 +208,7 @@ class FileIndexDB(BaseDB):
                     "index_id": f"file_{file_id}",
                     "vector_store_table": "",
                     "num_chunks": 0,
-                    "status": "failed",
+                    "status": status,
                     "error_message": error_message,
                 }
                 # Only set fields the caller supplied (backward compat).
@@ -216,7 +221,7 @@ class FileIndexDB(BaseDB):
                 return cls.create(**create_kwargs)
 
             # Only overwrite fields the caller explicitly passed; keep the rest.
-            update_kwargs = {"status": "failed", "error_message": error_message}
+            update_kwargs = {"status": status, "error_message": error_message}
             if embedding_model is not None:
                 update_kwargs["embedding_model"] = embedding_model
             if chunk_size is not None:

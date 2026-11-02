@@ -68,6 +68,6 @@ def read_text_robust(path: str | Path, file_name: str = "") -> str:
 
     # 4. Fail loudly -- do not feed garbled text into the vector store
     raise ValueError(
-        f"Could not detect the text encoding of '{label}' (not UTF-8/UTF-16/Big5 or another common encoding). "
-        f"Please save the file as UTF-8 and upload it again."
+        f"Cannot detect the text encoding of '{label}' (not UTF-8/UTF-16/Big5 or "
+        f"another common encoding). Save the file as UTF-8 and upload it again."
     )

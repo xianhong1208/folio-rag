@@ -4,8 +4,8 @@
 Opt-in via RAG_RUN_DB_ITESTS=1 (else the group is skipped); a set env but an
 unreachable DB also skips rather than fails. Opt-in is deliberate so a machine
 that happens to have a matching postgres never gets databases created/dropped
-without consent. Each run creates a fresh agentic_rag_itest, applies the full
-alembic chain, and DROPs it when done, never touching an existing DB.
+without consent. Each run creates a fresh agentic_rag_itest (or $RAG_ITEST_DB),
+applies the full alembic chain, and DROPs it when done, never touching an existing DB.
 """
 
 from __future__ import annotations
@@ -16,7 +16,8 @@ from pathlib import Path
 import pytest
 from sqlalchemy.engine import make_url
 
-_ITEST_DB = "agentic_rag_itest"
+# Overridable so parallel runs (or a CI service) never share one throwaway database.
+_ITEST_DB = os.getenv("RAG_ITEST_DB", "agentic_rag_itest")
 _REPO = Path(__file__).resolve().parents[2]
 _TMP_CONFIG = _REPO / "config" / "_itest_config.yaml"
 

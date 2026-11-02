@@ -323,12 +323,11 @@ def test_get_config_valid_yaml(tmp_path, monkeypatch):
     assert Config.get_config()["server"]["port"] == 8080
 
 
-def test_get_config_env_var_placeholder_not_expanded(tmp_path, monkeypatch):
-    """The `${VAR:-default}` placeholder is not env-var-expanded; the literal value is kept (TC-config-23)
+def test_get_config_env_var_placeholder_expanded(tmp_path, monkeypatch):
+    """`${VAR:-default}` is expanded from the environment at load time (TC-config-23).
 
-    The source only uses yaml.safe_load, with no expandvars/envsubst logic; even
-    if the env var is set, the loaded result is still the original string. This
-    test pins down the current behavior.
+    config_manager.expand_env_vars runs over the parsed YAML, so the DB URL can
+    come from the environment while config.yaml keeps a safe default.
     """
     monkeypatch.setenv("TEST_DB_URL", "postgresql://real/db")
     yaml_text = VALID_YAML.replace(
@@ -337,7 +336,19 @@ def test_get_config_env_var_placeholder_not_expanded(tmp_path, monkeypatch):
     )
     name = _write_config(tmp_path, monkeypatch, yaml_text)
     model = get_config(name)
-    assert model.database.url == "${TEST_DB_URL:-postgresql://fallback/db}"
+    assert model.database.url == "postgresql://real/db"
+
+
+def test_get_config_env_var_placeholder_uses_default_when_unset(tmp_path, monkeypatch):
+    """With the variable unset, the `:-default` part is used (TC-config-23b)."""
+    monkeypatch.delenv("TEST_DB_URL", raising=False)
+    yaml_text = VALID_YAML.replace(
+        'url: "postgresql://u:p@localhost:5432/db"',
+        'url: "${TEST_DB_URL:-postgresql://fallback/db}"',
+    )
+    name = _write_config(tmp_path, monkeypatch, yaml_text)
+    model = get_config(name)
+    assert model.database.url == "postgresql://fallback/db"
 
 
 def test_get_config_invalid_schema_returns_none(tmp_path, monkeypatch):

@@ -1,8 +1,8 @@
 import { NavLink, Outlet, useLocation } from 'react-router-dom'
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import {
   Home, Folder, Zap, Search, BarChart3, FlaskConical, Layers, Sparkles,
-  ListTree, ArrowDownUp, Mic, SlidersHorizontal, Activity, ScrollText, Sun, Moon, LogOut,
+  ListTree, ArrowDownUp, Mic, SlidersHorizontal, Activity, ScrollText, Sun, Moon, LogOut, Menu,
 } from 'lucide-react'
 import { useSession } from '../contexts/SessionContext'
 import { sessionLabel, expiresIn } from '../lib/session'
@@ -53,7 +53,7 @@ function UserBadge() {
       <span className="ub-name">{sessionLabel(session)}</span>
       {session.sub && session.jti_prefix && <span className="ub-meta">{session.jti_prefix}</span>}
       {isAdmin && <span className="pill run">admin</span>}
-      <button className="theme-btn" onClick={logout} title="Sign out"><LogOut size={13} />Sign out</button>
+      <button className="theme-btn" onClick={logout} title="Sign out" aria-label="Sign out"><LogOut size={13} /><span className="btn-label">Sign out</span></button>
     </div>
   )
 }
@@ -61,6 +61,15 @@ function UserBadge() {
 export default function Layout() {
   const loc = useLocation()
   const [theme, setTheme] = useState(document.documentElement.className || 'dark')
+  // Below 900px the sidebar is off-canvas; the menu button in the top bar opens it.
+  const [navOpen, setNavOpen] = useState(false)
+  useEffect(() => { setNavOpen(false) }, [loc.pathname]) // close after navigating
+  useEffect(() => {
+    if (!navOpen) return
+    const onKey = (e) => { if (e.key === 'Escape') setNavOpen(false) }
+    window.addEventListener('keydown', onKey)
+    return () => window.removeEventListener('keydown', onKey)
+  }, [navOpen])
 
   const active = [...ALL].sort((a, b) => b.to.length - a.to.length)
     .find((i) => (i.end ? loc.pathname === '/' : loc.pathname.startsWith(i.to)))
@@ -75,7 +84,7 @@ export default function Layout() {
 
   return (
     <>
-      <aside>
+      <aside id="sidebar" className={navOpen ? 'open' : undefined}>
         <div className="brand">
           <div className="logo">Agentic RAG</div>
           <div className="sub">Retrieval Terminal</div>
@@ -110,8 +119,14 @@ export default function Layout() {
         </div>
       </aside>
 
+      <div className={'scrim' + (navOpen ? ' show' : '')} onClick={() => setNavOpen(false)} aria-hidden="true" />
+
       <main>
         <header className="top">
+          <button className="menu-btn" type="button" onClick={() => setNavOpen((o) => !o)}
+            aria-label="Open navigation" aria-controls="sidebar" aria-expanded={navOpen}>
+            <Menu />
+          </button>
           <div className="title">{title}</div>
           <div className="grow" />
           <UserBadge />

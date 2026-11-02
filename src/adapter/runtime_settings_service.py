@@ -91,16 +91,22 @@ def apply_settings(patch: Dict[str, Any], updated_by: Optional[str] = None
 
 
 def reset_setting(path: str, updated_by: Optional[str] = None) -> bool:
-    """Remove a single override, restore the config.yaml value, and rebind. Returns whether an override existed to delete."""
+    """Remove a single override, restore the config.yaml value, and rebind. Returns whether an override existed to delete.
+
+    The factory value is resolved and validated *before* the override row is deleted:
+    deleting first meant a failure here (e.g. a whole optional section missing from
+    config.yaml) left the DB reset but the running value unchanged, behind a 500.
+    """
     if path not in ro.EDITABLE:
         raise ValueError(f"Setting path is not editable: {path}")
     with _apply_lock:
+        yaml_value = _yaml_value(path)
+        config_model = Config.get_config_model()
+        # Dry run on a copy: raises without touching the live model or the DB.
+        ro.validate_and_apply(config_model.model_copy(deep=True), {path: yaml_value})
         removed = RuntimeSettingsDB.delete(path)
         if not removed:
             return False
-        # Re-read the field's original value from config.yaml on disk (leaving other runtime state untouched)
-        yaml_value = _yaml_value(path)
-        config_model = Config.get_config_model()
         ro.validate_and_apply(config_model, {path: yaml_value})
         _rebind([path])
         _audit(path, "reset", None,
@@ -120,26 +126,35 @@ def audit_log(limit: int = 100):
 
 
 def _yaml_value(path: str) -> Any:
-    """Read the value at the dotted path from config.yaml (the on-disk file); if absent, fall back to the field's pydantic default."""
+    """The factory value at a dotted path: config.yaml on disk (``${ENV}`` placeholders
+    expanded, as at startup), else the field's pydantic default.
+
+    The default is found by walking the schema *types*, not the live objects: an
+    optional section absent from config.yaml (e.g. ``rag.asr``) is None at runtime,
+    and walking instances raised AttributeError (a 500 on reset).
+    """
+    import typing
     import yaml
+    from src.config.config_manager import expand_env_vars
     raw_path = Config._config_path
     try:
         if raw_path:
             with open(raw_path, "r", encoding="utf-8") as f:
-                data = yaml.safe_load(f) or {}
+                data = expand_env_vars(yaml.safe_load(f) or {})
             node: Any = data
             for part in path.split("."):
                 node = node[part]
             return node
     except Exception:
         pass
-    # Fallback: the field's declared default
+    # Fallback: the field's declared default, found through the model classes
     parent_path, _, field = path.rpartition(".")
-    obj = Config.get_config_model()
+    cls = type(Config.get_config_model())
     for part in parent_path.split("."):
-        obj = getattr(obj, part)
-    f = type(obj).model_fields[field]
-    return f.get_default(call_default_factory=True)
+        ann = cls.model_fields[part].annotation
+        args = typing.get_args(ann)
+        cls = next((a for a in args if a is not type(None)), ann) if args else ann
+    return cls.model_fields[field].get_default(call_default_factory=True)
 
 
 def _rebind(paths: List[str]) -> List[str]:

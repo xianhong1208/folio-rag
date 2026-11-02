@@ -54,6 +54,16 @@ async def handle_search(
         ),
     )
 
+    from src.domain.rag.query_limits import MAX_QUERY_CHARS
+    if query and len(query) > MAX_QUERY_CHARS:
+        log_warn(logger, "SEARCH_INVALID_QUERY", folder_id=folder.id,
+                 msg=f"query too long (len={len(query)})")
+        return {
+            "mode": "search",
+            "error": f"Query too long (max {MAX_QUERY_CHARS} characters)",
+            "results": [],
+        }
+
     if not query or len(query.strip()) < 2:
         log_warn(
             logger,
