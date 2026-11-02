@@ -1,16 +1,18 @@
-# Agentic RAG
+# Folio
 
 **An open-source Retrieval-Augmented Generation server for the Model Context Protocol — hierarchical chunking, auto-merging retrieval, and hybrid vector + Chinese BM25 search, exposed to MCP clients as per-folder tools.**
 
-Agentic RAG turns a folder of documents into a retrieval tool that Claude Code, Claude Desktop, Cursor and any other MCP client can call. Each folder becomes an `Agentic_<folder>` tool with three modes — **search**, **list** and **read** — backed by a pipeline that chunks hierarchically, retrieves with dense + sparse signals, merges neighbouring hits into whole passages, and re-ranks with a cross-encoder. It is a **resource server**: it verifies OAuth tokens offline and never issues them, pairing with [MCP Gate](https://github.com/xianhong1208/MCP_Gate) as the authorization server.
+Folio turns a folder of documents into a retrieval tool that Claude Code, Claude Desktop, Cursor and any other MCP client can call. Each folder becomes a `Folio_<folder>` tool with three modes — **search**, **list** and **read** — backed by a pipeline that chunks hierarchically, retrieves with dense + sparse signals, merges neighbouring hits into whole passages, and re-ranks with a cross-encoder. It is a **resource server**: it verifies OAuth tokens offline and never issues them, pairing with [MCP Gate](https://github.com/xianhong1208/MCP_Gate) as the authorization server.
+
+Folio was called *Agentic RAG* up to v1.1.0. The repository, the default database names (`agentic_rag`) and the storage layout keep the old name; nothing needs migrating.
 
 License: MIT&nbsp;·&nbsp;Python 3.12&nbsp;·&nbsp;PostgreSQL + pgvector&nbsp;·&nbsp;Works with FastMCP&nbsp;·&nbsp;OAuth 2.1 (resource server)
 
 [繁體中文](README.zh-TW.md) · [Quick start](#quick-start) · [How it works](#how-it-works) · [Configuration](#configuration) · [Console](#use-the-console) · [Architecture](#architecture)
 
 ```
-┌────────────────┐   Agentic_<folder> tool call (Bearer JWT)    ┌───────────────────────────────┐
-│   MCP client   │ ───────────────────────────────────────────▶ │  Agentic RAG (resource server) │
+┌────────────────┐     Folio_<folder> tool call (Bearer JWT)    ┌───────────────────────────────┐
+│   MCP client   │ ───────────────────────────────────────────▶ │  Folio (resource server)       │
 │  Claude / IDE  │ ◀─────────────────────────────────────────── │  /mcp · per-token folder tools │
 └───────┬────────┘        auto-merged passages + scores         └───────────────┬───────────────┘
         │ OAuth flow                                                             │ verify JWT offline
@@ -28,7 +30,7 @@ License: MIT&nbsp;·&nbsp;Python 3.12&nbsp;·&nbsp;PostgreSQL + pgvector&nbsp;·
 - **Cross-encoder reranking.** A `bge-reranker-v2-m3` / `mxbai-rerank-base-v2` model re-scores the fused candidates for fine-grained Top-K precision.
 - **Contextual retrieval.** At index time an LLM writes a short context line for each chunk (Anthropic's recommended technique) from the document outline and the chunk's own section, in the document's language. The context and breadcrumb are what the chunk is *found* by (embedding, BM25, rerank); results always show the original document text.
 - **Incremental re-indexing.** Re-indexing a file reuses the context line and embedding of every unchanged chunk, so editing one section costs about one LLM call and one embedding. The file's chunks are swapped in a single transaction — it never disappears from search mid-way.
-- **Per-folder MCP tools, scoped per token.** Every folder is registered as an `Agentic_<folder>` tool; the tool list a caller sees is filtered by their token — you only see folders you own. Ownership is keyed on the token's stable `jti`. Tool names stay within what every MCP client accepts (`[A-Za-z0-9_-]`, 64 chars): a folder name with spaces, CJK or other symbols becomes `Agentic_<ascii part>_<8-char hash>`, the same name every time.
+- **Per-folder MCP tools, scoped per token.** Every folder is registered as a `Folio_<folder>` tool; the tool list a caller sees is filtered by their token — you only see folders you own. Ownership is keyed on the token's stable `jti`. Tool names stay within what every MCP client accepts (`[A-Za-z0-9_-]`, 64 chars): a folder name with spaces, CJK or other symbols becomes `Folio_<ascii part>_<8-char hash>`, the same name every time.
 - **OAuth 2.1 resource server.** One `RemoteAuthProvider` + `JWTVerifier` protects `/mcp`; tokens are verified locally against MCP Gate's JWKS (RS256, offline), and are bound to this server's audience so a token for another server never works here.
 - **Document + audio ingestion.** [Docling](https://github.com/DS4SD/docling) parses PDF / DOCX / PPTX / XLSX / images (with OCR); **FireRedASR** transcribes audio locally in Traditional Chinese (or any OpenAI-compatible `/v1/transcriptions` endpoint).
 - **Built-in evaluation harness.** Auto-generates questions from your own chunks and scores the production pipeline (the same call as `/api/rag/query`) against `vector` / `bm25` / `rrf` / `rerank` — all through the production search path — on **Recall@k · MRR · nDCG@k**, so you can tune retrieval against your real corpus.
@@ -66,11 +68,11 @@ The server listens on `http://0.0.0.0:5039` by default; the MCP endpoint is `/mc
 
 ## Quick start
 
-Agentic RAG authenticates through [MCP Gate](https://github.com/xianhong1208/MCP_Gate). The order matters: **register this server in MCP Gate first** — it only issues tokens for audiences it knows.
+Folio authenticates through [MCP Gate](https://github.com/xianhong1208/MCP_Gate). The order matters: **register this server in MCP Gate first** — it only issues tokens for audiences it knows.
 
 **1 — Register the server in MCP Gate.** In the MCP Gate console, *Services → Register Service*, enter this server's host / port / path (`/mcp`). Its audience defaults to the MCP URL, e.g. `http://127.0.0.1:5039/mcp`. Set the same value as `auth.audience` in `config/config.yaml`.
 
-**2 — Point Agentic RAG at MCP Gate** (`config/config.yaml`):
+**2 — Point Folio at MCP Gate** (`config/config.yaml`):
 
 ```yaml
 auth:
@@ -91,15 +93,15 @@ curl -X POST http://127.0.0.1:5039/api/folders/ \
 **4 — Connect a client.** With MCP Gate in front, an OAuth-capable client needs nothing up front:
 
 ```bash
-claude mcp add --transport http agentic-rag http://127.0.0.1:5039/mcp
+claude mcp add --transport http folio http://127.0.0.1:5039/mcp
 ```
 
-On first use the client registers with MCP Gate and opens the consent screen; after you allow it, the `Agentic_product-docs` tool appears. For scripts / CI, mint a **personal access token** in MCP Gate and pass it as a bearer header.
+On first use the client registers with MCP Gate and opens the consent screen; after you allow it, the `Folio_product-docs` tool appears. For scripts / CI, mint a **personal access token** in MCP Gate and pass it as a bearer header.
 
 **5 — Ask.** In the client, call the folder tool:
 
 ```
-Agentic_product-docs  mode="search"  query="how do I rotate the signing key?"
+Folio_product-docs  mode="search"  query="how do I rotate the signing key?"
 ```
 
 It returns the matched passages (auto-merged where relevant), each with a relevance score and its source file / heading.
@@ -142,7 +144,7 @@ Each folder's table records which segmenter built its keyword index. After chang
 
 **Answers (console).** With *generate answer* on, the top chunks are graded for relevance in one LLM call, irrelevant ones are dropped (nothing relevant → no answer), and the answer is generated from the rest in the **question's language**. Each chunk keeps its result-card number, so `[3]` always means card #3 (citations are links in the console); citations of chunks the model was not given are removed, `【n†…】` markers become `[n]` and Markdown bold markers are stripped — on the streaming path too, where the final `done` frame carries the cleaned answer. If the grader's reply cannot be parsed the answer is labelled **unverified** instead of `high`.
 
-**Auth.** Agentic RAG is a *resource server*. FastMCP publishes `/.well-known/oauth-protected-resource/mcp`, which points clients at MCP Gate; the server fetches MCP Gate's JWKS once and verifies every bearer token offline (RS256 — signature, issuer, audience, expiry, scopes). MCP Gate is never on the request path.
+**Auth.** Folio is a *resource server*. FastMCP publishes `/.well-known/oauth-protected-resource/mcp`, which points clients at MCP Gate; the server fetches MCP Gate's JWKS once and verifies every bearer token offline (RS256 — signature, issuer, audience, expiry, scopes). MCP Gate is never on the request path.
 
 ## Configuration
 
@@ -152,6 +154,8 @@ Settings live in `config/config.yaml`; secrets come from environment variables (
 |--------------------|---------|---------|
 | `DATABASE_URL` | `postgresql://…/agentic_rag` | PostgreSQL DSN. Requires the **pgvector** extension. Use **sync** `postgresql://` (psycopg2), not `+asyncpg`. |
 | `server.port` | `5039` | HTTP + MCP bind port. The MCP endpoint is `/mcp`. |
+| `FOLIO_STORAGE_ROOT` | the project root | Directory that holds `storage/` (uploaded files and the console session secret). |
+| `FOLIO_INDEXING_CONCURRENCY`, `FOLIO_PER_FILE_TIMEOUT_SECONDS`, `FOLIO_JOB_TIMEOUT_SECONDS` | from `rag.indexing` | Runtime overrides for the indexing limits. The pre-rename `RAG_*` names still work and log a deprecation warning. |
 | `auth.enabled` / `auth.issuer` / `auth.audience` | `true` / MCP Gate URL / this server's `/mcp` URL | OAuth 2.1 verification against MCP Gate. |
 | `auth.console.session_hours` | `8` | Longest a console session lasts (it also ends when the token expires). |
 | `auth.console.session_secret` | *(generated)* | Key that signs the session cookie; `${ENV_VAR}` works. Unset → generated once into `storage/.console_session_secret` (gitignored), so sessions survive restarts. |
@@ -296,8 +300,8 @@ You sign in by pasting an **MCP Gate access token issued for this service** — 
 
 **Issuing tokens in MCP Gate.** No MCP Gate change is needed:
 
-1. *Services* → open the Agentic RAG service → *Scopes declared by this server* → add **`rag:admin`**. Do **not** mark it as a default scope (defaults are preselected on every new token). If the service restricts its *Allowed scopes*, allow `rag:admin` too.
-2. *Issue Token* → *Target service*: Agentic RAG (audience = `auth.audience`). Tick `rag:admin` for operators who may change settings; leave it off for people who only manage their own folders. Give it a label and copy the token — it is shown once.
+1. *Services* → open the Folio service → *Scopes declared by this server* → add **`rag:admin`**. Do **not** mark it as a default scope (defaults are preselected on every new token). If the service restricts its *Allowed scopes*, allow `rag:admin` too.
+2. *Issue Token* → *Target service*: Folio (audience = `auth.audience`). Tick `rag:admin` for operators who may change settings; leave it off for people who only manage their own folders. Give it a label and copy the token — it is shown once.
 
 Paste the token on the login screen. Folders created earlier through the old *Owner Token* field belong to the token that was pasted there: sign in with that token to see them. Scripts can skip the cookie and call `/api/admin/*` with `Authorization: Bearer <token>` — the same rules apply, and no CSRF header is needed.
 
@@ -325,7 +329,7 @@ Chunking changes are versioned per file. A file indexed by an older pipeline kee
 
 | Group | Endpoints |
 |-------|-----------|
-| **MCP** | `POST /mcp` — per-folder `Agentic_<folder>` tools (`search` / `list` / `read`); `GET /.well-known/oauth-protected-resource/mcp` |
+| **MCP** | `POST /mcp` — per-folder `Folio_<folder>` tools (`search` / `list` / `read`); `GET /.well-known/oauth-protected-resource/mcp` |
 | **Folders & files** | `/api/folders*` · `/api/folders/{id}/files*` (create, upload, list, download, delete — token-scoped) |
 | **RAG** | `POST /api/rag/query` (hybrid retrieval + rerank) · `/api/rag/files/{id}/index`, `/reindex`, `/index/jobs*` (background indexing + SSE progress) |
 | **Console session** | `POST /api/console/session` `{token}` (sign in) · `GET` (who am I) · `DELETE` (sign out) |

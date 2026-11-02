@@ -78,7 +78,7 @@ fragmented chunks and weak precision.
   provides. Two integration shapes:
   1. *Serve*: compile elsewhere (Claude Code / Obsidian) → upload the `.md` pages
      into a folder → serve via hybrid retrieval + rerank + MCP.
-  2. *Synthesise*: add a "concept-page synthesis" step inside agentic_rag that
+  2. *Synthesise*: add a "concept-page synthesis" step inside Folio that
      reuses the contextual-retrieval LLM to emit wiki pages from a folder.
   Ref: blog.104.com.tw/andrej-karpathy-llm-wiki.
 - **Decision gate:** instrument real usage first — measure the share of
@@ -129,7 +129,7 @@ fragmented chunks and weak precision.
   dies with SIGABRT raised from inside the process (`si_code=SI_TKILL`, i.e. a
   native library's `abort()` during interpreter teardown — torch/CUDA-style), which
   left a ~16 GB `core.<pid>` in the repo root each time. The process now disables
-  its own core dumps by default (`AGENTIC_RAG_CORE_DUMPS=1` re-enables them for
+  its own core dumps by default (`FOLIO_CORE_DUMPS=1` re-enables them for
   debugging). Root-causing it needs stderr captured by the launcher and a native
   backtrace (gdb) — tracked, not yet done.
 

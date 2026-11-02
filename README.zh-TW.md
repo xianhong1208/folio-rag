@@ -1,16 +1,18 @@
-# Agentic RAG
+# Folio
 
 **一套開源的 Model Context Protocol 檢索增強生成（RAG）伺服器 —— 階層式切塊、auto-merging 檢索、向量 + 中文 BM25 混合搜尋,以「每個資料夾一個工具」的形式提供給 MCP 用戶端。**
 
-Agentic RAG 把一個文件資料夾變成 Claude Code、Claude Desktop、Cursor 等任何 MCP 用戶端都能呼叫的檢索工具。每個資料夾成為一個 `Agentic_<folder>` 工具,含三種模式 —— **search**、**list**、**read** —— 底層是一條會**階層切塊、以密集+稀疏訊號檢索、把相鄰命中合併成完整段落、再用 cross-encoder 重排**的管線。它是一台 **resource server**:只在本地離線驗證 OAuth token、從不簽發,搭配 [MCP Gate](https://github.com/xianhong1208/MCP_Gate) 當授權伺服器。
+Folio 把一個文件資料夾變成 Claude Code、Claude Desktop、Cursor 等任何 MCP 用戶端都能呼叫的檢索工具。每個資料夾成為一個 `Folio_<folder>` 工具,含三種模式 —— **search**、**list**、**read** —— 底層是一條會**階層切塊、以密集+稀疏訊號檢索、把相鄰命中合併成完整段落、再用 cross-encoder 重排**的管線。它是一台 **resource server**:只在本地離線驗證 OAuth token、從不簽發,搭配 [MCP Gate](https://github.com/xianhong1208/MCP_Gate) 當授權伺服器。
+
+Folio 在 v1.1.0 以前名為 *Agentic RAG*。repository、預設資料庫名稱（`agentic_rag`）與儲存目錄結構沿用舊名,不需要任何遷移。
 
 License: MIT&nbsp;·&nbsp;Python 3.12&nbsp;·&nbsp;PostgreSQL + pgvector&nbsp;·&nbsp;相容 FastMCP&nbsp;·&nbsp;OAuth 2.1（resource server）
 
 [English](README.md) · [快速開始](#快速開始) · [運作原理](#運作原理) · [設定](#設定) · [主控台](#使用主控台) · [架構](#架構)
 
 ```
-┌────────────────┐   Agentic_<folder> 工具呼叫（Bearer JWT）    ┌───────────────────────────────┐
-│    MCP 用戶端   │ ───────────────────────────────────────────▶ │  Agentic RAG（resource server）│
+┌────────────────┐     Folio_<folder> 工具呼叫（Bearer JWT）    ┌───────────────────────────────┐
+│    MCP 用戶端   │ ───────────────────────────────────────────▶ │  Folio（resource server）      │
 │  Claude / IDE  │ ◀─────────────────────────────────────────── │  /mcp · 依 token 過濾的資料夾   │
 └───────┬────────┘        auto-merge 後的段落 + 分數            └───────────────┬───────────────┘
         │ OAuth 流程                                                             │ 離線驗證 JWT
@@ -28,7 +30,7 @@ License: MIT&nbsp;·&nbsp;Python 3.12&nbsp;·&nbsp;PostgreSQL + pgvector&nbsp;·
 - **Cross-encoder 重排。** 以 `bge-reranker-v2-m3` / `mxbai-rerank-base-v2` 對融合後的候選重新評分,提升 Top-K 精度。
 - **Contextual Retrieval。** 索引時由 LLM 依文件大綱與 chunk 所在章節,以文件本身的語言為每個 chunk 寫一句脈絡說明（Anthropic 建議的做法）。這句說明與麵包屑只用來*找到* chunk(embedding、BM25、rerank);結果一律顯示文件原文。
 - **增量重建索引。** 重新索引一個檔案時,沒變的 chunk 沿用原本的脈絡說明與 embedding,只改一個章節大約只花一次 LLM 呼叫與一次 embedding。檔案的 chunk 在單一交易內替換 —— 過程中不會從搜尋結果消失。
-- **每資料夾一個 MCP 工具,依 token 隔離。** 每個資料夾註冊成 `Agentic_<folder>` 工具;呼叫者看到的工具清單會依其 token 過濾 —— 你只看得到自己擁有的資料夾。歸屬以 token 穩定的 `jti` 為 key。工具名稱一律符合所有 MCP 用戶端的限制(`[A-Za-z0-9_-]`、最長 64 字元):含空白、中日韓文字或其他符號的資料夾名稱會變成 `Agentic_<ASCII 部分>_<8 碼雜湊>`,每次都是同一個名稱。
+- **每資料夾一個 MCP 工具,依 token 隔離。** 每個資料夾註冊成 `Folio_<folder>` 工具;呼叫者看到的工具清單會依其 token 過濾 —— 你只看得到自己擁有的資料夾。歸屬以 token 穩定的 `jti` 為 key。工具名稱一律符合所有 MCP 用戶端的限制(`[A-Za-z0-9_-]`、最長 64 字元):含空白、中日韓文字或其他符號的資料夾名稱會變成 `Folio_<ASCII 部分>_<8 碼雜湊>`,每次都是同一個名稱。
 - **OAuth 2.1 resource server。** 一個 `RemoteAuthProvider` + `JWTVerifier` 保護 `/mcp`;token 用 MCP Gate 的 JWKS 在本地離線驗證（RS256),並綁定本伺服器的 audience,別台的 token 在這裡無效。
 - **文件 + 音訊匯入。** [Docling](https://github.com/DS4SD/docling) 解析 PDF / DOCX / PPTX / XLSX / 圖片（含 OCR）;**FireRedASR** 在本地做繁體中文語音轉錄（或任何 OpenAI 相容的 `/v1/transcriptions`）。
 - **內建評測 harness。** 從你自己的 chunk 自動生成問題,對正式檢索管線(與 `/api/rag/query` 同一路徑)以及 `vector` / `bm25` / `rrf` / `rerank`(全部走正式檢索路徑)評 **Recall@k · MRR · nDCG@k**,讓你針對真實語料調校檢索。
@@ -65,11 +67,11 @@ uv run python main.py
 
 ## 快速開始
 
-Agentic RAG 透過 [MCP Gate](https://github.com/xianhong1208/MCP_Gate) 驗證。**順序很重要:先在 MCP Gate 註冊這台伺服器** —— 它只會為它認得的 audience 簽 token。
+Folio 透過 [MCP Gate](https://github.com/xianhong1208/MCP_Gate) 驗證。**順序很重要:先在 MCP Gate 註冊這台伺服器** —— 它只會為它認得的 audience 簽 token。
 
 **1 — 在 MCP Gate 註冊伺服器。** 到 MCP Gate 主控台 *Services → Register Service*,填入本伺服器的 host / port / path（`/mcp`）。它的 audience 預設為 MCP URL,例如 `http://127.0.0.1:5039/mcp`。把同一個值設進 `config/config.yaml` 的 `auth.audience`。
 
-**2 — 讓 Agentic RAG 指向 MCP Gate**（`config/config.yaml`）:
+**2 — 讓 Folio 指向 MCP Gate**（`config/config.yaml`）:
 
 ```yaml
 auth:
@@ -90,15 +92,15 @@ curl -X POST http://127.0.0.1:5039/api/folders/ \
 **4 — 接上用戶端。** 有 MCP Gate 擋在前面,支援 OAuth 的用戶端不需預先設定:
 
 ```bash
-claude mcp add --transport http agentic-rag http://127.0.0.1:5039/mcp
+claude mcp add --transport http folio http://127.0.0.1:5039/mcp
 ```
 
-首次使用時,用戶端會向 MCP Gate 註冊並開啟同意畫面;你按 Allow 後,`Agentic_product-docs` 工具就會出現。腳本 / CI 則在 MCP Gate 簽一個 **personal access token**,以 bearer header 帶入。
+首次使用時,用戶端會向 MCP Gate 註冊並開啟同意畫面;你按 Allow 後,`Folio_product-docs` 工具就會出現。腳本 / CI 則在 MCP Gate 簽一個 **personal access token**,以 bearer header 帶入。
 
 **5 — 開始問。** 在用戶端呼叫資料夾工具:
 
 ```
-Agentic_product-docs  mode="search"  query="要怎麼輪替簽章金鑰?"
+Folio_product-docs  mode="search"  query="要怎麼輪替簽章金鑰?"
 ```
 
 它會回傳命中的段落（必要時 auto-merge),每筆附相關性分數與來源檔案 / 標題。
@@ -141,7 +143,7 @@ Agentic_product-docs  mode="search"  query="要怎麼輪替簽章金鑰?"
 
 **回答（主控台）。** 勾選 *generate answer* 時,先用一次 LLM 呼叫評估各 chunk 是否相關,丟掉不相關的（都不相關就不回答）,再用剩下的以**問題所用的語言**生成回答。每個 chunk 保留它在結果卡片中的編號,`[3]` 一定是第 3 張卡（主控台中引用可點擊）;引用了沒提供給模型的 chunk 會被移除,`【n†…】` 會轉成 `[n]`,Markdown 粗體標記會去掉 —— 串流路徑也一樣,最後的 `done` frame 帶有整理過的完整回答。評估結果無法解析時,回答會標成 **unverified**,而不是 `high`。
 
-**驗證。** Agentic RAG 是 *resource server*。FastMCP 會發佈 `/.well-known/oauth-protected-resource/mcp`,把用戶端導向 MCP Gate;伺服器抓一次 MCP Gate 的 JWKS,之後每個 bearer token 都離線驗證（RS256 —— 簽章、issuer、audience、效期、scope）。MCP Gate 從不在請求路徑上。
+**驗證。** Folio 是 *resource server*。FastMCP 會發佈 `/.well-known/oauth-protected-resource/mcp`,把用戶端導向 MCP Gate;伺服器抓一次 MCP Gate 的 JWKS,之後每個 bearer token 都離線驗證（RS256 —— 簽章、issuer、audience、效期、scope）。MCP Gate 從不在請求路徑上。
 
 ## 設定
 
@@ -151,6 +153,8 @@ Agentic_product-docs  mode="search"  query="要怎麼輪替簽章金鑰?"
 |------------|------|------|
 | `DATABASE_URL` | `postgresql://…/agentic_rag` | PostgreSQL DSN。需 **pgvector** 擴充。用**同步** `postgresql://`（psycopg2),不要 `+asyncpg`。 |
 | `server.port` | `5039` | HTTP + MCP 綁定 port。MCP 端點是 `/mcp`。 |
+| `FOLIO_STORAGE_ROOT` | 專案根目錄 | 放 `storage/`（上傳檔案與主控台 session 金鑰）的目錄。 |
+| `FOLIO_INDEXING_CONCURRENCY`、`FOLIO_PER_FILE_TIMEOUT_SECONDS`、`FOLIO_JOB_TIMEOUT_SECONDS` | 取自 `rag.indexing` | 索引上限的執行期覆寫。改名前的 `RAG_*` 舊名仍可用,但會記一筆 deprecation 警告。 |
 | `auth.enabled` / `auth.issuer` / `auth.audience` | `true` / MCP Gate 位址 / 本伺服器 `/mcp` URL | 對 MCP Gate 做 OAuth 2.1 驗證。 |
 | `auth.console.session_hours` | `8` | 主控台 session 最長時數(token 到期時也會一併結束)。 |
 | `auth.console.session_secret` | *(自動產生)* | 簽 session cookie 的金鑰,可用 `${ENV_VAR}`。未設定時會產生一次並存到 `storage/.console_session_secret`(已 gitignore),重啟後 session 仍有效。 |
@@ -283,8 +287,8 @@ profile 做了什麼:
 
 **在 MCP Gate 發 token。** MCP Gate 不需要任何程式修改:
 
-1. *Services* → 打開 Agentic RAG 服務 → *Scopes declared by this server* → 新增 **`rag:admin`**。**不要**把它設成 default scope(default 會在每把新 token 上預先勾選)。如果該服務有限制 *Allowed scopes*,也要允許 `rag:admin`。
-2. *Issue Token* → *Target service* 選 Agentic RAG(audience = `auth.audience`)。給可以改設定的維運者勾選 `rag:admin`;只管理自己資料夾的人不要勾。填上 label 後複製 token —— 它只會顯示一次。
+1. *Services* → 打開 Folio 服務 → *Scopes declared by this server* → 新增 **`rag:admin`**。**不要**把它設成 default scope(default 會在每把新 token 上預先勾選)。如果該服務有限制 *Allowed scopes*,也要允許 `rag:admin`。
+2. *Issue Token* → *Target service* 選 Folio(audience = `auth.audience`)。給可以改設定的維運者勾選 `rag:admin`;只管理自己資料夾的人不要勾。填上 label 後複製 token —— 它只會顯示一次。
 
 把 token 貼到登入畫面即可。以前透過舊的 *Owner Token* 欄位建立的資料夾,屬於當時貼上的那把 token:用那把 token 登入就看得到。腳本可以不走 cookie,直接帶 `Authorization: Bearer <token>` 呼叫 `/api/admin/*` —— 規則相同,而且不需要 CSRF header。
 
@@ -312,7 +316,7 @@ profile 做了什麼:
 
 | 群組 | 端點 |
 |------|------|
-| **MCP** | `POST /mcp` —— 每資料夾的 `Agentic_<folder>` 工具（`search` / `list` / `read`）;`GET /.well-known/oauth-protected-resource/mcp` |
+| **MCP** | `POST /mcp` —— 每資料夾的 `Folio_<folder>` 工具（`search` / `list` / `read`）;`GET /.well-known/oauth-protected-resource/mcp` |
 | **資料夾與檔案** | `/api/folders*` · `/api/folders/{id}/files*`（建立、上傳、列出、下載、刪除 —— token-scoped） |
 | **RAG** | `POST /api/rag/query`（混合檢索 + 重排）· `/api/rag/files/{id}/index`、`/reindex`、`/index/jobs*`（背景索引 + SSE 進度） |
 | **主控台 session** | `POST /api/console/session` `{token}`(登入)· `GET`(目前身分)· `DELETE`(登出) |
