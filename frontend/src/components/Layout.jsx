@@ -2,7 +2,7 @@ import { NavLink, Outlet, useLocation } from 'react-router-dom'
 import { useState } from 'react'
 import {
   Home, Folder, Zap, Search, BarChart3, FlaskConical, Layers, Sparkles,
-  ListTree, ArrowDownUp, Mic, SlidersHorizontal, Activity, ScrollText, Sun, Moon, LogOut,
+  ListTree, ArrowDownUp, Mic, SlidersHorizontal, Activity, ScrollText, Sun, Moon, LogOut, ScanText,
 } from 'lucide-react'
 import { useSession } from '../contexts/SessionContext'
 import { sessionLabel, expiresIn } from '../lib/session'
@@ -23,6 +23,7 @@ const NAV = [
     { to: '/settings/llm', icon: Sparkles, label: 'LLM' },
     { to: '/settings/contextual', icon: ListTree, label: 'Contextual Retrieval' },
     { to: '/settings/reranker', icon: ArrowDownUp, label: 'Reranker' },
+    { to: '/settings/parsing', icon: ScanText, label: 'Document Parsing' },
     { to: '/settings/asr', icon: Mic, label: 'Speech-to-Text' },
     { to: '/settings/retrieval', icon: SlidersHorizontal, label: 'Retrieval' },
   ] },
