@@ -260,11 +260,11 @@ def _generate_answer(query: str, results: list) -> dict:
                 "note": "No chunks retrieved"}
     import json
     import re
-    from src.config.config_manager import Config
     from src.domain.rag.context_generator import ContextGenerator
-    llm_cfg = Config.get_config_model().rag.llm
+    from src.domain.rag.llm_client import model_name, role_llm
+    llm_cfg = role_llm("answer_llm")  # rag.answer_llm over rag.llm
     client = ContextGenerator._create_sync_client(llm_cfg)
-    model = getattr(llm_cfg, "azure_deployment", None) or llm_cfg.model
+    model = model_name(llm_cfg)
     top = results[:6]
 
     # CRAG step 1: relevance grading (single LLM call returning a boolean array)
@@ -348,14 +348,14 @@ def _crag_grade(query: str, results: list) -> dict:
     """
     import json
     import re
-    from src.config.config_manager import Config
     from src.domain.rag.context_generator import ContextGenerator
     top = results[:6]
     if not top:
         return {"top": [], "kept": [], "dropped": 0}
-    llm_cfg = Config.get_config_model().rag.llm
+    from src.domain.rag.llm_client import model_name, role_llm
+    llm_cfg = role_llm("answer_llm")  # rag.answer_llm over rag.llm
     client = ContextGenerator._create_sync_client(llm_cfg)
-    model = getattr(llm_cfg, "azure_deployment", None) or llm_cfg.model
+    model = model_name(llm_cfg)
     grades = [True] * len(top)
     try:
         gprompt = (
@@ -388,11 +388,11 @@ def _generate_stream(query: str, kept: list):
     Citations are normalized [n] on the fly (gpt-oss emits 【n†…】).
     """
     import re
-    from src.config.config_manager import Config
     from src.domain.rag.context_generator import ContextGenerator
-    llm_cfg = Config.get_config_model().rag.llm
+    from src.domain.rag.llm_client import model_name, role_llm
+    llm_cfg = role_llm("answer_llm")  # rag.answer_llm over rag.llm
     client = ContextGenerator._create_sync_client(llm_cfg)
-    model = getattr(llm_cfg, "azure_deployment", None) or llm_cfg.model
+    model = model_name(llm_cfg)
     ctx = "\n\n".join(f"[{i+1}] {r['text'][:1200]}" for i, r in enumerate(kept))
     prompt = (
         "You are a helpful assistant. Answer the question using ONLY the context "

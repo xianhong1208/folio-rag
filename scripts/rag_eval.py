@@ -120,11 +120,11 @@ def _gen_question(client, model: str, chunk_text: str) -> str:
 
 
 def generate_eval_set(folder, n: int, out_path: str):
-    from src.config.config_manager import Config
     from src.domain.rag.context_generator import ContextGenerator
-    llm = Config.get_config_model().rag.llm
+    from src.domain.rag.llm_client import model_name, role_llm
+    llm = role_llm("eval_llm")  # rag.eval_llm over rag.llm
     client = ContextGenerator._create_sync_client(llm)
-    model = getattr(llm, "azure_deployment", None) or llm.model
+    model = model_name(llm)
     samples = _sample_chunks(folder, n)
     if not samples:
         raise NoIndexedChunks(_NO_CHUNKS_MSG)
@@ -371,11 +371,11 @@ async def evaluate(folder, items, k: int, progress=None, judge: bool = False) ->
     faith_sum = rel_sum = 0.0
     faith_n = rel_n = 0
     if judge:
-        from src.config.config_manager import Config
         from src.domain.rag.context_generator import ContextGenerator
-        llm = Config.get_config_model().rag.llm
+        from src.domain.rag.llm_client import model_name, role_llm
+        llm = role_llm("eval_llm")  # rag.eval_llm over rag.llm
         jclient = ContextGenerator._create_sync_client(llm)
-        jmodel = getattr(llm, "azure_deployment", None) or llm.model
+        jmodel = model_name(llm)
 
     agg = {m: {"recall": 0, "mrr": 0.0, "ndcg": 0.0} for m in modes}
     per_item = []
