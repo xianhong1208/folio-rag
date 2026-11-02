@@ -56,6 +56,8 @@ class RAGQueryResult(BaseModel):
     results: List[RAGSearchResult]
     total_results: int
     retrieval_time_ms: Optional[float] = None
+    # Best rerank score before the threshold (None: no reranker / rerank failed).
+    top_score: Optional[float] = None
 
 
 class FileIndexData(BaseModel):

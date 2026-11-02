@@ -7,6 +7,12 @@ to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 ## [Unreleased]
 
 ### Added
+- **Knowledge gaps judged on relevance.** Query logs record the reranker's best
+  score (`QueryLogs.top_score`, Alembic migration `20261102a1b2c3`, which also
+  adopts the `QueryLogs` table into Alembic). Analytics lists a question as a gap
+  when its latest search per folder returned nothing or scored below
+  `rag.rerank.gap_threshold` (default 0.5); asking again after adding documents
+  clears it. New *Knowledge Gaps* KPI on the Analytics page.
 - **mxbai-rerank-v2 chat template.** `rag.rerank.auto_template` (default on)
   wraps queries and documents in the model's official Qwen chat prompt when the
   configured templates are the default or the old chat-less form. Scores become
@@ -63,6 +69,8 @@ to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   logs a warning at startup.
 
 ### Fixed
+- MCP searches were not logged, so analytics and knowledge gaps ignored all
+  agent traffic.
 - When the reranker failed, queries returned all 3 × `top_k` candidates; they
   now return `top_k` in retrieval order, and the degraded result is not cached.
 - Concurrent REST queries on one folder could run with each other's `top_k` /

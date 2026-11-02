@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import asyncio
 import hashlib
+import time
 from typing import Any, Dict, Optional, TYPE_CHECKING
 
 from src.adapter.model import RAGQueryResult
@@ -52,6 +53,22 @@ def _get_query_semaphore() -> asyncio.Semaphore:
         _query_semaphore = asyncio.Semaphore(limit)
         logger.info(f"Query concurrency gate initialized (max_concurrent_queries={limit})")
     return _query_semaphore
+
+
+async def _log_query(*, query: str, folder_id: int, token: Optional[str], result_count: int,
+                     latency_ms: int, top_score: Optional[float]) -> None:
+    """Record an MCP search in QueryLog (analytics / knowledge gaps), off the event
+    loop and best-effort: a telemetry failure never affects the search."""
+    try:
+        from db.query_log_db import QueryLogDB
+        from src.log import mask_token
+
+        await asyncio.to_thread(
+            QueryLogDB.record, query=query, folder_id=folder_id, result_count=result_count,
+            latency_ms=latency_ms, token_prefix=mask_token(token) if token else None,
+            top_score=top_score)
+    except Exception as e:  # noqa: BLE001
+        logger.debug(f"query log skipped: {e}")
 
 
 class RAGQueryService:
@@ -162,6 +179,7 @@ class RAGQueryService:
                 query=query,
                 results=search_results,
                 total_results=len(search_results),
+                top_score=outcome.top_score,
             )
 
             # A degraded result (reranker down) must not be served from cache once
@@ -294,8 +312,9 @@ class RAGQueryService:
                 expand_context_neighbors=ctx.expand_neighbors,
                 searcher=self._engine_for(folder.id, vector_store).searcher,
             )
+            started = time.perf_counter()
             async with _get_query_semaphore():
-                return await handle_search(
+                response = await handle_search(
                     query=query,
                     folder=folder,
                     retriever=retriever,
@@ -303,5 +322,12 @@ class RAGQueryService:
                     similarity_cutoff=similarity_cutoff,
                     expand_context=expand_context,
                 )
+            await _log_query(
+                query=query, folder_id=folder.id, token=token,
+                result_count=int(response.get("total_results", len(response.get("results") or []))),
+                latency_ms=int((time.perf_counter() - started) * 1000),
+                top_score=getattr(getattr(retriever, "last_outcome", None), "top_score", None),
+            )
+            return response
 
         return {"error": f"Unknown mode: {mode}. Use search / list / read."}
