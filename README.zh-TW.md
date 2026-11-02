@@ -135,6 +135,8 @@ Agentic_product-docs  mode="search"  query="要怎麼輪替簽章金鑰?"
 
 **知識缺口。** 每次 REST、主控台與 MCP 搜尋都會記錄（token 只存遮罩後的前綴）結果數與 reranker 的最高分。*Query Analytics* 把某資料夾中**最近一次**搜尋沒有結果、或最高分低於 `rag.rerank.gap_threshold`（預設 `0.5`）的問題列為知識缺口 —— 補上能回答它的文件、再問一次後,缺口就會消失。
 
+**回答（主控台）。** 勾選 *generate answer* 時,先用一次 LLM 呼叫評估各 chunk 是否相關,丟掉不相關的（都不相關就不回答）,再用剩下的以**問題所用的語言**生成回答。每個 chunk 保留它在結果卡片中的編號,`[3]` 一定是第 3 張卡（主控台中引用可點擊）;引用了沒提供給模型的 chunk 會被移除,`【n†…】` 會轉成 `[n]`,Markdown 粗體標記會去掉 —— 串流路徑也一樣,最後的 `done` frame 帶有整理過的完整回答。評估結果無法解析時,回答會標成 **unverified**,而不是 `high`。
+
 **驗證。** Agentic RAG 是 *resource server*。FastMCP 會發佈 `/.well-known/oauth-protected-resource/mcp`,把用戶端導向 MCP Gate;伺服器抓一次 MCP Gate 的 JWKS,之後每個 bearer token 都離線驗證（RS256 —— 簽章、issuer、audience、效期、scope）。MCP Gate 從不在請求路徑上。
 
 ## 設定
