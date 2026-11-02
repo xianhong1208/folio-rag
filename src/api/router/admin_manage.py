@@ -14,9 +14,12 @@ from typing import Optional
 from uuid import UUID
 
 from fastapi import APIRouter, Body, Depends, File, Form, HTTPException, UploadFile
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 from src.api.router.admin_scope import owned_folder
+from src.api.router.response import CreateFolderRequest, UpdateFolderRequest
 from src.auth.console_session import ConsoleIdentity, require_console_session
+from src.domain.rag.query_limits import MAX_QUERY_CHARS, MIN_QUERY_CHARS
 from src.log import get_api_logger
 
 logger = get_api_logger()
@@ -29,6 +32,39 @@ OPEN_MODE_OWNER = "console"
 _Session = Depends(require_console_session)
 
 
+class PlaygroundQuery(BaseModel):
+    """Body of the console's search playground (/query and /query/stream).
+
+    Typed so a wrong type or an out-of-range value is a 422, not a 500 deep in the
+    engine (``query: 123`` used to crash on ``.strip()``, ``top_k: 500`` reached the
+    retriever). Ranges match the REST QueryRequest.
+    """
+    model_config = ConfigDict(extra="ignore")
+
+    query: str = Field(..., max_length=MAX_QUERY_CHARS)
+    top_k: Optional[int] = Field(None, ge=1, le=20)
+    similarity_cutoff: Optional[float] = Field(None, ge=0.0, le=1.0)
+    trace: bool = False
+    answer: bool = False
+
+    @field_validator("query")
+    @classmethod
+    def _strip_min(cls, v: str) -> str:
+        v = v.strip()
+        if len(v) < MIN_QUERY_CHARS:
+            raise ValueError(f"query too short (min {MIN_QUERY_CHARS} chars)")
+        return v
+
+
+def _query_failed(e: Exception, folder_id: int) -> HTTPException:
+    """Map a retrieval failure to an HTTP error (context-window overflow → 422)."""
+    from src.domain.rag.query_limits import QUERY_TOO_LONG_DETAIL, is_input_too_long_error
+    if is_input_too_long_error(e):
+        return HTTPException(422, QUERY_TOO_LONG_DETAIL)
+    logger.warning(f"[ADMIN] query failed for folder {folder_id}: {e}")
+    return HTTPException(500, f"Query failed: {e}")
+
+
 def _owner(folder_id: int, ident: ConsoleIdentity):
     """Load a folder the session owns and return (folder, owner_key) — 404 otherwise."""
     folder = owned_folder(folder_id, ident)
@@ -37,31 +73,29 @@ def _owner(folder_id: int, ident: ConsoleIdentity):
 
 @router.post("/api/admin/manage/folders")
 async def admin_create_folder(
-    body: dict = Body(..., examples=[{"name": "docs", "description": ""}]),
+    body: CreateFolderRequest = Body(..., examples=[{"name": "docs", "description": ""}]),
     ident: ConsoleIdentity = _Session,
 ):
-    """Create a folder owned by the signed-in token (reachable via REST / MCP with that token)."""
-    name = (body.get("name") or "").strip()
-    if not name:
-        raise HTTPException(422, "name is required")
+    """Create a folder owned by the signed-in token (reachable via REST / MCP with that token).
+
+    Any owner field in the body is ignored: the owner is always the session.
+    """
     from src.api.router.folder_api import create_folder
-    from src.api.router.response import CreateFolderRequest
     return await create_folder(
-        CreateFolderRequest(name=name, description=body.get("description")),
+        CreateFolderRequest(name=body.name, description=body.description),
         user_token=ident.owner_key or OPEN_MODE_OWNER,
     )
 
 
 @router.patch("/api/admin/manage/folders/{folder_id}")
-async def admin_update_folder(folder_id: int, body: dict = Body(...),
+async def admin_update_folder(folder_id: int, body: UpdateFolderRequest = Body(...),
                              ident: ConsoleIdentity = _Session):
     """Rename / change description (only patches the fields provided)."""
     _, token = _owner(folder_id, ident)
     from src.api.router.folder_api import update_folder_api
-    from src.api.router.response import UpdateFolderRequest
     return await update_folder_api(
         folder_id,
-        UpdateFolderRequest(name=body.get("name"), description=body.get("description")),
+        UpdateFolderRequest(name=body.name, description=body.description),
         user_token=token,
     )
 
@@ -273,7 +307,8 @@ async def admin_cancel_file(folder_id: int, file_id: UUID, ident: ConsoleIdentit
 
 
 @router.post("/api/admin/manage/folders/{folder_id}/query")
-async def admin_query_folder(folder_id: int, body: dict = Body(..., examples=[{"query": "…"}]),
+async def admin_query_folder(folder_id: int,
+                             body: PlaygroundQuery = Body(..., examples=[{"query": "…"}]),
                              ident: ConsoleIdentity = _Session):
     """Run one retrieval against the folder (query test bench). Returns matched chunks + scores.
 
@@ -282,19 +317,23 @@ async def admin_query_folder(folder_id: int, body: dict = Body(..., examples=[{"
     a normal query).
     """
     folder, token = _owner(folder_id, ident)
-    q = (body.get("query") or "").strip()
-    if len(q) < 2:
-        raise HTTPException(422, "query too short (min 2 chars)")
+    q = body.query
 
-    if body.get("trace"):
+    if body.trace:
         from src.adapter.rag import get_rag_adapter
         from src.api.router.rag_query import _resolve_retrieval_defaults
         d = _resolve_retrieval_defaults()
-        trace = await get_rag_adapter().query_trace(
-            query=q, folder_id=folder_id, token=token,
-            top_k=body.get("top_k") or d["top_k"],
-            similarity_cutoff=body.get("similarity_cutoff") or d["similarity_cutoff"],
-            sparse_top_k=d["sparse_top_k"], hybrid_alpha=d["hybrid_alpha"])
+        try:
+            trace = await get_rag_adapter().query_trace(
+                query=q, folder_id=folder_id, token=token,
+                top_k=body.top_k or d["top_k"],
+                similarity_cutoff=(body.similarity_cutoff if body.similarity_cutoff is not None
+                                   else d["similarity_cutoff"]),
+                sparse_top_k=d["sparse_top_k"], hybrid_alpha=d["hybrid_alpha"])
+        except HTTPException:
+            raise
+        except Exception as e:
+            raise _query_failed(e, folder_id)
         results = [{"text": r["text"], "score": r["final_score"], "metadata": r["metadata"]}
                    for r in trace["results"]]
         resp = {"data": {"query": q, "results": results,
@@ -305,12 +344,12 @@ async def admin_query_folder(folder_id: int, body: dict = Body(..., examples=[{"
         from fastapi import Request as _Req
         req = QueryRequest(
             query=q, folder_name=folder.name,
-            top_k=body.get("top_k"), similarity_cutoff=body.get("similarity_cutoff"),
+            top_k=body.top_k, similarity_cutoff=body.similarity_cutoff,
         )
         scope = {"type": "http", "headers": [], "method": "POST", "path": "/", "query_string": b""}
         resp = await query_rag(_Req(scope), req, token=token)
     # answer=true: follow retrieval with CRAG answer generation.
-    if body.get("answer"):
+    if body.answer:
         try:
             gen = _generate_answer(q, resp["data"].get("results", []))
             resp["data"]["answer"] = gen.get("answer")
@@ -557,7 +596,8 @@ async def _stream_answer_events(query: str, results: list):
 
 
 @router.post("/api/admin/manage/folders/{folder_id}/query/stream")
-async def admin_query_folder_stream(folder_id: int, body: dict = Body(..., examples=[{"query": "…"}]),
+async def admin_query_folder_stream(folder_id: int,
+                                    body: PlaygroundQuery = Body(..., examples=[{"query": "…"}]),
                                     ident: ConsoleIdentity = _Session):
     """Retrieve, then stream a CRAG answer over Server-Sent Events (text/event-stream).
 
@@ -568,16 +608,14 @@ async def admin_query_folder_stream(folder_id: int, body: dict = Body(..., examp
     import json
     from starlette.responses import StreamingResponse
     folder, token = _owner(folder_id, ident)
-    q = (body.get("query") or "").strip()
-    if len(q) < 2:
-        raise HTTPException(422, "query too short (min 2 chars)")
+    q = body.query
 
     from src.api.router.rag_query import query_rag
     from src.api.router.response import QueryRequest
     from fastapi import Request as _Req
     req = QueryRequest(
         query=q, folder_name=folder.name,
-        top_k=body.get("top_k"), similarity_cutoff=body.get("similarity_cutoff"))
+        top_k=body.top_k, similarity_cutoff=body.similarity_cutoff)
     scope = {"type": "http", "headers": [], "method": "POST", "path": "/", "query_string": b""}
     resp = await query_rag(_Req(scope), req, token=token)
     results = resp["data"].get("results", [])

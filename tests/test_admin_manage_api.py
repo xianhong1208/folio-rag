@@ -136,7 +136,7 @@ class TestRemainingDelegations:
     def test_create_empty_name_422(self, client):
         r = client.post("/api/admin/manage/folders",
                         json={"name": "  ", "owner_token": "t"})
-        assert r.status_code == 422 and "name" in r.json()["detail"]
+        assert r.status_code == 422 and "name" in str(r.json()["detail"])
 
     def test_update_folder_delegates(self, client):
         with patch(_DB, return_value=_folder()), \
@@ -184,6 +184,52 @@ class TestQueryPlayground:
         with patch(_DB, return_value=_folder()):
             r = client.post("/api/admin/manage/folders/7/query", json={"query": "x"})
         assert r.status_code == 422
+
+    @pytest.mark.parametrize("body", [
+        {"query": 123},                                   # used to crash on .strip()
+        {"query": "hello", "top_k": 500},                 # out of range
+        {"query": "hello", "top_k": "lots"},
+        {"query": "hello", "similarity_cutoff": 7},
+        {"query": "hello", "trace": "maybe"},
+        {"query": "   x  "},                              # too short once stripped
+        {"query": "x" * 2001},                            # ref cap
+        {},
+    ])
+    def test_bad_params_are_422_not_500(self, client, body):
+        with patch(_DB, return_value=_folder()), \
+             patch("src.api.router.rag_query.query_rag", new=AsyncMock()) as ep:
+            r = client.post("/api/admin/manage/folders/7/query", json=body)
+            rs = client.post("/api/admin/manage/folders/7/query/stream", json=body)
+        assert r.status_code == 422, r.text
+        assert rs.status_code == 422, rs.text
+        ep.assert_not_awaited()
+
+    def test_query_is_stripped_and_params_forwarded(self, client):
+        with patch(_DB, return_value=_folder()), \
+             patch("src.api.router.rag_query.query_rag",
+                   new=AsyncMock(return_value={"data": {"results": []}})) as ep:
+            r = client.post("/api/admin/manage/folders/7/query",
+                            json={"query": "  hello  ", "top_k": "5", "similarity_cutoff": 0})
+        assert r.status_code == 200
+        req = ep.await_args.args[1]
+        assert req.query == "hello" and req.top_k == 5 and req.similarity_cutoff == 0
+
+    def test_trace_context_overflow_is_422(self, client):
+        adapter = MagicMock()
+        adapter.query_trace = AsyncMock(side_effect=RuntimeError("maximum context length is 512"))
+        with patch(_DB, return_value=_folder()), \
+             patch("src.adapter.rag.get_rag_adapter", return_value=adapter):
+            r = client.post("/api/admin/manage/folders/7/query", json={"query": "hello", "trace": True})
+        assert r.status_code == 422
+
+    def test_trace_keeps_explicit_zero_cutoff(self, client):
+        adapter = MagicMock()
+        adapter.query_trace = AsyncMock(return_value={"results": []})
+        with patch(_DB, return_value=_folder()), \
+             patch("src.adapter.rag.get_rag_adapter", return_value=adapter):
+            client.post("/api/admin/manage/folders/7/query",
+                        json={"query": "hello", "trace": True, "similarity_cutoff": 0})
+        assert adapter.query_trace.await_args.kwargs["similarity_cutoff"] == 0
 
     def test_trace_uses_query_trace_and_maps_results(self, client):
         """trace=true routes to query_trace and builds results from the trace's final hits (does not re-run a normal query)."""

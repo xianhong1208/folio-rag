@@ -71,3 +71,52 @@ async def test_direct_call_returns_json_types_and_leaves_cached_result_untouched
     assert resp["data"]["results"][0]["metadata"]["node_id"] == str(_NODE_ID)
     assert resp["data"]["retrieval_time_ms"] is not None
     assert cached.retrieval_time_ms is None
+
+
+class TestQueryLength:
+    """ref: over-long queries are a 4xx, never a 500."""
+
+    def test_over_cap_rejected_before_retrieval(self, client, adapter):
+        from src.domain.rag.query_limits import MAX_QUERY_CHARS
+        r = client.post("/query",
+                        json={"query": "x" * (MAX_QUERY_CHARS + 1), "folder_name": "docs"})
+        assert r.status_code == 422
+        adapter.query_rag.assert_not_awaited()
+
+    def test_embedding_context_error_maps_to_422(self, client, adapter):
+        err = RuntimeError("Error code: 400 - This model's maximum context length is 512 tokens")
+        adapter.query_rag = AsyncMock(side_effect=err)
+        r = client.post("/query", json={"query": "long question", "folder_name": "docs"})
+        assert r.status_code == 422
+        assert "too long" in r.json()["detail"]
+
+    def test_other_errors_stay_500(self, client, adapter):
+        adapter.query_rag = AsyncMock(side_effect=RuntimeError("db down"))
+        r = client.post("/query", json={"query": "q?", "folder_name": "docs"})
+        assert r.status_code == 500
+
+
+class TestContextErrorDetection:
+    @pytest.mark.parametrize("msg", [
+        "This model's maximum context length is 8192 tokens",
+        "context_length_exceeded",
+        "Input validation error: `inputs` must have less than 512 tokens",
+        "input is too long for the model",
+    ])
+    def test_detects_provider_messages(self, msg):
+        from src.domain.rag.query_limits import is_input_too_long_error
+        assert is_input_too_long_error(RuntimeError(msg))
+
+    def test_walks_the_cause_chain(self):
+        from src.domain.rag.query_limits import is_input_too_long_error
+        try:
+            try:
+                raise ValueError("maximum context length exceeded")
+            except ValueError as inner:
+                raise RuntimeError("embedding failed") from inner
+        except RuntimeError as e:
+            assert is_input_too_long_error(e)
+
+    def test_unrelated_errors(self):
+        from src.domain.rag.query_limits import is_input_too_long_error
+        assert not is_input_too_long_error(RuntimeError("connection refused"))

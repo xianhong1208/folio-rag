@@ -213,5 +213,10 @@ async def query_rag(
     except HTTPException:
         raise
     except Exception as e:
+        from src.domain.rag.query_limits import QUERY_TOO_LONG_DETAIL, is_input_too_long_error
+        if is_input_too_long_error(e):
+            log_warn(logger, "API_QUERY_TOO_LONG", token=token,
+                     msg=f"len={len(query_request.query)}: {e}")
+            raise HTTPException(status_code=422, detail=QUERY_TOO_LONG_DETAIL)
         log_err(logger, "API_QUERY_FAIL", e, token=token)
         raise HTTPException(status_code=500, detail=f"Query failed: {str(e)}")

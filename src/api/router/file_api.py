@@ -5,7 +5,6 @@ Provides REST API endpoints for file upload, download, update, and deletion.
 Supports space- and folder-based file management.
 """
 import traceback
-from urllib.parse import quote
 from uuid import UUID
 from fastapi import APIRouter, HTTPException, UploadFile, File, Form, Query, Depends, Request
 from fastapi.responses import StreamingResponse
@@ -28,6 +27,8 @@ from src.adapter.file import FileAdapter
 from src.adapter.folder import FolderAdapter
 from src.adapter.rag import get_rag_adapter
 from src.log import get_api_logger
+from src.utils.names import content_disposition, sanitize_filename
+from db.filedb import FileTooLargeError, UnsupportedFileTypeError
 from db.file_with_index_db import FileWithIndexDB
 
 logger = get_api_logger()
@@ -79,7 +80,7 @@ async def upload_file(
 
         file_data = {
             'file_content': file_content,
-            'file_name': file.filename,
+            'file_name': sanitize_filename(file.filename),
             'description': description,
             'tags': tags_list
         }
@@ -140,6 +141,15 @@ async def upload_file(
         raise HTTPException(status_code=409, detail="file already exists")
     except HTTPException:
         raise
+    except UnsupportedFileTypeError as e:
+        logger.info(f"Upload rejected (type): {file.filename!r} → folder {folder_id}: {e}")
+        raise HTTPException(status_code=415, detail=str(e))
+    except FileTooLargeError as e:
+        logger.info(f"Upload rejected (size): {file.filename!r} → folder {folder_id}: {e}")
+        raise HTTPException(status_code=413, detail=str(e))
+    except ValueError as e:
+        logger.info(f"Upload rejected: {file.filename!r} → folder {folder_id}: {e}")
+        raise HTTPException(status_code=400, detail=str(e))
     except Exception as e:
         traceback.print_exc()
         logger.error(f"Failed to upload file {file.filename if file else 'unknown'} to folder {folder_id}: {str(e)}")
@@ -196,8 +206,6 @@ async def download_file(
 
         file_data = result[0]
         logger.info(f"File downloaded successfully: file_id={file_id}, filename={file_data.file_name}")
-        ascii_filename = file_data.file_name.encode('ascii', 'ignore').decode('ascii') or 'download'
-        encoded_filename = quote(file_data.file_name)
 
         def generate():
             yield file_data.file_content
@@ -206,7 +214,7 @@ async def download_file(
             generate(),
             media_type=file_data.mime_type or "application/octet-stream",
             headers={
-                "Content-Disposition": f'attachment; filename="{ascii_filename}"; filename*=UTF-8\'\'{encoded_filename}'
+                "Content-Disposition": content_disposition(file_data.file_name)
             }
         )
     except ToolError as e:
@@ -387,7 +395,7 @@ async def upload_files(
             file_content = await file.read()
             files_data.append({
                 'file_content': file_content,
-                'file_name': file.filename,
+                'file_name': sanitize_filename(file.filename),
                 'description': None,
                 'tags': None
             })

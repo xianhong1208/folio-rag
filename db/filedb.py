@@ -23,6 +23,14 @@ from src.log import get_db_logger
 log = get_db_logger()
 
 
+class FileTooLargeError(ValueError):
+    """Upload exceeds MAX_FILE_SIZE (HTTP 413)."""
+
+
+class UnsupportedFileTypeError(ValueError):
+    """Upload extension is not in ALLOWED_EXTENSIONS (HTTP 415)."""
+
+
 class ToolError(Exception):
     """Tool-related error."""
     pass
@@ -148,11 +156,12 @@ class FileDB(BaseDB):
         file_size = len(file_content)
         if file_size > cls.MAX_FILE_SIZE:
             max_size_mb = cls.MAX_FILE_SIZE / (1024 * 1024)
-            raise ValueError(f"File size exceeds limit ({max_size_mb:.1f}MB)")
+            raise FileTooLargeError(f"File size exceeds limit ({max_size_mb:.1f}MB)")
 
         ext = Path(file_name).suffix.lower().lstrip('.')
         if ext not in cls.ALLOWED_EXTENSIONS:
-            raise ValueError(f"Not supported file type: {ext}")
+            raise UnsupportedFileTypeError(
+                f"Unsupported file type: .{ext}" if ext else "Unsupported file type: no extension")
 
         mime_type = mimetypes.guess_type(file_name)[0]
 
