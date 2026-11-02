@@ -315,7 +315,8 @@ class RAGContext:
             self._rebind_reranker(rag_config)
         # llm / contextual / asr are frozen into the indexer's construction chain,
         # so rebuild it (cheap: embed_model is injected, no model reload).
-        if any(g in groups for g in ("rag.llm", "rag.contextual_retrieval", "rag.asr")) \
+        if any(g in groups for g in ("rag.llm", "rag.contextual_llm",
+                                     "rag.contextual_retrieval", "rag.asr")) \
                 and "rag.embedding" not in groups:
             # Reuse the injected embed_model; reading Settings would build the
             # OpenAI default when unset.
