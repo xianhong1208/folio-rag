@@ -181,7 +181,8 @@ async def query_rag(
             sparse_top_k=sparse_top_k,
             hybrid_alpha=hybrid_alpha,
         )
-        _latency_ms = int((_time.perf_counter() - _t0) * 1000)
+        _elapsed_ms = (_time.perf_counter() - _t0) * 1000
+        _latency_ms = int(_elapsed_ms)
 
         # Query telemetry (best-effort; feeds Control Center's top-queries/zero-result/latency analytics)
         try:
@@ -194,8 +195,15 @@ async def query_rag(
         except Exception as _e:  # noqa: BLE001
             logger.debug(f"query log skipped: {_e}")
 
+        # mode="json": the domain DTO carries non-JSON types (node_id is a UUID) while
+        # the API schema declares strings; a python-mode dump fails response
+        # validation (500) on every query that returns results.
+        data = result.model_dump(mode="json")
+        # Set on the response only: the result object may be the shared cached copy,
+        # and the time that matters to the caller is this call's (cache hits included).
+        data["retrieval_time_ms"] = round(_elapsed_ms, 2)
         return {
-            "data": result.model_dump(),
+            "data": data,
             "message": f"Query returned {result.total_results} results",
         }
 
