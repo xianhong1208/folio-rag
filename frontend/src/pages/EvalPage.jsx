@@ -6,11 +6,12 @@ import EmptyState from '../components/ui/EmptyState'
 
 const pct = (x) => (x == null ? '—' : (x * 100).toFixed(1) + '%')
 
-// Best available mode for a summary (rerank > rrf > hybrid > vector) and its nDCG@k.
+// Best available mode for a summary (rerank > rrf > hybrid > bm25 > vector) and its nDCG@k.
+// "hybrid" only appears in runs recorded before the shared search path (kept for history).
 // Used only for the multi-run trend line ("best available" per run).
 const bestNdcg = (summary, k) => {
   if (!summary) return null
-  for (const m of ['rerank', 'rrf', 'hybrid', 'vector']) {
+  for (const m of ['rerank', 'rrf', 'hybrid', 'bm25', 'vector']) {
     if (summary[m] && summary[m]['ndcg@' + k] != null) return summary[m]['ndcg@' + k]
   }
   return null
@@ -117,7 +118,7 @@ export default function EvalPage() {
       <div className="card">
         <div className="card-head">
           <div className="icon"><FlaskConical size={16} /></div>
-          <div><h2>Retrieval Evaluation</h2><div className="desc">Auto-generates questions from your chunks, then scores vector / hybrid / rerank — Recall@k · MRR · nDCG@k</div></div>
+          <div><h2>Retrieval Evaluation</h2><div className="desc">Auto-generates questions from your chunks, then scores vector / BM25 / RRF / rerank through the production search path — Recall@k · MRR · nDCG@k</div></div>
           <div className="grow" />
           <select value={fid} onChange={(e) => setFid(e.target.value)} style={selStyle}>
             {folders.length ? folders.map((f) => <option key={f.id} value={f.id}>{f.name} ({f.indexed_files} files)</option>) : <option value="">No indexed folders</option>}

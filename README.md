@@ -30,7 +30,7 @@ License: MIT&nbsp;·&nbsp;Python 3.12&nbsp;·&nbsp;PostgreSQL + pgvector&nbsp;·
 - **Per-folder MCP tools, scoped per token.** Every folder is registered as an `Agentic_<folder>` tool; the tool list a caller sees is filtered by their token — you only see folders you own. Ownership is keyed on the token's stable `jti`.
 - **OAuth 2.1 resource server.** One `RemoteAuthProvider` + `JWTVerifier` protects `/mcp`; tokens are verified locally against MCP Gate's JWKS (RS256, offline), and are bound to this server's audience so a token for another server never works here.
 - **Document + audio ingestion.** [Docling](https://github.com/DS4SD/docling) parses PDF / DOCX / PPTX / XLSX / images (with OCR); **FireRedASR** transcribes audio locally in Traditional Chinese (or any OpenAI-compatible `/v1/transcriptions` endpoint).
-- **Built-in evaluation harness.** Auto-generates questions from your own chunks and scores `vector` / `hybrid` / `rerank` on **Recall@k · MRR · nDCG@k**, so you can tune retrieval against your real corpus.
+- **Built-in evaluation harness.** Auto-generates questions from your own chunks and scores `vector` / `bm25` / `rrf` / `rerank` — all through the production search path — on **Recall@k · MRR · nDCG@k**, so you can tune retrieval against your real corpus.
 - **Retrieval Terminal console.** A React single-page console at `/admin`: pipeline overview, folders & files, a **Search Playground** that shows the per-signal retrieval trace, live index-job stream, query analytics, the evaluation harness, live settings, health and an audit timeline.
 - **Runs on your GPU.** PyTorch is selected per platform with PEP 735 dependency groups (`rocm-r714` / `rocm-r713` / `cuda` / `cpu`) — AMD ROCm, NVIDIA CUDA or pure CPU.
 
@@ -114,6 +114,10 @@ Your folder is indexed once, then every query runs through the pipeline:
 | **Merge** | Leaves from the same passage **auto-merge** into their parent; single hits **expand** to neighbours. |
 | **Rerank** | A cross-encoder (`bge-reranker-v2-m3` / `mxbai-rerank-base-v2`) re-scores for final Top-K precision. |
 | **Answer** | For the `answer` path, `gpt-oss-120b` synthesises a response from the retrieved context, gated by a corrective-RAG confidence check. |
+
+### Retrieval in detail
+
+**One retrieval path.** REST `/api/rag/query`, the MCP search tool, the console Search Playground (and its trace view) and the evaluation harness all retrieve through the same code (`src/domain/rag/hybrid_search.py`): dense + BM25, fused with `rrf` (default) or `concat` (dense hits, then BM25-only hits, left for the reranker to order), reranked, then auto-merged with one shared rule. REST accepts `auto_merge` per request (`null` = follow `rag.retrieval.auto_merging.enabled`); `hybrid_alpha` is accepted and ignored. Per-request settings are passed with each call, never stored on the shared per-folder engine, so concurrent requests with different `top_k` cannot affect each other.
 
 **Auth.** Agentic RAG is a *resource server*. FastMCP publishes `/.well-known/oauth-protected-resource/mcp`, which points clients at MCP Gate; the server fetches MCP Gate's JWKS once and verifies every bearer token offline (RS256 — signature, issuer, audience, expiry, scopes). MCP Gate is never on the request path.
 

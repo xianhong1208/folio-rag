@@ -189,8 +189,9 @@ class RAGAdapter:
         use_cache: bool = True,
         sparse_top_k: Optional[int] = None,
         hybrid_alpha: Optional[float] = None,
+        auto_merge: Optional[bool] = None,
     ) -> RAGQueryResult:
-        """Delegates to RAGQueryService — flat hybrid query with result cache."""
+        """Delegates to RAGQueryService — hybrid query (+ auto-merge) with result cache."""
         return await self._query_svc.query_rag(
             query=query,
             folder_id=folder_id,
@@ -200,6 +201,7 @@ class RAGAdapter:
             use_cache=use_cache,
             sparse_top_k=sparse_top_k,
             hybrid_alpha=hybrid_alpha,
+            auto_merge=auto_merge,
         )
 
     async def query_trace(

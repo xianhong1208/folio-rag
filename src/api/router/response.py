@@ -110,7 +110,19 @@ class QueryRequest(BaseModel):
         ge=0.0,
         le=1.0,
         examples=[0.75],
-        description="Weight of vector vs keyword scores in hybrid retrieval (0=pure BM25, 1=pure vector). None = use `config.rag.retrieval.default_hybrid_alpha` (current = 0.75).",
+        json_schema_extra={"deprecated": True},
+        description=(
+            "Deprecated, ignored. Dense and keyword hits are combined by rank "
+            "(`rag.retrieval.hybrid_fusion`: rrf or concat), so there is no score weight to set."
+        ),
+    )
+    auto_merge: Optional[bool] = Field(
+        default=None,
+        examples=[True],
+        description=(
+            "Replace several hit chunks of one section with the whole section (the same rule "
+            "the MCP search tool uses). None = follow `config.rag.retrieval.auto_merging.enabled`."
+        ),
     )
 
     model_config = {
@@ -125,7 +137,6 @@ class QueryRequest(BaseModel):
                     "top_k": 10,
                     "similarity_cutoff": 0.25,
                     "sparse_top_k": 12,
-                    "hybrid_alpha": 0.75,
                 },
             ]
         }
@@ -435,6 +446,9 @@ class RAGChunkMetadataDoc(BaseModel):
     folder_name: Optional[str]
     page: Optional[int] = Field(None, description="Source page number (only for paginated documents parsed by docling)")
     headings: Optional[List[str]] = Field(None, description="Heading chain the chunk belongs to (citation provenance)")
+    content_type: Optional[str] = Field(None, description='"table" / "picture" when the chunk is a serialized table or figure')
+    node_role: Optional[str] = Field(None, description='"leaf" = one chunk; "parent" = a whole section that replaced several hit chunks (auto-merge)')
+    merged_from: Optional[int] = Field(None, description="For a parent: how many hit chunks it replaced")
 
 
 class RAGSearchResultDoc(BaseModel):

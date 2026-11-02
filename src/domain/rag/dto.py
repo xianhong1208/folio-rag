@@ -42,6 +42,10 @@ class RAGChunkMetadata(BaseModel):
     headings: Optional[List[str]] = None
     # "table" / "picture" when the chunk carries that Docling item; None for plain text.
     content_type: Optional[str] = None
+    # "leaf" for a single chunk; "parent" when auto-merge replaced several hit
+    # leaves with their whole section (merged_from = how many leaves it replaced).
+    node_role: Optional[str] = None
+    merged_from: Optional[int] = None
 
 
 class RAGSearchResult(BaseModel):

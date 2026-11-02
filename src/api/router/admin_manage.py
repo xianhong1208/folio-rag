@@ -232,6 +232,7 @@ async def admin_query_folder(folder_id: int, body: dict = Body(..., examples=[{"
         req = QueryRequest(
             query=q, folder_name=folder.name,
             top_k=body.get("top_k"), similarity_cutoff=body.get("similarity_cutoff"),
+            auto_merge=body.get("auto_merge"),
         )
         scope = {"type": "http", "headers": [], "method": "POST", "path": "/", "query_string": b""}
         resp = await query_rag(_Req(scope), req, token=token)
@@ -503,7 +504,8 @@ async def admin_query_folder_stream(folder_id: int, body: dict = Body(..., examp
     from fastapi import Request as _Req
     req = QueryRequest(
         query=q, folder_name=folder.name,
-        top_k=body.get("top_k"), similarity_cutoff=body.get("similarity_cutoff"))
+        top_k=body.get("top_k"), similarity_cutoff=body.get("similarity_cutoff"),
+        auto_merge=body.get("auto_merge"))
     scope = {"type": "http", "headers": [], "method": "POST", "path": "/", "query_string": b""}
     resp = await query_rag(_Req(scope), req, token=token)
     results = resp["data"].get("results", [])
