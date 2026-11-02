@@ -5,8 +5,9 @@ Usage:
     uv run --no-sync python scripts/rag_eval.py --folder <name or ID> --n 20
 
 Samples N indexed leaf chunks, uses the configured LLM to generate one question
-per chunk (gold = that chunk's node_id), then scores three retrieval modes with
-Recall@k, MRR and nDCG@k (see MODES). The eval set is cached under reports/ and
+per chunk (gold = that chunk's node_id), then scores five retrieval modes with
+Recall@k, MRR and nDCG@k (see MODES), all through the production search path
+(src/domain/rag/hybrid_search.py). The eval set is cached under reports/ and
 reused so scores are comparable across parameter changes.
 """
 from __future__ import annotations
@@ -107,15 +108,15 @@ def check_ready(folder_ref: str):
 
 
 def _gen_question(client, model: str, chunk_text: str) -> str:
-    # The question is asked in the passage's own language, so an English corpus gets
+    # The question is asked in the excerpt's own language, so an English corpus gets
     # English questions and a Chinese one Chinese questions (it used to be hard-coded
     # to Traditional Chinese).
     prompt = (
-        "Below is a passage from a document. Write ONE question a user might ask whose "
-        "answer is clearly contained in this passage. Write the question in the same "
-        "language as the passage. Be specific (proper nouns are fine) and do not refer "
-        "to \"this passage\" or \"the text\". Output only the question, with no prefix."
-        "\n\nPassage:\n" + chunk_text[:1500] + "\n\nQuestion:")
+        "Below is an excerpt from a document. Write one question a user might ask whose "
+        "answer is clearly contained in this excerpt. Be specific (names and terms are "
+        "fine) and do not refer to \"the excerpt\" or \"this text\". Write the question in "
+        "the same language as the excerpt. Output only the question, with no prefix.\n\n"
+        "Excerpt:\n" + chunk_text[:1500] + "\n\nQuestion:")
     # Reasoning models (e.g. gpt-oss) spend reasoning tokens first; too small a
     # max_tokens leaves content None (no budget left for the answer) -> allow 1024.
     r = client.chat.completions.create(
@@ -154,22 +155,31 @@ def generate_eval_set(folder, n: int, out_path: str):
     return items
 
 
-# Modes scored for every question. "production" is THE number: the same adapter call
-# POST /api/rag/query makes, with the live settings (fusion, rerank, thresholds), so a
-# settings change shows up here exactly as users see it. "vector" and "bm25" isolate
-# the two signals production fuses, via the production QueryEngine's own per-path
-# retrieval (BM25 gets the same CKIP OR-query as production). The old "hybrid" mode
-# (llama-index concat fusion) was dropped: pgvector's concat ranked dense first, so it
-# always equalled "vector" and suggested BM25 added nothing.
-MODES = ("vector", "bm25", "production")
+# Modes scored for every question, all through the production retrieval path
+# (src/domain/rag/hybrid_search.py — the same searcher REST, MCP and the console use):
+#   vector     — dense only;
+#   bm25       — keyword (FTS) only, with the production segmentation and AND→OR query;
+#   rrf        — dense + BM25 fused by RRF, no rerank;
+#   rerank     — the configured fusion + cross-encoder rerank over leaves (only when a
+#                reranker is configured);
+#   production — THE number: the same adapter call POST /api/rag/query makes, with the
+#                live settings (fusion, rerank, thresholds, auto-merge), so a settings
+#                change shows up here exactly as users see it. A merged section counts
+#                as a hit when it contains the gold chunk.
+# The old "hybrid" mode (llama-index concat fusion) was dropped: pgvector's concat
+# ranked dense first, so it always equalled "vector" and suggested BM25 added nothing.
+BASE_MODES = ("vector", "bm25", "rrf")
+MODES = BASE_MODES + ("rerank", "production")
 MODE_LABELS = {
     "vector": "Vector only (dense embeddings)",
     "bm25": "Keyword only (BM25)",
-    "production": "Production (/api/rag/query: fusion + rerank when enabled)",
+    "rrf": "Hybrid (dense + BM25, RRF fusion, no rerank)",
+    "rerank": "Hybrid + rerank (configured fusion, cross-encoder rerank, leaves only)",
+    "production": "Production (/api/rag/query: fusion + rerank + auto-merge as configured)",
 }
 BEST_MODE = "production"
 # Bumped when modes or scoring change, so history deltas never compare across harnesses.
-HARNESS_VERSION = 2
+HARNESS_VERSION = 3
 
 
 class _Retrievers:
@@ -177,47 +187,59 @@ class _Retrievers:
 
     def __init__(self, folder, k: int):
         from src.adapter.rag import get_rag_adapter
-        from src.adapter.rag_query import _fusion_config
         from src.api.router.rag_query import _resolve_retrieval_defaults
-        from src.domain.rag.query_engine import QueryEngine
+        from src.domain.rag.hybrid_search import HybridSearcher, SearchSettings
 
         self.folder, self.k = folder, k
         self.adapter = get_rag_adapter()
         self.defaults = _resolve_retrieval_defaults()
-        fusion, rrf_k, tsc = _fusion_config()
         ctx = self.adapter._query_svc._ctx
-        # Diagnostics engine for the single-signal modes (no reranker: raw path ranks).
-        self.engine = QueryEngine(
-            vector_store=ctx.get_vector_store(folder.id, folder.user_token),
-            top_k=k, similarity_cutoff=self.defaults["similarity_cutoff"],
-            sparse_top_k=max(k, self.defaults["sparse_top_k"] or 0),
-            hybrid_alpha=self.defaults["hybrid_alpha"], reranker=None,
-            hybrid_fusion=fusion, rrf_k=rrf_k, text_search_config=tsc,
-        )
+        self.reranker = ctx.reranker
+        self.searcher = HybridSearcher(
+            ctx.get_vector_store(folder.id, folder.user_token), reranker=self.reranker)
+        self.settings = SearchSettings.from_config(top_k=k)
+
+    def modes(self) -> list:
+        return [m for m in MODES if m != "rerank" or self.reranker is not None]
 
     async def nodes(self, query: str, mode: str) -> list:
-        """[(node_id, text)] of this mode's top-k, best first."""
-        k = self.k
+        """[(node_id, text, parent_node_id_or_None)] of this mode's top-k, best first.
+
+        The third element is set only for a merged section (production with
+        auto-merge): it is the section's own node_id, which leaves name as their
+        ``parent_node_id``.
+        """
+        k, s, searcher = self.k, self.settings, self.searcher
         if mode == "vector":
-            got = await self.engine._aretrieve_mode(query, "default", k)
-            return [(n.node.node_id, n.node.text) for n in got[:k]]
-        if mode == "bm25":
-            got = await self.engine._aretrieve_mode(query, "sparse", k)
-            return [(n.node.node_id, n.node.text) for n in got[:k]]
-        if mode == "production":
+            got = (await searcher.dense(query, k))[:k]
+        elif mode == "bm25":
+            got = (await searcher.sparse(query, max(k, s.sparse_top_k or 0), s))[:k]
+        elif mode == "rrf":
+            got, _, _ = await searcher.candidates(query, s.with_overrides(fusion="rrf"), k=k)
+            got = got[:k]
+        elif mode == "rerank":
+            got = (await searcher.search(query, s.with_overrides(top_k=k))).nodes[:k]
+        elif mode == "production":
             d = self.defaults
             res = await self.adapter.query_rag(
                 query=query, folder_id=self.folder.id, token=self.folder.user_token,
                 top_k=k, similarity_cutoff=d["similarity_cutoff"], use_cache=False,
                 sparse_top_k=d["sparse_top_k"], hybrid_alpha=d["hybrid_alpha"])
-            return [(r.metadata.node_id, r.text) for r in res.results[:k]]
-        raise ValueError(f"unknown eval mode: {mode}")
+            return [(str(r.metadata.node_id), r.text,
+                     str(r.metadata.node_id) if r.metadata.node_role == "parent" else None)
+                    for r in res.results[:k]]
+        else:
+            raise ValueError(f"unknown eval mode: {mode}")
+        return [(n.node.node_id, n.node.text, None) for n in got]
 
 
-def _rank_in(node_ids: list, gold: str):
-    """1-based rank of gold among node_ids, or None."""
-    for i, nid in enumerate(node_ids):
-        if nid == gold:
+def _rank_in(hits: list, gold: str, gold_parent=None):
+    """1-based rank of gold among ``hits`` ([(node_id, text, section_id)]), or None.
+
+    A merged section (section_id set) is a hit when it is the gold leaf's parent.
+    """
+    for i, (nid, _, section) in enumerate(hits):
+        if nid == gold or (section is not None and gold_parent and section == gold_parent):
             return i + 1
     return None
 
@@ -247,6 +269,20 @@ def comparable_previous(history: list, rep: dict):
     return None
 
 
+def _gold_parents(folder, items: list) -> dict:
+    """gold node_id → its parent section's node_id (for matching merged results)."""
+    ids = [it["gold_node_id"] for it in items if it.get("gold_node_id")]
+    if not ids:
+        return {}
+    try:
+        rows = _query_vector_table(
+            folder, "SELECT node_id, metadata_->>'parent_node_id' FROM {table} "
+            "WHERE node_id = ANY(:ids)", {"ids": ids})
+    except Exception:  # noqa: BLE001 — without parents a merged hit just counts as a miss
+        return {}
+    return {r[0]: r[1] for r in rows if r[1]}
+
+
 def _answer_and_judge(client, model: str, query: str, contexts: list) -> dict:
     """Generate an answer from the retrieved contexts, then LLM-judge it (blocking).
 
@@ -258,7 +294,8 @@ def _answer_and_judge(client, model: str, query: str, contexts: list) -> dict:
     ctx = "\n\n".join(f"[{i+1}] {(t or '')[:1200]}" for i, t in enumerate(contexts))
     aprompt = (
         "Answer the question using ONLY the context below. Cite sources inline as "
-        "[n]. If the context lacks the answer, say so.\n\n"
+        "[n]. If the context lacks the answer, say so. Answer in the same language as "
+        "the question.\n\n"
         f"Context:\n{ctx}\n\nQuestion: {query}\n\nAnswer:")
     ar = client.chat.completions.create(
         model=model, messages=[{"role": "user", "content": aprompt}],
@@ -299,6 +336,8 @@ def _config_snapshot() -> dict:
             "rerank_enabled": bool(getattr(getattr(c, "rerank", None), "enabled", False)),
             "rerank_model": getattr(getattr(c, "rerank", None), "model", None),
             "fusion": getattr(ret, "hybrid_fusion", None),
+            "sparse_top_k": getattr(ret, "default_sparse_top_k", None),
+            "text_search_config": getattr(ret, "text_search_config", None),
             "contextual": bool(getattr(getattr(c, "contextual_retrieval", None), "enabled", False)),
         }
     except Exception:
@@ -392,7 +431,9 @@ async def evaluate(folder, items, k: int, progress=None, judge: bool = False) ->
     LLM-grades faithfulness + relevance (2 extra LLM calls/item — opt-in, slower).
     """
     retr = _Retrievers(folder, k)
-    modes = list(MODES)
+    modes = retr.modes()
+    gold_parents = await asyncio.get_event_loop().run_in_executor(
+        None, _gold_parents, folder, items)
 
     jclient = jmodel = None
     best_mode = BEST_MODE
@@ -415,7 +456,8 @@ async def evaluate(folder, items, k: int, progress=None, judge: bool = False) ->
             got = await retr.nodes(it["query"], m)
             if m == best_mode:
                 best_nodes = got
-            rank = _rank_in([nid for nid, _ in got], it["gold_node_id"])
+            gold = it["gold_node_id"]
+            rank = _rank_in(got, gold, gold_parents.get(gold))
             row["ranks"][m] = rank
             if rank is not None and rank <= k:
                 agg[m]["recall"] += 1
@@ -423,7 +465,7 @@ async def evaluate(folder, items, k: int, progress=None, judge: bool = False) ->
                 agg[m]["ndcg"] += 1.0 / math.log2(rank + 1)
         if judge:
             try:
-                contexts = [t for _, t in best_nodes[:6]]
+                contexts = [t for _, t, _ in best_nodes[:6]]
                 res = await loop.run_in_executor(
                     None, _answer_and_judge, jclient, jmodel, it["query"], contexts)
                 row["answer"] = res["answer"]

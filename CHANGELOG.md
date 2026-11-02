@@ -28,7 +28,30 @@ to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   committed.
 - Phone-width console: a menu button opens the sidebar (it was unreachable
   below 900px).
-
+- **Clickable answer citations** in the Search Playground; the non-streaming
+  answer now shows its kept / dropped / confidence line too.
+- **Knowledge gaps judged on relevance.** Query logs record the reranker's best
+  score (`QueryLogs.top_score`, Alembic migration `20261102a1b2c6`, which also
+  adopts the `QueryLogs` table into Alembic). Analytics lists a question as a gap
+  when its latest search per folder returned nothing or scored below
+  `rag.rerank.gap_threshold` (default 0.5); asking again after adding documents
+  clears it. New *Knowledge Gaps* KPI on the Analytics page.
+- **mxbai-rerank-v2 chat template.** `rag.rerank.auto_template` (default on)
+  wraps queries and documents in the model's official Qwen chat prompt when the
+  configured templates are the default or the old chat-less form. Scores become
+  calibrated, so `score_threshold: 0.5` filters for that model.
+- **Pluggable Chinese segmentation** — `rag.retrieval.segmenter: ckip | jieba |
+  bigram` (default `ckip`, editable live). One function serves indexing,
+  Rebuild FTS and queries; CKIP and jieba are imported only when selected
+  (`jieba` is an optional extra) and `bigram` needs no model at all. Each
+  folder's table records the segmenter that built its keyword index; the console
+  flags folders that need *Rebuild FTS* after a switch
+  (`GET /api/admin/manage/folders/{id}/fts`), and Rebuild FTS uses the
+  configured segmenter.
+- **REST auto-merge.** `POST /api/rag/query` applies the same auto-merge rule as
+  the MCP search tool; `auto_merge` (true / false / null = follow
+  `rag.retrieval.auto_merging.enabled`) overrides it per request. Merged results
+  carry `node_role: "parent"` and `merged_from`.
 - **Console login.** The `/admin` console now signs in with an MCP Gate access
   token for this service (`POST /api/console/session`). The token is verified
   offline once and exchanged for an HttpOnly, SameSite=Strict session cookie
@@ -41,11 +64,28 @@ to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   it Settings and System Health are read-only.
 
 ### Changed
-- **Evaluation scores the production query path.** Modes are now `vector`,
-  `bm25` and `production` (the same call as `/api/rag/query`, with live fusion,
-  rerank and thresholds); the `hybrid` mode, which always equalled `vector`, is
-  gone. Baseline deltas only compare runs on the same question set, k and
-  harness version. Generated questions follow the passage's language.
+- **Evaluation scores the production search path.** Modes are `vector`,
+  `bm25`, `rrf`, `rerank` (when a reranker is configured) and `production` — all
+  through the shared hybrid search; `production` is the same call as
+  `/api/rag/query` with the live fusion, rerank, thresholds and auto-merge (a
+  merged section counts as a hit when it contains the gold chunk). The `hybrid`
+  mode, which always equalled `vector`, is gone, and the old BM25 numbers skipped
+  segmentation. Baseline deltas only compare runs on the same question set, k and
+  harness version, so older runs are not compared with new ones. Generated
+  questions follow the passage's language.
+- **One retrieval path.** REST, the MCP search tool, the console Search
+  Playground and the evaluation harness now all retrieve through
+  `src/domain/rag/hybrid_search.py`. The MCP path used llama-index's native
+  hybrid mode on the raw query (no Chinese segmentation, no RRF), so agents got
+  almost no BM25 hits on Chinese questions.
+- **BM25 rewritten.** Keyword search runs its own SQL over leaf chunks only,
+  requires every query term first (AND) and falls back to any term (OR) to fill
+  up, drops question / function words, and runs concurrently with the vector
+  search. A BM25 failure now degrades to vector-only results instead of failing
+  the query.
+- `hybrid_fusion: concat` is now "dense hits, then BM25-only hits" (left for the
+  reranker to order) instead of llama-index's native hybrid, which behaved as
+  vector-only for Chinese. `hybrid_alpha` is deprecated and ignored.
 - MCP tool names are always client-safe (`[A-Za-z0-9_-]`, max 64): folder names
   with spaces, CJK or symbols become `Agentic_<ascii>_<hash>`. Tool
   descriptions are English.
@@ -56,7 +96,6 @@ to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - `logging.max_size` / `logging.backup_count` now rotate and prune log files.
 - `RuntimeSettings`, `SettingsAudit` and `QueryLogs` are created by Alembic.
 - Coverage gate set to the measured 91% (it was 95% but never enforced).
-
 - **The console is scoped to the signed-in token.** It shows and manages only
   the folders owned by the token's `jti` (the same ones REST / MCP callers with
   that token reach); folders it creates belong to it. The *Owner Token* field
@@ -85,7 +124,31 @@ to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   is immediate.
 - Thirteen stale unit tests (English messages, the `content_type` key, env
   expansion, a missing Big5 sample).
-
+- The REST query cache ignored fusion, `rrf_k`, the text-search config, the
+  segmenter, the reranker threshold / templates and the merge rule, and was not
+  cleared when retrieval, rerank or embedding settings changed at runtime —
+  results could be stale for up to 5 minutes. The key now covers every
+  result-affecting setting and such changes clear it.
+- **Console answers (CRAG), both JSON and streaming:** citations kept their
+  chunk's position among the *kept* chunks, so `[n]` pointed at the wrong result
+  card once a chunk was dropped — chunks now keep their result-card number and
+  are labelled with their source; citations of chunks the model was not given
+  are removed and `[1, 3]` becomes `[1][3]`; a grader reply that is not a list
+  of booleans (or `"false"` read as true) no longer yields `high` confidence but
+  `unverified`; answers follow the question's language; `【n】` markers and
+  Markdown bold are cleaned; an empty streamed answer gets an explanatory
+  message instead of a blank card.
+- MCP searches were not logged, so analytics and knowledge gaps ignored all
+  agent traffic.
+- When the reranker failed, queries returned all 3 × `top_k` candidates; they
+  now return `top_k` in retrieval order, and the degraded result is not cached.
+- Concurrent REST queries on one folder could run with each other's `top_k` /
+  cutoff: the cached per-folder engine was reconfigured per request. Settings
+  are now passed with each call.
+- Parent chunks crowded leaves out of BM25: they were filtered in Python after
+  the SQL `LIMIT`, so a query could get almost no keyword hits.
+- `rag.retrieval.default_sparse_top_k` (and the REST `sparse_top_k`) had no
+  effect; it now sets the BM25 depth.
 - Retrying a file's indexing checked folder ownership but not that the file was
   in that folder.
 - The chunk viewer no longer reads a file name from outside the folder.

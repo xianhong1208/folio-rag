@@ -1,5 +1,5 @@
 
-from sqlalchemy import create_engine, Column, Integer, String, DateTime, ForeignKey, Text, BigInteger, Index, Boolean
+from sqlalchemy import create_engine, Column, Integer, String, DateTime, ForeignKey, Text, BigInteger, Index, Boolean, Float
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.dialects.postgresql import UUID as PostgresUUID
 from sqlalchemy.orm import sessionmaker, declarative_base
@@ -194,6 +194,9 @@ class QueryLog(Base):
     latency_ms = Column(Integer, nullable=True)
     token_prefix = Column(String(64), nullable=True)  # masked prefix
     created_at = Column(DateTime(timezone=True), server_default=func.now())
+    # Best reranker score before the score threshold (None: no reranker / rerank failed).
+    # Knowledge-gap analytics compare it with rag.rerank.gap_threshold.
+    top_score = Column(Float, nullable=True)
 
     __table_args__ = (
         Index('idx_querylogs_folder', 'folder_id'),

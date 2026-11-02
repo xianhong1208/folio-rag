@@ -2,6 +2,18 @@ import { useEffect, useState, useRef } from 'react'
 import { get, post, stream } from '../services/api'
 import EmptyState from '../components/ui/EmptyState'
 import ChunkText, { ContentBadge } from '../components/ui/ChunkText'
+import { citationParts } from '../lib/citations'
+
+// Answer text with [n] citations linked to result card #n (numbers match the cards).
+function AnswerText({ text, citations, count }) {
+  const go = (e, n) => {
+    e.preventDefault()
+    document.getElementById('hit-' + n)?.scrollIntoView({ behavior: 'smooth', block: 'center' })
+  }
+  return citationParts(text, citations, count).map((p, i) => (p.t === 'cite'
+    ? <a key={i} href={'#hit-' + p.n} className="cite-link" onClick={(e) => go(e, p.n)}>[{p.n}]</a>
+    : <span key={i}>{p.v}</span>))
+}
 
 const COLORS = { vector: 'var(--cyber)', bm25: 'var(--signal)', hybrid: 'var(--matrix)', rerank: 'var(--cyber-deep)' }
 
@@ -95,7 +107,10 @@ export default function SearchPage() {
           if (ev.type === 'sources') setRes((r) => ({ ...r, hits: ev.results || [], total: ev.total }))
           else if (ev.type === 'meta') setRes((r) => ({ ...r, meta: ev }))
           else if (ev.type === 'token') setRes((r) => ({ ...r, answer: (r.answer || '') + ev.text }))
-          else if (ev.type === 'done') setRes((r) => ({ ...r, answer: ev.answer ?? r.answer, streaming: false }))
+          else if (ev.type === 'done') setRes((r) => ({
+            ...r, answer: ev.answer ?? r.answer, citations: ev.citations, streaming: false,
+            meta: r.meta ? { ...r.meta, ...(ev.confidence ? { confidence: ev.confidence } : {}) } : r.meta,
+          }))
           else if (ev.type === 'error') setRes((r) => ({ ...r, err: ev.error, streaming: false }))
         }, ac.signal)
       } catch (e) { if (!ac.signal.aborted) setRes({ err: e.message }) }
@@ -105,7 +120,10 @@ export default function SearchPage() {
 
     try {
       const r = await post(`/api/admin/manage/folders/${fid}/query`, { query, answer, trace })
-      if (!ac.signal.aborted) setRes({ hits: r.data.results || [], trace: r.data.trace, answer: r.data.answer, total: r.data.total_results })
+      if (!ac.signal.aborted) {
+        const gate = r.data.rag_gate
+        setRes({ hits: r.data.results || [], trace: r.data.trace, answer: r.data.answer, total: r.data.total_results, meta: gate, citations: gate?.citations })
+      }
     } catch (e) { if (!ac.signal.aborted) setRes({ err: e.message }) }
     if (!ac.signal.aborted) setRunning(false)
   }
@@ -129,7 +147,7 @@ export default function SearchPage() {
       <div className="sp-opts">
         <label className="sp-check"><input type="checkbox" checked={answer} onChange={(e) => setAnswer(e.target.checked)} /> generate answer (RAG)</label>
         <label className="sp-check"><input type="checkbox" checked={trace} onChange={(e) => setTrace(e.target.checked)} /> retrieval trace</label>
-        <span className="sp-sig">vector · BM25/CKIP · rerank · auto-merge</span>
+        <span className="sp-sig">vector · BM25 · rerank · auto-merge</span>
       </div>
 
       {(res?.answer || res?.streaming) && (
@@ -138,13 +156,14 @@ export default function SearchPage() {
             ANSWER
             {res.streaming && <span style={{ marginLeft: 8, color: 'var(--cyber)' }}>streaming…</span>}
             {res.meta && !res.streaming && (res.meta.kept != null) && (
-              <span style={{ marginLeft: 8, color: 'var(--ink-subtle)', fontWeight: 400 }}>
+              <span style={{ marginLeft: 8, color: res.meta.confidence === 'unverified' ? 'var(--signal)' : 'var(--ink-subtle)', fontWeight: 400 }}
+                title={res.meta.confidence === 'unverified' ? 'Relevance grading failed — the answer used every retrieved chunk unchecked' : undefined}>
                 {res.meta.kept} kept · {res.meta.dropped} dropped · {res.meta.confidence}
               </span>
             )}
           </div>
           <div className="a-text">
-            {res.answer || (res.streaming ? '' : null)}
+            {res.streaming ? res.answer : <AnswerText text={res.answer} citations={res.citations} count={res.hits?.length} />}
             {res.streaming && <span style={{ animation: 'blink 1s step-end infinite', color: 'var(--cyber)' }}>▋</span>}
           </div>
         </div>
@@ -155,7 +174,7 @@ export default function SearchPage() {
             : (res.hits?.length === 0 && !res.streaming) ? <EmptyState t="No matches" d="Try lowering similarity or rephrasing" />
               : res.trace ? <TraceResults trace={res.trace} />
                 : res.hits.map((h, i) => (
-                  <div className="chunk-row" key={i}>
+                  <div className="chunk-row" key={i} id={'hit-' + (i + 1)}>
                     <div className="c-head">
                       <span className="c-idx">#{i + 1}</span><Meta md={h.metadata || {}} />
                       <span className="c-meta" style={{ marginLeft: 'auto' }}>score {h.score != null ? h.score.toFixed(3) : '—'}</span>

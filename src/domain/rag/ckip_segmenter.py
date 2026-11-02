@@ -42,6 +42,8 @@ class CkipSegmenter:
     this module (and constructing the object) stays cheap and never fails.
     """
 
+    name = "ckip"
+
     def __init__(self, model: str = _DEFAULT_MODEL):
         self._model_name = model
         self._ws = None  # the underlying CkipWordSegmenter (lazy)

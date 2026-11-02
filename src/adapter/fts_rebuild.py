@@ -7,7 +7,7 @@ progress (files done / total), heartbeat between files, and stop between files w
 the job is cancelled. Each per-file call is the scoped variant the indexer already
 uses after adding a file, so the stored result is identical to a whole-table rebuild.
 
-Blocking (sync SQLAlchemy + CKIP inference): run it in a worker thread.
+Blocking (sync SQLAlchemy + segmentation, e.g. CKIP inference): run it in a worker thread.
 """
 
 from __future__ import annotations
@@ -45,24 +45,31 @@ def rebuild_fts_by_file(
     progress: Callable[..., None],
     should_stop: Callable[[], bool],
     rebuild_one: Optional[Callable[..., int]] = None,
+    stamp: Optional[Callable[..., None]] = None,
 ) -> Dict[str, object]:
     """Re-segment every file's chunks, one file at a time.
 
     Args:
         engine: sync SQLAlchemy engine.
         table_name: the folder's physical vector table.
-        segmenter: CKIP segmenter (``segment_batch``).
+        segmenter: the configured FTS segmenter (``text_segmenter.get_segmenter()``:
+            CKIP, jieba or bigram — anything with ``segment_batch`` and ``name``).
         progress: ``progress(done, total, label=None)`` — called before the first file
             and after each one.
         should_stop: polled before each file; True stops the rebuild early (cancel).
         rebuild_one: the per-file rebuild (defaults to
             ``vector_store_manager.rebuild_text_search_tsv``); injectable for tests.
+        stamp: records the segmenter on the table once every file is done
+            (defaults to ``vector_store_manager.stamp_tsv_segmenter``). A stopped
+            rebuild leaves the old stamp, so the folder stays flagged for rebuild.
 
     Returns:
         ``{"files", "files_done", "rows_updated", "stopped", "message"}``.
     """
     if rebuild_one is None:
         from src.domain.rag.vector_store_manager import rebuild_text_search_tsv as rebuild_one
+    if stamp is None:
+        from src.domain.rag.vector_store_manager import stamp_tsv_segmenter as stamp
 
     file_ids = list_chunk_file_ids(engine, table_name)
     total = len(file_ids)
@@ -77,6 +84,9 @@ def rebuild_fts_by_file(
         rows += rebuild_one(engine, table_name, segmenter, file_id=fid) or 0
         done += 1
         progress(done, total, fid)
+
+    if not stopped:
+        stamp(engine, table_name, getattr(segmenter, "name", None))
 
     if stopped:
         message = f"Stopped after {done}/{total} file(s); {rows} chunk(s) rebuilt"

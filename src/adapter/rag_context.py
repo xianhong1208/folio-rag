@@ -136,7 +136,8 @@ class RAGContext:
                 rerank_config = getattr(rag_config, "rerank", None)
                 if rerank_config and rerank_config.enabled:
                     from src.domain.rag.reranker import Reranker
-                    reranker = Reranker.from_config(rerank_config)
+                    from src.domain.rag.rerank_policy import resolve_rerank_config
+                    reranker = Reranker.from_config(resolve_rerank_config(rerank_config))
                     if reranker:
                         logger.info("[INIT] Reranker initialized")
         except Exception as e:
@@ -322,6 +323,15 @@ class RAGContext:
             self._rebuild_indexer(rag_config, embed_model=getattr(self.indexer, "_embed_model", None))
         if "rag.embedding" in groups:
             self._rebind_embedding(rag_config)
+        # Cached query results were computed with the old settings.
+        if any(g in groups for g in ("rag.retrieval", "rag.rerank", "rag.embedding")):
+            self.clear_query_cache()
+
+    def clear_query_cache(self) -> None:
+        """Drop every cached REST query result (all folders)."""
+        from src.infrastructure.cache.cache_service import CacheService
+        CacheService.get_instance().clear_pattern("query:*")
+        logger.info("[RUNTIME] query result cache cleared")
 
     def _rebind_retrieval(self, rag_config) -> None:
         """Rebind the retrieval scalars frozen on the context (the rest are read
@@ -344,7 +354,8 @@ class RAGContext:
         new_reranker = None
         if rerank_config and rerank_config.enabled:
             from src.domain.rag.reranker import Reranker
-            new_reranker = Reranker.from_config(rerank_config)
+            from src.domain.rag.rerank_policy import resolve_rerank_config
+            new_reranker = Reranker.from_config(resolve_rerank_config(rerank_config))
         self.reranker = new_reranker
         self.invalidate_all_query_engines()
         logger.info(f"[RUNTIME] reranker rebound: {'on' if new_reranker else 'off'}")

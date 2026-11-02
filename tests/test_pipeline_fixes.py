@@ -40,17 +40,17 @@ class TestM4EmptyDocumentFails:
 
 class TestH1LeafFilterInRestQuery:
     async def test_parent_nodes_filtered_out(self):
+        from src.domain.rag.hybrid_search import HybridSearcher, SearchSettings
         from src.domain.rag.query_engine import QueryEngine
-        with patch("src.domain.rag.query_engine.VectorStoreIndex") as VSI:
-            VSI.from_vector_store.return_value = MagicMock()
-            qe = QueryEngine(vector_store=MagicMock(), similarity_cutoff=0.0)
+        searcher = HybridSearcher(MagicMock(), index=MagicMock())
+        qe = QueryEngine(vector_store=MagicMock(), searcher=searcher)
 
         def node(role, text, nid):
             n = MagicMock()
-            n.node.metadata = {"node_role": role} if role else {}
-            n.metadata = {"file_id": "f", "file_name": "x", "folder_name": None}
+            n.node.metadata = {"file_id": "f", "file_name": "x", "folder_name": None,
+                               **({"node_role": role} if role else {})}
             n.node.node_id = nid  # unique id per node (RRF dedupes by node_id)
-            n.text = text; n.score = 0.9
+            n.node.text = text; n.score = 0.9
             return n
 
         # Each aretrieve call returns a fresh set of hits (the RRF path retrieves dense+sparse separately)
@@ -58,9 +58,10 @@ class TestH1LeafFilterInRestQuery:
             return [node("leaf", "L1", "00000000-0000-0000-0000-000000000001"),
                     node("parent", "P-superset", "00000000-0000-0000-0000-000000000002"),
                     node(None, "legacy", "00000000-0000-0000-0000-000000000003")]
-        with patch("src.domain.rag.query_engine.VectorIndexRetriever") as R:
+        searcher.sparse = AsyncMock(return_value=[])  # BM25 leaf filtering is in SQL
+        with patch("llama_index.core.retrievers.VectorIndexRetriever") as R:
             R.return_value.aretrieve = AsyncMock(side_effect=lambda *a, **k: _hits())
-            results = await qe.aquery("q")
+            results = await qe.aquery("q", SearchSettings(top_k=5))
         texts = [r.text for r in results]
         assert "P-superset" not in texts          # parent filtered out
         assert "L1" in texts and "legacy" in texts  # legacy has no node_role, treated as a leaf

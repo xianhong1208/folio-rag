@@ -51,6 +51,7 @@ describe('modeLabel', () => {
   it('uses the report labels, then built-ins, then the raw key', () => {
     expect(modeLabel({ mode_labels: { bm25: 'BM25!' } }, 'bm25')).toBe('BM25!')
     expect(modeLabel(null, 'vector')).toBe('Vector only (dense embeddings)')
-    expect(modeLabel({}, 'rrf')).toBe('rrf')
+    expect(modeLabel({}, 'rrf')).toBe('Hybrid (dense + BM25, RRF fusion, no rerank)')
+    expect(modeLabel({}, 'hybrid')).toBe('hybrid')
   })
 })

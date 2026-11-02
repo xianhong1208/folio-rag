@@ -8,7 +8,8 @@ const pct = (x) => (x == null ? '—' : (x * 100).toFixed(1) + '%')
 
 // nDCG@k of what users actually get, per run, for the trend line: the "production"
 // mode (same call as /api/rag/query). Runs from before that mode existed fall back to
-// their closest equivalent (rerank, then rrf).
+// their closest equivalent (rerank, then rrf). "hybrid" (llama-index concat, which
+// always equalled vector) is never a headline.
 export const headlineNdcg = (summary, k) => {
   if (!summary) return null
   for (const m of ['production', 'rerank', 'rrf']) {
@@ -21,6 +22,8 @@ export const headlineNdcg = (summary, k) => {
 const MODE_LABELS = {
   vector: 'Vector only (dense embeddings)',
   bm25: 'Keyword only (BM25)',
+  rrf: 'Hybrid (dense + BM25, RRF fusion, no rerank)',
+  rerank: 'Hybrid + rerank (leaves only)',
   production: 'Production (/api/rag/query)',
 }
 export const modeLabel = (report, m) =>
@@ -127,7 +130,7 @@ export default function EvalPage() {
       <div className="card">
         <div className="card-head">
           <div className="icon"><FlaskConical size={16} /></div>
-          <div><h2>Retrieval Evaluation</h2><div className="desc">Auto-generates questions from your chunks, then scores the production pipeline against vector-only and keyword-only retrieval — Recall@k · MRR · nDCG@k</div></div>
+          <div><h2>Retrieval Evaluation</h2><div className="desc">Auto-generates questions from your chunks, then scores the production pipeline against vector, BM25, RRF and rerank through the shared search path — Recall@k · MRR · nDCG@k</div></div>
           <div className="grow" />
           <select value={fid} onChange={(e) => setFid(e.target.value)} style={selStyle}>
             {folders.length ? folders.map((f) => <option key={f.id} value={f.id}>{f.name} ({f.indexed_files} files)</option>) : <option value="">No indexed folders</option>}

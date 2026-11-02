@@ -25,10 +25,84 @@ _TSV_COLUMN = "text_search_tsv"
 _TSV_REBUILD_BATCH = 256
 
 
+# The segmenter that built a table's tsvector is recorded as a comment on the
+# column ("segmenter=<name>"). A table without one predates the stamp and was
+# built by CKIP, the only segmenter that existed then.
+_STAMP_PREFIX = "segmenter="
+LEGACY_SEGMENTER = "ckip"
+
+
+def _regclass(table_name: str) -> str:
+    return '"' + table_name.replace('"', '""') + '"'
+
+
+def read_tsv_segmenter(conn, table_name: str) -> Optional[str]:
+    """The segmenter stamped on the table's tsvector column, or None if unstamped."""
+    row = conn.execute(text(
+        "SELECT col_description(a.attrelid, a.attnum) FROM pg_attribute a "
+        "WHERE a.attrelid = to_regclass(:t) AND a.attname = :col"),
+        {"t": _regclass(table_name), "col": _TSV_COLUMN}).first()
+    comment = (row[0] if row else None) or ""
+    return comment[len(_STAMP_PREFIX):] if comment.startswith(_STAMP_PREFIX) else None
+
+
+def _write_tsv_segmenter(conn, table_name: str, name: str) -> None:
+    # COMMENT does not take bind parameters; name is one of SEGMENTERS.
+    safe = "".join(ch for ch in name if ch.isalnum() or ch in "-_")
+    conn.execute(text(
+        f'COMMENT ON COLUMN "{table_name}".{_TSV_COLUMN} IS \'{_STAMP_PREFIX}{safe}\''))
+
+
+def stamp_tsv_segmenter(engine, table_name: str, name: str) -> None:
+    """Record ``name`` as the segmenter that built the whole table's tsvector.
+
+    Used by the per-file Rebuild-FTS job once every file has been re-segmented
+    (a per-file ``rebuild_text_search_tsv`` call never stamps a table that still
+    holds rows from other files). No-op for a table that does not exist.
+    """
+    if not name:
+        return
+    with engine.connect() as conn:
+        exists = conn.execute(text("SELECT to_regclass(:t) IS NOT NULL"),
+                              {"t": _regclass(table_name)}).scalar()
+        if not exists:
+            return
+        _write_tsv_segmenter(conn, table_name, name)
+        conn.commit()
+
+
+def fts_status(engine, table_name: str, configured: str) -> dict:
+    """Which segmenter built the folder's keyword index vs the configured one.
+
+    ``needs_rebuild`` is True when they differ: queries are segmented with the
+    configured segmenter, so a stale index loses keyword recall until Rebuild FTS.
+    A table that does not exist yet (never indexed) needs nothing.
+    """
+    with engine.connect() as conn:
+        exists = conn.execute(text("SELECT to_regclass(:t) IS NOT NULL"),
+                              {"t": _regclass(table_name)}).scalar()
+        if not exists:
+            return {"indexed_with": None, "configured": configured, "needs_rebuild": False}
+        stamp = read_tsv_segmenter(conn, table_name)
+        if stamp is None:
+            has_rows = conn.execute(text(
+                f'SELECT EXISTS (SELECT 1 FROM "{table_name}" WHERE {_TSV_COLUMN} IS NOT NULL)'
+            )).scalar()
+            stamp = LEGACY_SEGMENTER if has_rows else None
+    return {"indexed_with": stamp, "configured": configured,
+            "needs_rebuild": stamp is not None and stamp != configured}
+
+
 def rebuild_text_search_tsv(
     engine, table_name: str, segmenter, file_id: Optional[str] = None
 ) -> int:
-    """Recompute a PGVector table's `text_search_tsv` from CKIP-segmented text.
+    """Recompute a PGVector table's `text_search_tsv` from Python-segmented text.
+
+    ``segmenter`` is the configured FTS segmenter (``text_segmenter.get_segmenter()``:
+    CKIP, jieba or bigram). A whole-table rebuild stamps the table with its name;
+    a per-file rebuild stamps only a table that has no other indexed rows yet
+    (a new folder), so a folder with older rows from another segmenter stays
+    flagged for Rebuild FTS.
 
     llama-index's native `to_tsvector('simple', text)` cannot segment space-less
     Chinese, so we overwrite the column with CKIP-segmented tokens. The displayed
@@ -63,13 +137,25 @@ def rebuild_text_search_tsv(
         f'UPDATE "{table_name}" '
         f"SET {_TSV_COLUMN} = to_tsvector('simple', :seg) WHERE id = :id"
     )
+    name = getattr(segmenter, "name", None)
     with engine.connect() as conn:
         # Detach the generated expression once so the column becomes UPDATEable.
         conn.execute(detach_sql)
         conn.commit()
+        if name and file_id and read_tsv_segmenter(conn, table_name) is None:
+            others = conn.execute(text(
+                f'SELECT EXISTS (SELECT 1 FROM "{table_name}" '
+                f"WHERE metadata_->>'file_id' IS DISTINCT FROM :fid "
+                f"AND {_TSV_COLUMN} IS NOT NULL)"), {"fid": str(file_id)}).scalar()
+            if not others:
+                _write_tsv_segmenter(conn, table_name, name)
+                conn.commit()
         rows = conn.execute(
             select_sql, {"fid": str(file_id)} if file_id else {}
         ).fetchall()
+        if name and not file_id:
+            _write_tsv_segmenter(conn, table_name, name)
+            conn.commit()
         if not rows:
             return 0
         for start in range(0, len(rows), _TSV_REBUILD_BATCH):
@@ -84,7 +170,7 @@ def rebuild_text_search_tsv(
             conn.commit()
             updated += len(params)
     logger.info(
-        f"Rebuilt {_TSV_COLUMN} from CKIP tokens for {updated} row(s) "
+        f"Rebuilt {_TSV_COLUMN} from {name or 'segmented'} tokens for {updated} row(s) "
         f"in {table_name}"
     )
     return updated
