@@ -427,18 +427,21 @@ def test_config_path_outside_allowed_dirs_rejected(tmp_path):
 
 
 def test_asr_config_defaults():
-    """AsrConfig minimal field set: enabled + provider + the three cloud fields, nothing else (TC-config-16)
+    """AsrConfig minimal field set: enabled + provider + the cloud fields, nothing else (TC-config-16)
 
     Deliberately lean: every config field is a permanent maintenance surface;
     trimming/filtering is always on in code, and FireRedASR-specific fields are
-    added only when ref is implemented."""
+    added only when ref is implemented. The cloud profile added the four fields
+    chunked cloud transcription needs (language hint, segment length, timeout, retries)."""
     from src.config.model import AsrConfig
     cfg = AsrConfig()
     assert cfg.enabled is True
     assert cfg.provider == "docling-whisper"
     assert cfg.base_url is None and cfg.api_key is None and cfg.model is None
     # Guard the lean set: the removed fields must not quietly grow back
-    assert set(AsrConfig.model_fields) == {"enabled", "provider", "base_url", "api_key", "model"}
+    assert set(AsrConfig.model_fields) == {
+        "enabled", "provider", "base_url", "api_key", "model",
+        "language", "segment_seconds", "timeout", "max_retries"}
 
 
 _RAG_REQUIRED = dict(

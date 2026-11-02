@@ -65,6 +65,9 @@ class Config:
     _config_model: Optional[ConfigModel] = None
     _module_configs: Dict[str, ModuleConfig] = {}  # Safe module-config storage (dict avoids setattr injection)
     _config_path: Optional[str] = None  # Original yaml path (used by runtime settings reset to read factory values)
+    # Dotted path -> env-var name for values written as ${VAR} in the yaml (pre-expansion).
+    # Lets the profile check tell an env-sourced API key from a literal one.
+    _env_refs: Dict[str, str] = {}
     
     @classmethod
     def _validate_config_path(cls, config_path: str) -> Path:
@@ -134,6 +137,7 @@ class Config:
             config_data['modules'] = {'enabled': enabled_modules}
 
             cls._config_model = ConfigModel(**config_data)
+            cls._check_profile(cls._config_model)
 
             # Store module configs in a safe dict instead of using setattr;
             # dict access doesn't touch object internals and is therefore safe.
@@ -160,6 +164,27 @@ class Config:
             cls._config_model = None
     
     @classmethod
+    def _check_profile(cls, config_model: ConfigModel) -> None:
+        """Validate rag.profile (src/config/profile.py). Errors raise (-> the model is not
+        loaded and main.py refuses to start); warnings are logged once."""
+        rag = getattr(config_model, "rag", None)
+        if rag is None:
+            return
+        from src.config.profile import check_profile
+        report = check_profile(rag, refs=cls._env_refs)
+        for w in report.warnings:
+            logger.warning(f"[PROFILE] {w}")
+        if report.errors:
+            raise ValueError(
+                f"rag.profile '{rag.profile}' validation failed:\n  - "
+                + "\n  - ".join(report.errors))
+
+    @classmethod
+    def get_env_refs(cls) -> Dict[str, str]:
+        """Dotted path -> env-var name for config values written as ${VAR} references."""
+        return dict(cls._env_refs)
+
+    @classmethod
     def _load_config(cls, config_path: str):
         """Load the config file.
 
@@ -175,7 +200,10 @@ class Config:
         try:
             if config_file_path.exists():
                 with open(config_file_path, 'r', encoding='utf-8') as file:
-                    cls._config = expand_env_vars(yaml.safe_load(file) or {})
+                    raw = yaml.safe_load(file) or {}
+                from src.config.profile import env_refs
+                cls._env_refs = env_refs(raw)
+                cls._config = expand_env_vars(raw)
             else:
                 raise FileNotFoundError(f"Config file not found: {config_path}")
                 
