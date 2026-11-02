@@ -246,7 +246,7 @@ class FileIndexStatusResponse(BaseModel):
 
     file_id: str = Field(..., description="File ID")
     file_name: str = Field(..., description="File name")
-    status: str = Field(..., description="indexed / indexing / queued / failed / not_indexed")
+    status: str = Field(..., description="indexed / indexing / queued / failed / interrupted / cancelled / not_indexed")
     num_chunks: Optional[int] = Field(None, description="Chunk count (when indexed)")
     indexed_at: Optional[str] = Field(None, description="ISO timestamp when last indexed")
     job_id: Optional[str] = Field(None, description="Active job id (when indexing/queued)")

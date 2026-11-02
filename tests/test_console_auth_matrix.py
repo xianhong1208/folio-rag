@@ -93,7 +93,7 @@ def _admin_routes():
 
 def test_route_inventory_is_complete():
     # If this changes, extend the matrix below (and the report table) for the new route.
-    assert len(_admin_routes()) == 30
+    assert len(_admin_routes()) == 33
 
 
 @pytest.mark.parametrize("method, path", _admin_routes())
@@ -120,8 +120,11 @@ PER_FOLDER = [
     ("DELETE", "/api/admin/manage/folders/{f}/files/" + FID, None, "src.api.router.file_api.delete_file"),
     ("POST", "/api/admin/manage/folders/{f}/index", {"skip_existing": True}, "src.api.router.rag_indexing.index_folder_endpoint"),
     ("POST", "/api/admin/manage/folders/{f}/index", {"skip_existing": False}, "src.api.router.rag_indexing.reindex_folder_endpoint"),
-    ("POST", "/api/admin/manage/folders/{f}/rebuild-fts", {}, "src.domain.rag.vector_store_manager.rebuild_text_search_tsv"),
+    ("POST", "/api/admin/manage/folders/{f}/rebuild-fts", {}, "src.adapter.fts_rebuild.rebuild_fts_by_file"),
     ("POST", "/api/admin/manage/folders/{f}/files/" + FID + "/retry", {}, "src.adapter.rag.get_rag_adapter"),
+    ("POST", "/api/admin/manage/folders/{f}/retry", {"file_ids": [FID]}, "src.adapter.rag.get_rag_adapter"),
+    ("POST", "/api/admin/manage/folders/{f}/files/" + FID + "/cancel", None, "db.filedb.FileDB.get"),
+    ("GET", "/api/admin/manage/folders/{f}/jobs/j1", None, "db.indexjobdb.IndexJobDB.get_by_id"),
     ("POST", "/api/admin/manage/folders/{f}/query", {"query": "hello"}, "src.api.router.rag_query.query_rag"),
     ("POST", "/api/admin/manage/folders/{f}/query/stream", {"query": "hello"}, "src.api.router.rag_query.query_rag"),
     ("POST", "/api/admin/manage/folders/{f}/jobs/j1/cancel", None, "src.api.router.rag_indexing.cancel_index_job"),

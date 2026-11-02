@@ -870,12 +870,15 @@ class RAGIndexingService:
         chunk_size: Optional[int] = None,
         chunk_overlap: Optional[int] = None,
         progress_tracker: Optional["IndexProgressTracker"] = None,
+        force: bool = False,
     ) -> IndexFolderResponse:
         """Index a specified subset of file_ids (for auto-index after upload).
 
         Like index_folder but only processes the files in file_ids, and does not skip
         already-indexed files, because the caller wants to redo or complete the files
-        just uploaded. Returns an IndexFolderResponse with per-file detail and stats.
+        just uploaded. ``force`` is forwarded to index_document (bypasses the unchanged
+        content_hash short-circuit; the console's Retry / Reindex uses it). Returns an
+        IndexFolderResponse with per-file detail and stats.
         """
         ctx = self._ctx
 
@@ -938,6 +941,7 @@ class RAGIndexingService:
                             chunk_size=chunk_size,
                             chunk_overlap=chunk_overlap,
                             folder_id_override=folder_id,
+                            force=force,
                             _timings_out=stage_timings,
                             _progress_cb=(
                                 progress_tracker.on_chunk_progress

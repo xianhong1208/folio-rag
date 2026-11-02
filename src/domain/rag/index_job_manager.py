@@ -34,6 +34,8 @@ class JobStatus(str, Enum):
     PARTIAL_SUCCESS = "partial_success"   # some files indexed, some failed
     FAILED = "failed"
     CANCELLED = "cancelled"
+    # The server stopped while the job was pending/running; set at the next startup.
+    INTERRUPTED = "interrupted"
 
 
 # Terminal statuses that release the per-folder lock and allow cleanup
@@ -42,7 +44,30 @@ _TERMINAL_STATUSES = {
     JobStatus.PARTIAL_SUCCESS,
     JobStatus.FAILED,
     JobStatus.CANCELLED,
+    JobStatus.INTERRUPTED,
 }
+
+# Job kinds. "index" jobs parse/embed files; maintenance kinds (e.g. a full-text
+# search rebuild) reuse the same lock, progress, cancel and persistence machinery.
+JOB_KIND_INDEX = "index"
+JOB_KIND_REBUILD_FTS = "rebuild_fts"
+
+# Message written on jobs and files that were in flight when the server stopped.
+INTERRUPTED_MESSAGE = "Interrupted by server restart — use Retry"
+# Message written on a file the user cancelled while its job kept running.
+FILE_CANCELLED_MESSAGE = "Cancelled by user"
+
+# Updates that only move the live progress display. They still reach SSE
+# subscribers immediately, but the DB projection is rewritten at most once per
+# _PERSIST_MIN_INTERVAL seconds: every row write carries the whole file_timings
+# JSON, so persisting each embedding batch made writes grow with job size.
+_PROGRESS_ONLY_KEYS = frozenset({
+    "current_file_stage",
+    "current_file_chunks_done",
+    "current_file_chunks_total",
+    "current_file_eta_seconds",
+    "eta_seconds",
+})
 
 
 @dataclass
@@ -63,6 +88,7 @@ class _PendingFileBatch:
     token: str
     chunk_size: Optional[int]
     chunk_overlap: Optional[int]
+    force: bool = False
 
 
 @dataclass
@@ -104,6 +130,8 @@ class IndexJobState:
     #   − elapsed on the current file (None before the first file completes).
     current_file_eta_seconds: Optional[int] = None
     eta_seconds: Optional[int] = None
+    # JOB_KIND_INDEX or a maintenance kind such as JOB_KIND_REBUILD_FTS
+    kind: str = JOB_KIND_INDEX
 
     def to_dict(self) -> Dict[str, Any]:
         """Return a serialisable copy of the job state."""
@@ -208,6 +236,7 @@ class IndexProgressTracker:
             snapshot = state.to_dict()
         # file_timings is a write-heavy field; persist outside the lock
         self._manager._persist(snapshot)
+        self._manager._settle_cancelled_file(self._job_id, state.folder_id, entry)
 
     def mark_completed(self, summary: Dict[str, Any]):
         # Terminal status: all succeeded → SUCCEEDED; some failed → PARTIAL_SUCCESS; 0 succeeded with ≥1 failed → FAILED
@@ -323,6 +352,12 @@ class IndexingJobManager:
         # Per-job SSE event subscribers. Each value is the list of live
         # asyncio.Queue subscribers waiting for state updates of that job.
         self._subscribers: Dict[str, List[asyncio.Queue]] = {}
+        # Files the user cancelled inside a still-running multi-file job: {file_id: job_id}.
+        # When the file's outcome is recorded, a non-success result is rewritten as
+        # "cancelled" (the abort probe surfaces as a generic failure otherwise).
+        self._cancelled_files: Dict[str, str] = {}
+        # Monotonic time of the last DB write per job (progress-write throttle).
+        self._last_persist: Dict[str, float] = {}
         # ensure the IndexJobs table exists; persistence is best-effort
         # (a DB failure here does not break the in-memory manager).
         try:
@@ -454,11 +489,12 @@ class IndexingJobManager:
         token: str,
         chunk_size: Optional[int],
         chunk_overlap: Optional[int],
+        force: bool = False,
     ) -> Dict[str, Any]:
         """Schedule indexing of specific files in the background.
 
-        Used for auto-indexing on file upload. Only indexes the specified files,
-        not the entire folder.
+        Used for auto-indexing on file upload and for the console's Retry. Only
+        indexes the specified files, not the entire folder.
 
         Args:
             adapter: RAGAdapter instance
@@ -467,6 +503,7 @@ class IndexingJobManager:
             token: User token
             chunk_size: Chunk size (None = use default)
             chunk_overlap: Chunk overlap (None = use default)
+            force: Bypass the unchanged-content_hash short-circuit (Retry / Reindex).
 
         Returns:
             Job state dictionary
@@ -475,6 +512,9 @@ class IndexingJobManager:
         state = IndexJobState(job_id=job_id, folder_id=folder_id, skip_existing=False)
         # Record planned scope so the per-file status endpoint can detect "queued"
         state.scope_file_ids = [str(fid) for fid in file_ids]
+        # A stale per-file abort flag (from an earlier single-file cancel whose job
+        # ended before reaching the file) must not abort this new run.
+        self._clear_file_flags(state.scope_file_ids)
 
         # folder lock applies to file-scoped jobs too — but unlike start_indexing
         # (which rejects), we queue the batch and let it drain after the current
@@ -497,6 +537,7 @@ class IndexingJobManager:
                         token=token,
                         chunk_size=chunk_size,
                         chunk_overlap=chunk_overlap,
+                        force=force,
                     )
                 )
                 pending_total = sum(
@@ -523,6 +564,7 @@ class IndexingJobManager:
             file_ids=[str(fid) for fid in file_ids],
             folder_id=folder_id, token=token,
             chunk_size=chunk_size, chunk_overlap=chunk_overlap,
+            force=force,
         )
         return state.to_dict()
 
@@ -536,6 +578,7 @@ class IndexingJobManager:
         token: str,
         chunk_size: Optional[int],
         chunk_overlap: Optional[int],
+        force: bool = False,
     ) -> None:
         """Launch a file-scoped job (the caller must have already assigned the folder lock to it).
 
@@ -555,6 +598,9 @@ class IndexingJobManager:
         tracker = IndexProgressTracker(self, job_id)
         job_timeout = self._resolve_job_timeout()
 
+        # force is only forwarded when set, so adapters without the parameter keep working.
+        extra = {"force": True} if force else {}
+
         async def _run_files():
             try:
                 core = adapter.index_files(
@@ -564,6 +610,7 @@ class IndexingJobManager:
                     chunk_size=chunk_size,
                     chunk_overlap=chunk_overlap,
                     progress_tracker=tracker,
+                    **extra,
                 )
                 # job-level hard timeout. <=0 disables the cap.
                 if job_timeout and job_timeout > 0:
@@ -615,6 +662,11 @@ class IndexingJobManager:
         with self._lock:
             self._task_handles.pop(job_id, None)
             self._progress_track.pop(job_id, None)
+            self._last_persist.pop(job_id, None)
+            # Cancel requests aimed at files this job never reached die with the job.
+            for fid in [f for f, j in self._cancelled_files.items() if j == job_id]:
+                self._cancelled_files.pop(fid, None)
+                self._file_abort_flags.pop(fid, None)
             # Ownership guard: only the job that actually holds the folder lock may release it,
             # drain the queue, and hand the lock to the next job. After the watchdog force-reclaims,
             # the original wedged task may wake up later and re-enter here via its finally — it is no
@@ -665,6 +717,7 @@ class IndexingJobManager:
                     folder_id=folder_id, token=next_batch.token,
                     chunk_size=next_batch.chunk_size,
                     chunk_overlap=next_batch.chunk_overlap,
+                    force=next_batch.force,
                 )
             except RuntimeError:
                 # No running loop (e.g. cleanup ran from a non-async context).
@@ -710,22 +763,39 @@ class IndexingJobManager:
             return jobs
 
     def active_file_stages(self) -> Dict[str, Dict[str, Any]]:
-        """Return {file_id: {folder_id, stage, done, total, eta}} — which stage each currently-indexing file is in.
+        """Return {file_id: {folder_id, stage, done, total, eta, job_id}} for files with live work.
 
-        Used by the admin file list to show "parsing / contextualizing / embedding / writing" live.
-        Only includes the current file of RUNNING jobs; in-memory, not persisted.
+        Used by the admin file list to show "parsing / contextualizing / embedding / writing" live
+        and to offer a per-file Cancel. The current file of a RUNNING index job carries its stage;
+        files a PENDING or RUNNING file-scoped job has not reached yet carry stage "queued".
+        In-memory, not persisted.
         """
         out: Dict[str, Dict[str, Any]] = {}
         with self._lock:
             for state in self._jobs.values():
+                if state.kind != JOB_KIND_INDEX:
+                    continue
+                if state.status not in (JobStatus.PENDING, JobStatus.RUNNING):
+                    continue
+                done = {str(t.get("file_id")) for t in state.file_timings}
+                for fid in state.scope_file_ids:
+                    if fid not in done and fid != state.current_file_id:
+                        out.setdefault(fid, {
+                            "folder_id": state.folder_id, "stage": "queued",
+                            "done": None, "total": None, "eta": None,
+                            "job_id": state.job_id,
+                        })
                 if state.status != JobStatus.RUNNING or not state.current_file_id:
                     continue
+                if str(state.current_file_id) in done:
+                    continue  # between files: the last one already finished
                 out[str(state.current_file_id)] = {
                     "folder_id": state.folder_id,
                     "stage": state.current_file_stage,
                     "done": state.current_file_chunks_done,
                     "total": state.current_file_chunks_total,
                     "eta": state.current_file_eta_seconds,
+                    "job_id": state.job_id,
                 }
         return out
 
@@ -741,6 +811,87 @@ class IndexingJobManager:
                 counts[state.status.value] += 1
             counts["total"] = sum(counts.values())
         return counts
+
+    # Maintenance jobs (e.g. Rebuild FTS) heartbeat this often while their blocking work
+    # runs in a worker thread, so the watchdog's stale check never mistakes a long step
+    # for a dead job.
+    _MAINT_HEARTBEAT_SECONDS = 60
+
+    async def start_maintenance_job(
+        self,
+        *,
+        folder_id: int,
+        kind: str,
+        work,
+        message: str = "Starting",
+    ) -> Dict[str, Any]:
+        """Run blocking per-folder maintenance work as a background job.
+
+        ``work(progress, should_stop)`` runs in a worker thread and returns a summary dict
+        (its "message" key becomes the job message). It reports progress with
+        ``progress(done, total, label=None)`` — shown as processed/total on the job like
+        indexing — and should poll ``should_stop()`` between units of work: it turns True
+        once the job is cancelled. The job holds the folder lock, so it never overlaps an
+        indexing job on the same folder (ConflictError → 409 otherwise).
+        """
+        job_id = str(uuid.uuid4())
+        state = IndexJobState(job_id=job_id, folder_id=folder_id, skip_existing=False,
+                              kind=kind, message=message)
+        with self._lock:
+            if folder_id in self._active_folders:
+                existing = self._active_folders[folder_id]
+                raise ConflictError(
+                    message=f"Folder {folder_id} already has a running job: {existing}",
+                    resource=f"indexing_job:{folder_id}",
+                )
+            self._jobs[job_id] = state
+            self._active_folders[folder_id] = job_id
+        self._persist(state.to_dict())
+
+        def progress(done: int, total: int, label: Optional[str] = None) -> None:
+            self._update_job_state(job_id, processed_files=done, current_index=done,
+                                   total_files=total, current_file_name=label)
+
+        def should_stop() -> bool:
+            with self._lock:
+                st = self._jobs.get(job_id)
+                return st is None or st.status in _TERMINAL_STATUSES
+
+        async def _run():
+            try:
+                self._update_job_state(job_id, status=JobStatus.RUNNING, message=message)
+                fut = asyncio.get_running_loop().run_in_executor(
+                    None, work, progress, should_stop)
+                while True:
+                    finished, _ = await asyncio.wait({fut}, timeout=self._MAINT_HEARTBEAT_SECONDS)
+                    if finished:
+                        break
+                    self._update_job_state(job_id)  # heartbeat only
+                summary = fut.result() or {}
+                self._update_job_state(
+                    job_id,
+                    status=JobStatus.SUCCEEDED,
+                    message=summary.get("message", "Completed"),
+                    result_summary=summary,
+                    current_file_name=None,
+                    completed_at=datetime.now(timezone.utc).isoformat(),
+                )
+            except asyncio.CancelledError:
+                logger.info(f"Maintenance job {job_id} ({kind}) cancelled")
+                raise
+            except Exception as exc:
+                logger.error(f"Maintenance job {job_id} ({kind}) for folder {folder_id} failed: {exc}")
+                self._update_job_state(
+                    job_id, status=JobStatus.FAILED, error=str(exc), message=f"{kind} failed",
+                    completed_at=datetime.now(timezone.utc).isoformat())
+            finally:
+                self._cleanup_job_slot(job_id, folder_id)
+
+        task = asyncio.create_task(_run())
+        with self._lock:
+            self._task_handles[job_id] = task
+        logger.info(f"Scheduled {kind} job {job_id} for folder {folder_id}")
+        return state.to_dict()
 
     async def cancel_jobs_for_folder(self, folder_id: int) -> list[str]:
         """Cancel all PENDING/RUNNING jobs for the folder.
@@ -805,6 +956,7 @@ class IndexingJobManager:
                 self._jobs.pop(job_id, None)
                 self._task_handles.pop(job_id, None)
                 self._progress_track.pop(job_id, None)
+                self._last_persist.pop(job_id, None)
             self._pending_file_batches.pop(folder_id, None)
             if self._active_folders.get(folder_id) in doomed:
                 self._active_folders.pop(folder_id, None)
@@ -912,6 +1064,103 @@ class IndexingJobManager:
         )
         return "flagged"
 
+    async def cancel_file(self, file_id: str, folder_id: int) -> Optional[str]:
+        """Cancel indexing of ONE file, leaving the rest of its job alone.
+
+        - Queued (its batch is waiting behind another job): removed from the batch; a batch
+          left empty is cancelled as a whole.
+        - The only file of a running job: the job is cancelled (preemptive, as cancel_job).
+        - One file of a running multi-file job: the per-file abort flag is set, so the
+          adapter's mid-stage probe stops it at its next checkpoint; when its outcome is
+          recorded it is stored as "cancelled" rather than failed.
+
+        Returns:
+            "dequeued" / "cancelled_job" / "flagged", or None when no live job has the file.
+        """
+        fid = str(file_id)
+        emptied_job: Optional[str] = None
+        dequeued_job: Optional[str] = None
+        with self._lock:
+            for batch in self._pending_file_batches.get(folder_id, []):
+                st = self._jobs.get(batch.job_id)
+                if fid not in batch.file_ids or st is None or st.status != JobStatus.PENDING:
+                    continue
+                batch.file_ids = [f for f in batch.file_ids if f != fid]
+                st.scope_file_ids = [f for f in st.scope_file_ids if f != fid]
+                dequeued_job = batch.job_id
+                if not batch.file_ids:
+                    emptied_job = batch.job_id
+                break
+        if dequeued_job:
+            if emptied_job:
+                await self.cancel_job(emptied_job, reason="Cancelled by user (no files left)")
+            else:
+                self._update_job_state(dequeued_job, message=f"Queued — file {fid} cancelled")
+            logger.info(f"Removed queued file {fid} from job {dequeued_job}")
+            return "dequeued"
+
+        with self._lock:
+            target: Optional[IndexJobState] = None
+            for state in self._jobs.values():
+                if (state.kind != JOB_KIND_INDEX or state.folder_id != folder_id
+                        or state.status != JobStatus.RUNNING):
+                    continue
+                finished = {str(t.get("file_id")) for t in state.file_timings}
+                if fid in finished:
+                    continue
+                if state.current_file_id == fid or fid in state.scope_file_ids:
+                    target = state
+                    break
+        if target is None:
+            return None
+
+        if target.scope_file_ids == [fid]:
+            if await self.cancel_job(target.job_id, reason="Cancelled by user"):
+                return "cancelled_job"
+            return None
+
+        with self._lock:
+            self._file_abort_flags[fid] = True
+            self._cancelled_files[fid] = target.job_id
+        logger.info(f"Flagged file {fid} for cancellation inside job {target.job_id}")
+        return "flagged"
+
+    def _settle_cancelled_file(self, job_id: str, folder_id: int, entry: Dict[str, Any]) -> None:
+        """After a file's outcome is recorded: store a user-cancelled file as "cancelled".
+
+        The abort probe surfaces as an ordinary failure ("file not found"), so the adapter
+        writes a failed FileIndex row; rewrite it with the real reason. A file that finished
+        successfully before the probe fired keeps its index.
+        """
+        fid = str(entry.get("file_id"))
+        with self._lock:
+            if self._cancelled_files.get(fid) != job_id:
+                return
+            self._cancelled_files.pop(fid, None)
+            self._file_abort_flags.pop(fid, None)
+        if entry.get("status") == "success":
+            return
+
+        def _write():
+            try:
+                from db.fileindexdb import FileIndexDB
+                FileIndexDB.mark_failed(fid, FILE_CANCELLED_MESSAGE,
+                                        folder_id=folder_id, status="cancelled")
+            except Exception as e:
+                logger.warning(f"Could not record cancellation of file {fid}: {e}")
+
+        try:
+            self._persist_executor.submit(_write)
+        except Exception as e:  # pragma: no cover - executor shut down
+            logger.warning(f"Could not schedule cancellation record for file {fid}: {e}")
+
+    def _clear_file_flags(self, file_ids: List[str]) -> None:
+        """Drop stale abort / cancel flags for files about to be indexed again."""
+        with self._lock:
+            for fid in file_ids:
+                self._file_abort_flags.pop(str(fid), None)
+                self._cancelled_files.pop(str(fid), None)
+
     def is_file_abort_requested(self, file_id: str) -> bool:
         """Used by the adapter's mid-stage probe: whether this file has been requested to abort."""
         with self._lock:
@@ -1008,14 +1257,16 @@ class IndexingJobManager:
             f"stale_after={self._HEARTBEAT_STALE_SECONDS}s)"
         )
 
-    def mark_all_running_as_restart_failed(self) -> int:
-        """Flip all PENDING/RUNNING jobs left in the DB to FAILED (reason=server_restart).
+    def mark_interrupted_on_startup(self) -> int:
+        """Flip all PENDING/RUNNING jobs left in the DB to INTERRUPTED (error=server_restart).
 
-        Called on startup: orphan jobs left by a dead previous process are no longer running, so close
-        them out. Idempotent; safe to call multiple times.
+        Called on startup: orphan jobs left by a dead previous process are no longer running, so
+        close them out. The files those index jobs had not finished are marked "interrupted" on
+        their FileIndex row so the console shows them with a Retry action (see
+        _mark_interrupted_files). Idempotent; safe to call multiple times.
 
         Returns:
-            Number of jobs flipped to failed.
+            Number of jobs flipped to interrupted.
         """
         flipped = 0
         # 1. Load DB jobs that were left mid-flight by a previous process
@@ -1047,6 +1298,7 @@ class IndexingJobManager:
                         result_summary=row.get("result_summary"),
                         scope_file_ids=row.get("scope_file_ids") or [],
                         file_timings=row.get("file_timings") or [],
+                        kind=row.get("kind") or JOB_KIND_INDEX,
                     )
                     self._jobs[job_id] = state
         except Exception as e:
@@ -1054,23 +1306,62 @@ class IndexingJobManager:
 
         # 2. Flip everything still PENDING/RUNNING in the cache
         with self._lock:
-            job_ids = [
-                state.job_id
+            stale = [
+                state
                 for state in self._jobs.values()
                 if state.status in (JobStatus.PENDING, JobStatus.RUNNING)
             ]
-        for job_id in job_ids:
+        for state in stale:
             self._update_job_state(
-                job_id,
-                status=JobStatus.FAILED,
+                state.job_id,
+                status=JobStatus.INTERRUPTED,
                 error="server_restart",
-                message="Job marked failed due to server restart",
+                message=INTERRUPTED_MESSAGE,
                 completed_at=datetime.now(timezone.utc).isoformat(),
             )
             flipped += 1
+            if state.kind == JOB_KIND_INDEX:
+                self._mark_interrupted_files(state)
         if flipped:
-            logger.info(f"Marked {flipped} stale running jobs as failed (server_restart)")
+            logger.info(f"Marked {flipped} stale job(s) as interrupted (server_restart)")
         return flipped
+
+    # Kept for callers of the old name.
+    mark_all_running_as_restart_failed = mark_interrupted_on_startup
+
+    @staticmethod
+    def _mark_interrupted_files(state: IndexJobState) -> None:
+        """Mark the files an interrupted index job left unfinished as "interrupted".
+
+        - The file in flight: always (its chunks may be half-written or half-purged).
+        - Files in the job's scope it never reached: only when they have no index yet, or a
+          failed one — a queued re-index of an indexed file leaves that index intact.
+        A folder-wide job has no recorded scope, so only its in-flight file is known; the rest
+        stay "unindexed" and are picked up by the next incremental index.
+        """
+        try:
+            from db.fileindexdb import FileIndexDB
+        except Exception as e:  # pragma: no cover - import failure
+            logger.warning(f"Interrupted-file marking skipped: {e}")
+            return
+        done = {str(t.get("file_id")) for t in (state.file_timings or [])}
+        current = str(state.current_file_id) if state.current_file_id else None
+        targets: List[tuple] = []
+        if current and current not in done:
+            targets.append((current, True))
+        for fid in state.scope_file_ids or []:
+            if fid not in done and fid != current:
+                targets.append((fid, False))
+        for fid, in_flight in targets:
+            try:
+                if not in_flight:
+                    row = FileIndexDB.get_by_file(fid)
+                    if row is not None and getattr(row, "status", None) not in ("failed", None):
+                        continue
+                FileIndexDB.mark_failed(fid, INTERRUPTED_MESSAGE,
+                                        folder_id=state.folder_id, status="interrupted")
+            except Exception as e:
+                logger.warning(f"Could not mark file {fid} as interrupted: {e}")
 
     # ETA — the "time remaining" shown next to chunk progress
 
@@ -1153,7 +1444,12 @@ class IndexingJobManager:
             eta_seconds=job_eta,
         )
 
+    _PERSIST_MIN_INTERVAL = 5.0
+
     def _update_job_state(self, job_id: str, **updates):
+        # Progress-only ticks are throttled for the DB (see _PROGRESS_ONLY_KEYS); anything
+        # else — status, file boundaries, messages, heartbeats — is written through at once.
+        progress_only = bool(updates) and updates.keys() <= _PROGRESS_ONLY_KEYS
         with self._lock:
             state = self._jobs.get(job_id)
             if not state:
@@ -1192,7 +1488,17 @@ class IndexingJobManager:
 
             # write-through persist (snapshot inside the lock to avoid races)
             snapshot = state.to_dict()
-        self._persist(snapshot)
+            now = time.monotonic()
+            if progress_only and now - self._last_persist.get(job_id, float("-inf")) < self._PERSIST_MIN_INTERVAL:
+                persist_db = False
+            else:
+                persist_db = True
+                self._last_persist[job_id] = now
+        if persist_db:
+            self._persist(snapshot)
+        else:
+            # SSE still sees every tick; only the DB projection is throttled.
+            self._notify_subscribers(job_id, snapshot)
 
     def _persist(self, state_dict: Dict[str, Any]) -> None:
         """best-effort write-through to IndexJobs table. Never raises.
