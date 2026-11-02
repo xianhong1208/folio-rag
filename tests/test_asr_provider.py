@@ -7,7 +7,7 @@ FireRedAsrProvider); DoclingWhisperAsrProvider wrapping docling_convert_once;
 and OpenAICompatibleAsrProvider POSTing multipart to {base_url}/audio/transcriptions.
 """
 
-from unittest.mock import MagicMock, patch
+from unittest.mock import patch
 
 import pytest
 
@@ -39,9 +39,13 @@ class TestFactory:
         cfg = AsrConfig(
             provider="openai-compatible",
             base_url="http://stt:8000/v1", api_key="k", model="whisper-1",
+            timeout=30, max_retries=1, segment_seconds=120, language="zh",
         )
         p = create_asr_provider(cfg)
         assert isinstance(p, OpenAICompatibleAsrProvider)
+        assert p._timeout == 30 and p._max_retries == 1
+        assert p._segment_seconds == 120 and p._language == "zh"
+        assert p.url == "http://stt:8000/v1/audio/transcriptions"
 
     def test_fireredasr_routes_to_provider(self):
         from src.domain.rag.fireredasr_provider import FireRedAsrProvider
@@ -89,76 +93,8 @@ class TestDoclingProvider:
         assert m.call_args.kwargs["max_tokens"] == 512
 
 
-def _mock_httpx_post(json_body=None, status=200):
-    resp = MagicMock()
-    resp.status_code = status
-    resp.json.return_value = json_body or {"text": "雲端轉錄結果"}
-    if status >= 400:
-        import httpx
-        resp.raise_for_status.side_effect = httpx.HTTPStatusError(
-            "boom", request=MagicMock(), response=resp)
-    client = MagicMock()
-    client.__enter__.return_value = client
-    client.post.return_value = resp
-    return client
-
-
-class TestOpenAICompatibleProvider:
-    def _provider(self):
-        return OpenAICompatibleAsrProvider(
-            base_url="http://stt:8000/v1", api_key="sk-test",
-            model="whisper-1", request_timeout=120.0,
-        )
-
-    def test_posts_multipart_to_transcriptions(self, tmp_path):
-        wav = tmp_path / "m.wav"
-        wav.write_bytes(b"RIFFfake")
-        client = _mock_httpx_post()
-        with patch(f"{_AP}.httpx.Client", return_value=client):
-            r = self._provider().transcribe(audio_path=str(wav), file_name="m.wav")
-
-        assert r.text == "雲端轉錄結果"
-        assert r.chunks is None  # cloud has no pre-split chunks, handed back to leaf_splitter
-        url = client.post.call_args.args[0]
-        kw = client.post.call_args.kwargs
-        assert url == "http://stt:8000/v1/audio/transcriptions"
-        assert kw["data"]["model"] == "whisper-1"
-        assert "file" in kw["files"]
-        assert kw["files"]["file"][0] == "m.wav"
-
-    def test_bearer_auth_header(self, tmp_path):
-        wav = tmp_path / "m.wav"; wav.write_bytes(b"x")
-        client = _mock_httpx_post()
-        with patch(f"{_AP}.httpx.Client", return_value=client) as mk:
-            self._provider().transcribe(audio_path=str(wav), file_name="m.wav")
-        headers = mk.call_args.kwargs.get("headers", {})
-        assert headers.get("Authorization") == "Bearer sk-test"
-
-    def test_no_api_key_no_auth_header(self, tmp_path):
-        """Self-hosted services often have no key: must not send an empty Bearer."""
-        wav = tmp_path / "m.wav"; wav.write_bytes(b"x")
-        client = _mock_httpx_post()
-        p = OpenAICompatibleAsrProvider(base_url="http://stt:8000/v1")
-        with patch(f"{_AP}.httpx.Client", return_value=client) as mk:
-            p.transcribe(audio_path=str(wav), file_name="m.wav")
-        assert "Authorization" not in (mk.call_args.kwargs.get("headers") or {})
-
-    def test_http_error_raises(self, tmp_path):
-        """Cloud 4xx/5xx raise as-is -- the upstream index_document takes the existing failure path and writes a failed tag."""
-        import httpx
-        wav = tmp_path / "m.wav"; wav.write_bytes(b"x")
-        client = _mock_httpx_post(status=500)
-        with patch(f"{_AP}.httpx.Client", return_value=client):
-            with pytest.raises(httpx.HTTPStatusError):
-                self._provider().transcribe(audio_path=str(wav), file_name="m.wav")
-
-    def test_base_url_trailing_slash_normalized(self, tmp_path):
-        wav = tmp_path / "m.wav"; wav.write_bytes(b"x")
-        client = _mock_httpx_post()
-        p = OpenAICompatibleAsrProvider(base_url="http://stt:8000/v1/")
-        with patch(f"{_AP}.httpx.Client", return_value=client):
-            p.transcribe(audio_path=str(wav), file_name="m.wav")
-        assert client.post.call_args.args[0] == "http://stt:8000/v1/audio/transcriptions"
+# OpenAICompatibleAsrProvider (segmented upload, retries, content guard) is covered in
+# tests/test_cloud_asr.py against the in-process fake server.
 
 
 _DL = "src.domain.rag.document_loader"
