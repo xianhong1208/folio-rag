@@ -172,7 +172,6 @@ def build_auth_provider(config):
     # Imported lazily so a disabled-auth deployment need not import FastMCP auth stack.
     from fastmcp.server.auth import RemoteAuthProvider
     from fastmcp.server.auth.providers.jwt import JWTVerifier
-    from pydantic import AnyHttpUrl
 
     provider = RemoteAuthProvider(
         token_verifier=JWTVerifier(
@@ -181,7 +180,9 @@ def build_auth_provider(config):
             audience=settings.audience,
             required_scopes=settings.required_scopes,
         ),
-        authorization_servers=[AnyHttpUrl(settings.issuer)],
+        # A plain string is published as-is; AnyHttpUrl would add a trailing slash that mcp 2 clients
+        # reject as an issuer mismatch (RFC 8414 3.3 compares issuers as exact strings).
+        authorization_servers=[settings.issuer],
         base_url=settings.base_url,
     )
     logger.info(
