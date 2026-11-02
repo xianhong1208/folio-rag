@@ -90,6 +90,9 @@ to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - With OpenAI or Azure embeddings every docling-parsed file failed on a fresh
   clone (the chunk tokenizer name was `None`); token counting never downloads a
   tokenizer at runtime now.
+- UTF-8 HTML files without a `<meta charset>` were decoded with a guessed
+  legacy codepage (short Chinese pages came out as mojibake); undeclared UTF-8
+  HTML is now marked as UTF-8 before parsing.
 - Re-indexing a file left a window with no chunks, and new rows had no
   full-text vector until a separate CKIP pass ran (and none at all if it failed).
 

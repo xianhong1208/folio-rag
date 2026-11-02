@@ -107,9 +107,14 @@ _LEGACY_EXTS = ["doc", "dot", "xls", "xlt", "ppt", "pot", "pps",
 
 
 @pytest.mark.parametrize("ext", _PURE_PARSER_EXTS)
-def test_pure_parser_format(samples, converter, ext):
-    text = converter.convert(str(samples / f"t.{ext}")).document.export_to_markdown()
-    assert SENT in text, f".{ext} 解析結果不含哨兵內容"
+def test_pure_parser_format(samples, converter, ext, monkeypatch):
+    # Through the production entry point (docling_convert_once), which prepares the
+    # input (e.g. marks undeclared UTF-8 HTML) before docling sees it.
+    from src.domain.rag import docling_loader as dl
+
+    monkeypatch.setattr(dl, "get_converter", lambda: converter)
+    text, _ = dl.docling_convert_once(str(samples / f"t.{ext}"), f"t.{ext}", max_tokens=512)
+    assert SENT in text, f".{ext}: sentinel text missing from the parse"
 
 
 @pytest.mark.skipif(not _SOFFICE, reason="LibreOffice(soffice)未安裝")
