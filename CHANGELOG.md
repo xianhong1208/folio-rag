@@ -71,6 +71,11 @@ to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   logs a warning at startup.
 
 ### Fixed
+- The REST query cache ignored fusion, `rrf_k`, the text-search config, the
+  segmenter, the reranker threshold / templates and the merge rule, and was not
+  cleared when retrieval, rerank or embedding settings changed at runtime —
+  results could be stale for up to 5 minutes. The key now covers every
+  result-affecting setting and such changes clear it.
 - **Console answers (CRAG), both JSON and streaming:** citations kept their
   chunk's position among the *kept* chunks, so `[n]` pointed at the wrong result
   card once a chunk was dropped — chunks now keep their result-card number and
