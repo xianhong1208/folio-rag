@@ -121,8 +121,10 @@ fragmented chunks and weak precision.
 - **Synchronous** SQLAlchemy / psycopg2 — do not use `+asyncpg`.
 - **GPU selection is manual** — PyTorch is chosen per platform via a
   `uv sync --group` (rocm / cuda / cpu).
-- **Console is unauthenticated** — by design, for internal-network use; lock down
-  `_AUTH` before exposing it publicly.
+- **Console sessions outlive token revocation.** The console session is a
+  stateless signed cookie, so revoking the token in MCP Gate does not end it
+  before its expiry (`auth.console.session_hours`, default 8 h) — the same
+  offline-verification trade-off as bearer tokens.
 - **The server aborts at shutdown.** Every restart, the old `python3 main.py`
   dies with SIGABRT raised from inside the process (`si_code=SI_TKILL`, i.e. a
   native library's `abort()` during interpreter teardown — torch/CUDA-style), which
