@@ -21,7 +21,6 @@ Performance:
 
 from __future__ import annotations
 
-import os
 import asyncio
 from typing import Callable, Optional, List
 
@@ -170,7 +169,8 @@ class ContextGenerator:
             logger.info("Contextual Retrieval is disabled")
             return None
 
-        llm_config = getattr(rag_config, 'llm', None)
+        from src.config.roles import resolve_llm
+        llm_config = resolve_llm(rag_config, "contextual_llm")  # rag.contextual_llm over rag.llm
         if not llm_config:
             logger.warning("Contextual Retrieval enabled but no LLM config found")
             return None
@@ -193,47 +193,10 @@ class ContextGenerator:
 
     @staticmethod
     def _create_sync_client(llm_config):
-        """Build a sync OpenAI client (supports Azure / OpenAI / vLLM / Ollama)."""
-        from openai import OpenAI
-
-        provider = llm_config.provider.lower()
-
-        if provider == "azure":
-            from openai import AzureOpenAI
-
-            api_key = llm_config.api_key or os.environ.get("AZURE_OPENAI_API_KEY")
-            if not api_key:
-                raise ValueError("Azure LLM api_key is required")
-
-            azure_endpoint = llm_config.base_url or os.environ.get("AZURE_OPENAI_ENDPOINT")
-            if not azure_endpoint:
-                raise ValueError("Azure endpoint (base_url) is required")
-
-            return AzureOpenAI(
-                api_key=api_key,
-                api_version=llm_config.api_version or "2024-12-01-preview",
-                azure_endpoint=azure_endpoint,
-            )
-
-        elif provider in ("vllm", "ollama"):
-            base_url = llm_config.base_url
-            if not base_url:
-                raise ValueError(f"{provider} requires base_url (e.g., http://localhost:8000/v1)")
-            api_key = llm_config.api_key or "not-needed"
-
-            return OpenAI(api_key=api_key, base_url=base_url)
-
-        elif provider == "openai":
-            api_key = llm_config.api_key or os.environ.get("OPENAI_API_KEY")
-            if not api_key:
-                raise ValueError("OpenAI api_key is required")
-            return OpenAI(api_key=api_key)
-
-        else:
-            raise ValueError(
-                f"Unsupported LLM provider: '{provider}'. "
-                f"Supported: azure, openai, vllm, ollama"
-            )
+        """Build a sync OpenAI client for the contextual-prefix role (see llm_client:
+        every OpenAI-compatible provider honours base_url, timeout and max_retries)."""
+        from src.domain.rag.llm_client import create_openai_client
+        return create_openai_client(llm_config)
 
     def _call_llm_sync(self, prompt: str, client) -> str:
         """Call the LLM synchronously (run in a thread pool via asyncio.to_thread)."""

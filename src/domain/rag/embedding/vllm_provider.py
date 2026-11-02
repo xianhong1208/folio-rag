@@ -31,7 +31,8 @@ class VLLMEmbeddingProvider(IEmbeddingProvider):
         model_name: str,
         base_url: str = "http://localhost:1234/v1",
         api_key: Optional[str] = None,  # vLLM doesn't validate API key
-        dimension: int = 1024
+        dimension: int = 1024,
+        tuning: Optional[dict] = None,
     ):
         """Initialize vLLM provider
 
@@ -51,7 +52,8 @@ class VLLMEmbeddingProvider(IEmbeddingProvider):
             self._embed_model = OpenAILikeEmbedding(
                 model_name=self._model_name,
                 api_key=self._api_key,
-                api_base=self._base_url
+                api_base=self._base_url,
+                **(tuning or {}),  # timeout / max_retries / dimensions
             )
             logger.info(
                 f"vLLM embedding provider initialized: {self._model_name} at {self._base_url} (dim={self._dimension})"

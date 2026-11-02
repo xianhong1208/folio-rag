@@ -183,11 +183,11 @@ class RAGContext:
                         f"Embedding prefixes enabled: query='{q_pre}' passage='{p_pre}'")
                 Settings.embed_model = embed_model
                 # Chunker tokenizer is the embedding model's HF tokenizer (used to
-                # count chunk tokens). vllm / ollama also serve HF model names
+                # count chunk tokens). vllm / ollama / openai-compatible also serve HF model names
                 # (e.g. BAAI/bge-m3); only openai / azure names are not HF repos.
                 chunker_tok = (
                     provider.get_model_name()
-                    if provider.get_provider_name() in ("huggingface", "vllm", "ollama")
+                    if provider.get_provider_name() in ("huggingface", "vllm", "ollama", "openai-compatible")
                     else None
                 )
                 logger.info(

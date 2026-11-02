@@ -67,8 +67,9 @@ class EmbeddingProviderFactory:
         """
         provider_type = provider_type.lower().strip()
 
-        if provider_type == "openai":
-            return EmbeddingProviderFactory._create_openai(model_name, dimension, **kwargs)
+        if provider_type in ("openai", "openai-compatible"):
+            return EmbeddingProviderFactory._create_openai(
+                model_name, dimension, provider_name=provider_type, **kwargs)
 
         elif provider_type in ["huggingface", "local"]:
             return EmbeddingProviderFactory._create_huggingface(model_name, dimension, **kwargs)
@@ -85,7 +86,7 @@ class EmbeddingProviderFactory:
         else:
             raise ValueError(
                 f"Unknown embedding provider: '{provider_type}'. "
-                f"Supported providers: openai, azure, huggingface, local, vllm, ollama"
+                f"Supported providers: openai, openai-compatible, azure, huggingface, local, vllm, ollama"
             )
 
     @staticmethod
@@ -118,13 +119,25 @@ class EmbeddingProviderFactory:
             f"dimension={dimension} base_url={base_url} "
             f"api_key={'set' if api_key else 'unset'}")
         kwargs = {}
+        # Per-role HTTP tuning, passed to every HTTP provider (the OpenAI SDK under
+        # llama-index retries 429 / 5xx / timeouts with backoff and honours Retry-After).
+        tuning = {
+            "timeout": float(getattr(embedding_config, "timeout", 60.0) or 60.0),
+            "max_retries": int(getattr(embedding_config, "max_retries", 3)),
+        }
+        if getattr(embedding_config, "request_dimensions", False):
+            tuning["dimensions"] = dimension
 
         # Add provider-specific parameters
         if provider_type in ["vllm", "ollama"]:
             kwargs['base_url'] = base_url
             kwargs['api_key'] = api_key
+            kwargs['tuning'] = tuning
 
-        elif provider_type == "openai":
+        elif provider_type in ("openai", "openai-compatible"):
+            # base_url is honoured (it used to be dropped for `openai`).
+            kwargs['base_url'] = base_url
+            kwargs['tuning'] = tuning
             if api_key:
                 kwargs['api_key'] = api_key
 
@@ -133,6 +146,7 @@ class EmbeddingProviderFactory:
             kwargs['azure_endpoint'] = base_url
             kwargs['api_version'] = getattr(embedding_config, 'api_version', '2024-02-01')
             kwargs['azure_deployment'] = getattr(embedding_config, 'azure_deployment', None)
+            kwargs['tuning'] = tuning
 
         elif provider_type in ["huggingface", "local"]:
             # HuggingFace-specific settings could be added here
@@ -157,17 +171,24 @@ class EmbeddingProviderFactory:
     def _create_openai(
         model_name: str,
         dimension: int,
+        provider_name: str = "openai",
         **kwargs
     ) -> OpenAIEmbeddingProvider:
-        """Create OpenAI provider"""
+        """Create an OpenAI / OpenAI-compatible provider (base_url honoured)"""
         api_key = kwargs.get('api_key')
         api_key_env = kwargs.get('api_key_env', 'OPENAI_API_KEY')
+        base_url = kwargs.get('base_url')
+        if provider_name == "openai-compatible" and not base_url:
+            raise ValueError("openai-compatible embedding requires base_url")
 
         return OpenAIEmbeddingProvider(
             model_name=model_name,
             api_key=api_key,
             api_key_env=api_key_env,
-            dimension=dimension
+            dimension=dimension,
+            base_url=base_url,
+            tuning=kwargs.get('tuning'),
+            provider_name=provider_name,
         )
 
     @staticmethod
@@ -201,7 +222,8 @@ class EmbeddingProviderFactory:
             model_name=model_name,
             base_url=base_url,
             api_key=api_key,
-            dimension=dimension
+            dimension=dimension,
+            tuning=kwargs.get('tuning'),
         )
 
     @staticmethod
@@ -218,7 +240,8 @@ class EmbeddingProviderFactory:
             model_name=model_name,
             base_url=base_url,
             api_key=api_key,
-            dimension=dimension
+            dimension=dimension,
+            tuning=kwargs.get('tuning'),
         )
 
     @staticmethod
@@ -240,6 +263,7 @@ class EmbeddingProviderFactory:
             api_version=api_version,
             azure_deployment=azure_deployment,
             dimension=dimension,
+            tuning=kwargs.get('tuning'),
         )
 
     @staticmethod
@@ -249,4 +273,4 @@ class EmbeddingProviderFactory:
         Returns:
             List of supported provider type strings
         """
-        return ['openai', 'azure', 'huggingface', 'local', 'vllm', 'ollama']
+        return ['openai', 'openai-compatible', 'azure', 'huggingface', 'local', 'vllm', 'ollama']
