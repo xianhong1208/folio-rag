@@ -1122,6 +1122,32 @@ def _refine_chunks_for_token_budget(
     return output
 
 
+_HTML_EXTENSIONS = {".html", ".htm", ".xhtml"}
+_UTF8_BOM = b"\xef\xbb\xbf"
+_CHARSET_DECL = re.compile(
+    rb"<meta[^>]+charset\s*=|<\?xml[^>]+encoding\s*=", re.IGNORECASE)
+
+
+def _declare_html_utf8(data: bytes) -> bytes:
+    """Mark undeclared UTF-8 HTML as UTF-8 with a byte-order mark.
+
+    docling hands the raw bytes to BeautifulSoup, which guesses the encoding when
+    the page declares none; for short CJK text it guessed cp874 (Thai) and the
+    whole page came out garbled. Only bytes that are valid, non-ASCII UTF-8 with no
+    BOM and no charset / XML encoding declaration are touched; everything else is
+    left to the page's own declaration or to detection.
+    """
+    if data.startswith(_UTF8_BOM) or _CHARSET_DECL.search(data[:4096]):
+        return data
+    try:
+        data.decode("utf-8")
+    except UnicodeDecodeError:
+        return data
+    if data.isascii():
+        return data
+    return _UTF8_BOM + data
+
+
 def docling_convert_once(
     file_path: str,
     file_name: str,
@@ -1174,12 +1200,15 @@ def docling_convert_once(
         # (.md / .html / .csv / .vtt / .latex / .adoc) fail to detect. Wrapping into a
         # DocumentStream carrying the original file_name restores extension detection.
         path_obj = Path(file_path)
+        is_html = Path(file_name).suffix.lower() in _HTML_EXTENSIONS
         # Only convert() holds the inference lock; keep file reading outside to shorten hold time.
-        if path_obj.suffix == "" and Path(file_name).suffix != "":
+        if (path_obj.suffix == "" and Path(file_name).suffix != "") or is_html:
             from docling.datamodel.base_models import DocumentStream
             from io import BytesIO
             with path_obj.open("rb") as f:
                 data = f.read()
+            if is_html:
+                data = _declare_html_utf8(data)
 
             def _source():  # a stream is consumed by convert(): build a fresh one per attempt
                 return DocumentStream(name=file_name, stream=BytesIO(data))
