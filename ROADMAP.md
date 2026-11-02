@@ -34,10 +34,10 @@ tracked but not started. Items are grounded in the current codebase and its know
     every verify, keyed on the `jti` that already scopes ownership. Needs no MCP
     Center change and is fully testable locally.
   - *RFC 7662 introspection* (`IntrospectionTokenVerifier`): the resource server
-    asks MCP Center whether the token is still active on each request. Needs MCP
+    asks MCP Gate whether the token is still active on each request. Needs MCP
     Center to expose an introspection endpoint.
   Whichever is chosen must cover **both** verify paths — the REST / tool-filter
-  `McpCenterTokenVerifier` and the FastMCP `/mcp` transport verifier.
+  `McpGateTokenVerifier` and the FastMCP `/mcp` transport verifier.
 - **Multi-modal retrieval.** *Shipped (v1 — tables).* A `content_type` signal is
   detected at index time and threaded through to the UI, which badges table chunks
   and rebuilds them as real HTML tables. Verified live: Docling's *chunker*
@@ -100,7 +100,7 @@ fragmented chunks and weak precision.
 ### Operability & deployment
 
 - **Deploy guide**: reverse proxy + HTTPS, and a full `docker-compose` for the
-  stack (PostgreSQL + pgvector and the model services), aligned with MCP Center's
+  stack (PostgreSQL + pgvector and the model services), aligned with MCP Gate's
   Deploy chapter.
 - **Observability**: structured request tracing across the retrieval pipeline
   (vector → BM25 → fusion → rerank) exposed in the console beyond the current

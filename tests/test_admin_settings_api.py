@@ -133,7 +133,7 @@ class TestAdminPage:
         assert r.status_code == 200
         assert "Agentic RAG" in r.text and "Control Center" in r.text
         # External resources are limited to Google Fonts (aligned with the
-        # MCP_Center design language; when offline the fallback stack degrades
+        # MCP_Gate design language; when offline the fallback stack degrades
         # gracefully without breaking the layout) -- everything else is inline
         import re
         externals = set(re.findall(r'https?://([^/"]+)', r.text))

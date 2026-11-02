@@ -17,7 +17,7 @@ from pydantic import BaseModel
 from db.folderdb import FolderDB
 from src.api.startup_state import record_load_failure
 from src.auth.init_auth import initialize_auth_system
-from src.auth.mcp_center_auth import build_auth_provider, settings_from_config
+from src.auth.mcp_gate_auth import build_auth_provider, settings_from_config
 from src.config.config_manager import Config
 from src.domain.rag.index_job_manager import IndexingJobManager
 from src.fastmcp_tools.agentic_tools import register_folder_tool
@@ -65,7 +65,7 @@ def create_app(config: BaseModel, transport: str) -> FastAPI:
     dynamic_tools_enabled = getattr(dynamic_tools_config, "enabled", False) if dynamic_tools_config else False
 
     # FastMCP auth provider: governs the /mcp transport (offline RS256 JWT verification
-    # against MCP Center's JWKS) and publishes /.well-known/oauth-protected-resource/mcp
+    # against MCP Gate's JWKS) and publishes /.well-known/oauth-protected-resource/mcp
     # so OAuth-capable MCP clients can discover where to sign in. None when auth disabled.
     auth_provider = build_auth_provider(config)
 
@@ -139,7 +139,7 @@ def create_app(config: BaseModel, transport: str) -> FastAPI:
     # router. None when auth is disabled.
     fastapi_app.state.auth_settings = settings_from_config(config)
 
-    # Auth system: build + register the offline MCP Center token verifier (used by the
+    # Auth system: build + register the offline MCP Gate token verifier (used by the
     # REST middleware and the MCP tool filter via set_remote_verifier).
     initialize_auth_system(config)
 
@@ -267,7 +267,7 @@ def create_app(config: BaseModel, transport: str) -> FastAPI:
     # middleware stack — RequestContext / Authentication / AuthContext — which is where the
     # bearer token is verified and the per-request auth context for tools is set up. Copying
     # only the routes left that middleware behind, so /mcp saw no authenticated user and
-    # rejected every request (valid token included) with 401, which also blocked MCP Center's
+    # rejected every request (valid token included) with 401, which also blocked MCP Gate's
     # initialize handshake from ever reading the server name / instructions.
     # Starlette matches routes in registration order, so the FastAPI routes included above
     # (/, /health, /docs, /.well-known/* root form) still win; everything else goes to FastMCP.
