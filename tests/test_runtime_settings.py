@@ -355,6 +355,8 @@ class TestValueConstraints:
         ("rag.rerank.base_url", "localhost:8787"),            # scheme missing
         ("rag.rerank.query_template", "no placeholder"),
         ("rag.embedding.model", "   "),
+        ("rag.retrieval.segmenter", "mecab"),
+        ("rag.rerank.gap_threshold", 1.5),
     ])
     def test_out_of_range_or_unknown_rejected(self, path, value):
         cfg = _mk_config()
@@ -374,6 +376,10 @@ class TestValueConstraints:
         ("rag.rerank.base_url", "https://rerank.example.com"),
         ("rag.asr.base_url", None),
         ("rag.asr.base_url", ""),
+        ("rag.retrieval.segmenter", "jieba"),
+        ("rag.retrieval.segmenter", "bigram"),
+        ("rag.rerank.gap_threshold", 0.3),
+        ("rag.rerank.auto_template", False),
     ])
     def test_valid_values_accepted(self, path, value):
         cfg = _mk_config()
@@ -384,6 +390,11 @@ class TestValueConstraints:
         cfg = _mk_config()
         applied, _ = ro.validate_and_apply(cfg, {"rag.llm.provider": "  OpenAI "})
         assert applied["rag.llm.provider"] == "openai" and cfg.rag.llm.provider == "openai"
+
+    def test_segmenter_is_normalised(self):
+        cfg = _mk_config()
+        applied, _ = ro.validate_and_apply(cfg, {"rag.retrieval.segmenter": " Bigram "})
+        assert applied["rag.retrieval.segmenter"] == "bigram"
 
     def test_embedding_providers_follow_the_factory(self):
         from src.domain.rag.embedding.factory import EmbeddingProviderFactory

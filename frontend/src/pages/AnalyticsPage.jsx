@@ -3,6 +3,7 @@ import { BarChart3, Search } from 'lucide-react'
 import { get } from '../services/api'
 import { fmtNum } from '../lib/format'
 import EmptyState from '../components/ui/EmptyState'
+import { gapRows, gapDesc } from '../lib/gaps'
 
 export default function AnalyticsPage() {
   const [folders, setFolders] = useState([])
@@ -53,6 +54,7 @@ export default function AnalyticsPage() {
                 { label: 'Total Queries', value: fmtNum(d.total), foot: `over ${d.days} days` },
                 { label: 'Avg Latency', value: d.avg_latency_ms != null ? d.avg_latency_ms + ' ms' : '—', foot: 'retrieval time' },
                 { label: 'Zero-Result Rate', value: (d.zero_rate * 100).toFixed(1) + '%', foot: `${fmtNum(d.zero_result)} empty searches` },
+                { label: 'Knowledge Gaps', value: fmtNum(d.gap_count || 0), foot: 'questions without a good match' },
               ].map((k) => (
                 <div className="kpi" key={k.label}>
                   <div className="k-label">{k.label}</div><div className="k-value">{k.value}</div><div className="k-foot">{k.foot}</div>
@@ -86,12 +88,12 @@ export default function AnalyticsPage() {
         </div>
         <div className="card">
           <div className="card-head"><div className="icon warn"><Search size={16} /></div>
-            <div><h2>Knowledge Gaps</h2><div className="desc">Searches that returned nothing — candidates for new content</div></div></div>
+            <div><h2>Knowledge Gaps</h2><div className="desc">{gapDesc(d)}</div></div></div>
           <div className="tablewrap">
-            {d?.zero_queries?.length ? (
-              <table><thead><tr><th>Search returned nothing</th><th>Count</th></tr></thead>
-                <tbody>{d.zero_queries.map((q, i) => <tr key={i}><td className="cell-main">{q.query}</td><td className="num">{fmtNum(q.count)}</td></tr>)}</tbody></table>
-            ) : <EmptyState t="No knowledge gaps" d="Every search returned results — nice" />}
+            {gapRows(d).length ? (
+              <table><thead><tr><th>Question</th><th>Asked</th><th>Best score</th></tr></thead>
+                <tbody>{gapRows(d).map((q, i) => <tr key={i}><td className="cell-main">{q.query}</td><td className="num">{fmtNum(q.count)}</td><td className="num">{q.score}</td></tr>)}</tbody></table>
+            ) : <EmptyState t="No knowledge gaps" d="Every recent search found a relevant match — nice" />}
           </div>
         </div>
       </div>

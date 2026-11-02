@@ -24,13 +24,13 @@ License: MIT&nbsp;·&nbsp;Python 3.12&nbsp;·&nbsp;PostgreSQL + pgvector&nbsp;·
 ## 功能特點
 
 - **階層切塊 + auto-merging 檢索。** 索引時把文件切成小的 **leaf**（精準匹配）與大的 **parent**（完整脈絡）。當同一段落的多個 leaf 被命中時,回傳整個 parent 而非碎片;單一 leaf 命中則向鄰居擴展,答案不會失去語意連貫性。
-- **混合搜尋,為中文調校。** 密集向量檢索（pgvector）與稀疏 **BM25** 以 Reciprocal Rank Fusion 融合,讓關鍵字訊號真的影響排名。中文在進 Postgres 全文索引前先用 **CKIP**（中研院）斷詞 —— 無空格的中文會被真正 tokenize,而不是塌成單一詞。
+- **混合搜尋,為中文調校。** 密集向量檢索（pgvector）與稀疏 **BM25** 以 Reciprocal Rank Fusion 融合,讓關鍵字訊號真的影響排名。中文在進 Postgres 全文索引前先斷詞 —— 預設用 **CKIP**（中研院）,也可選 jieba 或零相依的 bigram —— 無空格的中文會被真正 tokenize,而不是塌成單一詞。
 - **Cross-encoder 重排。** 以 `bge-reranker-v2-m3` / `mxbai-rerank-base-v2` 對融合後的候選重新評分,提升 Top-K 精度。
 - **Contextual Retrieval。** 索引時由 LLM 為每個 chunk 加上一段依文件脈絡的前綴（Anthropic 建議的做法),提升原本模稜兩可片段的可檢索性。
 - **每資料夾一個 MCP 工具,依 token 隔離。** 每個資料夾註冊成 `Agentic_<folder>` 工具;呼叫者看到的工具清單會依其 token 過濾 —— 你只看得到自己擁有的資料夾。歸屬以 token 穩定的 `jti` 為 key。工具名稱一律符合所有 MCP 用戶端的限制(`[A-Za-z0-9_-]`、最長 64 字元):含空白、中日韓文字或其他符號的資料夾名稱會變成 `Agentic_<ASCII 部分>_<8 碼雜湊>`,每次都是同一個名稱。
 - **OAuth 2.1 resource server。** 一個 `RemoteAuthProvider` + `JWTVerifier` 保護 `/mcp`;token 用 MCP Gate 的 JWKS 在本地離線驗證（RS256),並綁定本伺服器的 audience,別台的 token 在這裡無效。
 - **文件 + 音訊匯入。** [Docling](https://github.com/DS4SD/docling) 解析 PDF / DOCX / PPTX / XLSX / 圖片（含 OCR）;**FireRedASR** 在本地做繁體中文語音轉錄（或任何 OpenAI 相容的 `/v1/transcriptions`）。
-- **內建評測 harness。** 從你自己的 chunk 自動生成問題,對正式檢索管線(與 `/api/rag/query` 同一路徑)以及純 `vector`、純 `bm25` 評 **Recall@k · MRR · nDCG@k**,讓你針對真實語料調校檢索。
+- **內建評測 harness。** 從你自己的 chunk 自動生成問題,對正式檢索管線(與 `/api/rag/query` 同一路徑)以及 `vector` / `bm25` / `rrf` / `rerank`(全部走正式檢索路徑)評 **Recall@k · MRR · nDCG@k**,讓你針對真實語料調校檢索。
 - **Retrieval Terminal 主控台。** `/admin` 的 React 單頁主控台:管線總覽、資料夾與檔案、會顯示**逐訊號檢索軌跡**的 Search Playground、即時索引任務串流、查詢分析、評測 harness、即時設定、健康狀態與稽核時間軸。
 - **跑在你的 GPU 上。** PyTorch 以 PEP 735 dependency group 依平台選擇（`rocm-r714` / `rocm-r713` / `cuda` / `cpu`）—— AMD ROCm、NVIDIA CUDA 或純 CPU。
 
@@ -115,6 +115,28 @@ Agentic_product-docs  mode="search"  query="要怎麼輪替簽章金鑰?"
 | **Rerank** | cross-encoder（`bge-reranker-v2-m3` / `mxbai-rerank-base-v2`）重排,決定最終 Top-K 精度。 |
 | **Answer** | 走 `answer` 路徑時,`gpt-oss-120b` 依檢索到的脈絡合成回答,並由 corrective-RAG 信心檢查把關。 |
 
+### 檢索細節
+
+**單一檢索路徑。** REST `/api/rag/query`、MCP search 工具、主控台 Search Playground（含檢索軌跡）與評測 harness 都走同一份程式碼（`src/domain/rag/hybrid_search.py`）:密集向量 + BM25,以 `rrf`（預設）或 `concat`（先放向量命中,再接只有 BM25 命中的段落,交給 reranker 排序）融合,接著 rerank,再用同一條規則做 auto-merge。REST 每次請求可帶 `auto_merge`（`null` = 依 `rag.retrieval.auto_merging.enabled`）;`hybrid_alpha` 仍接受但不再生效。每次請求的參數隨呼叫傳入,不寫進各資料夾共用的 engine,所以不同 `top_k` 的並行請求不會互相干擾。
+
+**關鍵字檢索（BM25）。** 查詢用與索引相同的方式切詞（中文先斷詞）,去掉疑問詞與虛詞（`什麼`、`嗎`、`what`、`the`…）,再以 Postgres 全文檢索**只搜 leaf chunk** —— 先要求所有詞都出現（AND）,不足再用任一詞（OR）補滿。檢索深度為 `max(top_k 候選數, rag.retrieval.default_sparse_top_k)`,並與向量檢索同時執行。`simple` 全文設定不做英文詞幹還原（`policy` ≠ `policies`）;純英文語料可設 `text_search_config: english`。
+
+**中文斷詞。** 預設 `text_search_config: simple` 時,中文在進 Postgres 前先在 Python 端斷詞,斷詞器由 `rag.retrieval.segmenter` 決定 —— 索引、*Rebuild FTS* 與查詢都走同一個函式:
+
+| `segmenter` | 說明 |
+|---|---|
+| `ckip` *(預設)* | 中研院 CKIP BERT 模型 —— 繁體中文最準;需要 torch,第一次使用時下載模型。 |
+| `jieba` | 詞典式、純 Python、不需 GPU。選用套件:`uv pip install jieba`（或 `pyproject.toml` 的 `jieba` extra）。 |
+| `bigram` | 中日韓字元兩兩重疊切分 + 英數詞。不需模型、零相依;索引較大。 |
+
+每個資料夾的資料表會記錄它的關鍵字索引是哪個斷詞器建的。改了 `segmenter`（可在 Settings 即時改）之後,主控台會把用其他斷詞器建索引的資料夾標成 **FTS rebuild needed**;*Rebuild FTS* 會用目前設定的斷詞器重新斷詞 —— 不需重新 embedding。
+
+**重排。** reranker 對最多 3 × `top_k` 個融合候選評分,保留分數不低於 `rag.rerank.score_threshold` 的前 `top_k` 個。`mxbai-rerank-*-v2` 是以對話格式 prompt 訓練的 Qwen 模型;`rag.rerank.auto_template: true`（預設）時,若設定的模板是預設值或舊的無對話格式版本,會自動套上官方格式（若 rerank 服務已自行套用 chat template,請關掉)。套上後分數是校準過的機率,對這個模型而言 **`score_threshold: 0.5`** 才有意義;沒套的話無關段落也有 0.8 以上,任何門檻都濾不掉東西。reranker 失敗時,查詢會依檢索順序回傳前 `top_k` 個候選（而不是全部 3 × `top_k` 個）,且這個降級結果不會被快取。
+
+**知識缺口。** 每次 REST、主控台與 MCP 搜尋都會記錄（token 只存遮罩後的前綴）結果數與 reranker 的最高分。*Query Analytics* 把某資料夾中**最近一次**搜尋沒有結果、或最高分低於 `rag.rerank.gap_threshold`（預設 `0.5`）的問題列為知識缺口 —— 補上能回答它的文件、再問一次後,缺口就會消失。
+
+**回答（主控台）。** 勾選 *generate answer* 時,先用一次 LLM 呼叫評估各 chunk 是否相關,丟掉不相關的（都不相關就不回答）,再用剩下的以**問題所用的語言**生成回答。每個 chunk 保留它在結果卡片中的編號,`[3]` 一定是第 3 張卡（主控台中引用可點擊）;引用了沒提供給模型的 chunk 會被移除,`【n†…】` 會轉成 `[n]`,Markdown 粗體標記會去掉 —— 串流路徑也一樣,最後的 `done` frame 帶有整理過的完整回答。評估結果無法解析時,回答會標成 **unverified**,而不是 `high`。
+
 **驗證。** Agentic RAG 是 *resource server*。FastMCP 會發佈 `/.well-known/oauth-protected-resource/mcp`,把用戶端導向 MCP Gate;伺服器抓一次 MCP Gate 的 JWKS,之後每個 bearer token 都離線驗證（RS256 —— 簽章、issuer、audience、效期、scope）。MCP Gate 從不在請求路徑上。
 
 ## 設定
@@ -133,7 +155,10 @@ Agentic_product-docs  mode="search"  query="要怎麼輪替簽章金鑰?"
 | `rag.embedding.{model,dimension,base_url}` | `intfloat/multilingual-e5-large`、`1024`、`:7075/v1` | embedding 模型;`dimension` **必須**等於模型實際輸出維度。 |
 | `rag.llm.{model,base_url}` | `openai/gpt-oss-120b`、`:5052/v1` | Contextual Retrieval 與 `answer` 路徑用的 LLM。 |
 | `rag.rerank.{model,base_url}` | `mixedbread-ai/mxbai-rerank-base-v2`、`:8787` | cross-encoder 重排器。 |
+| `rag.rerank.score_threshold` / `auto_template` | `0.0` / `true` | 濾掉分數低於門檻的結果（mxbai-rerank-v2 適合 0.5）;自動套用 mxbai-v2 的對話格式 prompt。 |
+| `rag.rerank.gap_threshold` | `0.5` | 知識缺口分析:最高 rerank 分數低於此值即視為「沒有好的匹配」。 |
 | `rag.asr.provider` | `fireredasr` | 音訊轉錄:`fireredasr`（本地繁中）· `docling-whisper` · `openai-compatible`。 |
+| `rag.retrieval.segmenter` | `ckip` | 關鍵字檢索的中文斷詞器:`ckip` · `jieba` · `bigram`（見「中文斷詞」）。 |
 | `rag.retrieval.*` | — | Top-K、相似度門檻、BM25 候選數、`hybrid_fusion`（`rrf`/`concat`）、auto-merging。可從主控台即時調,或用 **High Precision / Balanced / High Recall** 預設。 |
 
 GPU 選擇是 `uv sync --group {rocm-r714|rocm-r713|cuda|cpu}` 的取捨 —— 見 `pyproject.toml` 開頭與 `docs/testing/ENVIRONMENTS.md`。

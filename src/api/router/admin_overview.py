@@ -299,11 +299,13 @@ async def query_analytics(
     days: int = Query(30, ge=1, le=365),
     ident: ConsoleIdentity = Depends(require_console_session),
 ):
-    """Query analytics: query volume / average latency / zero-result rate / top queries / daily trend.
+    """Query analytics: query volume / average latency / zero-result rate / top queries /
+    knowledge gaps / daily trend.
 
     folder_id must be one of your folders; omitting it = all your folders (every folder
     for admins); days = the statistics window. The data source is QueryLog
-    (best-effort one record per /query retrieval)."""
+    (best-effort one record per REST / console / MCP search). Knowledge gaps use
+    rag.rerank.gap_threshold on each question's latest search."""
     from db.query_log_db import QueryLogDB
     scope_ids = None
     if folder_id is not None:

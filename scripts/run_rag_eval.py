@@ -89,19 +89,18 @@ async def main() -> int:
         index_s = time.perf_counter() - t0
 
         from src.domain.rag.auto_merging import AutoMergingRetriever
+        from src.domain.rag.hybrid_search import SearchSettings
+        from src.domain.rag.merge_plan import MERGE_DISABLED
         from evals.metrics import mrr, recall_at_k
-        retr_cfg = Config.get_config_model().rag.retrieval
         retriever = AutoMergingRetriever(
             vector_store=store, reranker=ctx.reranker,
-            merge_threshold=ctx.merge_threshold if ctx.auto_merging_enabled else 1.1,
+            merge_threshold=ctx.merge_threshold if ctx.auto_merging_enabled else MERGE_DISABLED,
             expand_context_neighbors=ctx.expand_neighbors,
-            sparse_top_k=retr_cfg.default_sparse_top_k,
-            hybrid_alpha=retr_cfg.default_hybrid_alpha,
         )
+        settings = SearchSettings.from_config(top_k=TOP_K, similarity_cutoff=0.0)
         rows = []
         for qa in qa_items:
-            results = await retriever.aquery(
-                query_text=qa["question"], top_k=TOP_K, similarity_cutoff=0.0)
+            results = await retriever.aquery(qa["question"], settings)
             retrieved_files = []
             for res in results:  # order-preserving dedup
                 if res.file_name not in retrieved_files:

@@ -52,6 +52,8 @@ EDITABLE: Dict[str, str] = {
     "rag.rerank.score_threshold": "live",
     "rag.rerank.query_template": "live",
     "rag.rerank.document_template": "live",
+    "rag.rerank.auto_template": "live",
+    "rag.rerank.gap_threshold": "live",
     # Model services — ASR
     "rag.asr.enabled": "live",
     "rag.asr.provider": "live",
@@ -64,6 +66,7 @@ EDITABLE: Dict[str, str] = {
     "rag.retrieval.default_sparse_top_k": "live",
     "rag.retrieval.default_hybrid_alpha": "live",
     "rag.retrieval.hybrid_fusion": "live",
+    "rag.retrieval.segmenter": "live",
     "rag.retrieval.expand_context_default": "live",
     "rag.retrieval.expand_context_neighbors": "live",
     "rag.retrieval.auto_merging.enabled": "live",
@@ -84,6 +87,7 @@ _RANGES: Dict[str, Tuple[float, float]] = {
     "rag.rerank.top_n": (1, 1_000),
     # Rerank scores from the /v1/score API are probabilities; the console slider is 0–1 too.
     "rag.rerank.score_threshold": (0.0, 1.0),
+    "rag.rerank.gap_threshold": (0.0, 1.0),
     # 20 matches the REST QueryRequest.top_k ceiling.
     "rag.retrieval.default_top_k": (1, 20),
     "rag.retrieval.default_similarity_cutoff": (0.0, 1.0),
@@ -98,7 +102,13 @@ _NULLABLE = {"rag.rerank.top_n", "rag.contextual_retrieval.reasoning_effort"}
 # compare lower-case names). Embedding providers come from the factory itself.
 LLM_PROVIDERS = ("azure", "openai", "vllm", "ollama")
 ASR_PROVIDERS = ("docling-whisper", "openai-compatible", "fireredasr")
-_PROVIDER_PATHS = ("rag.embedding.provider", "rag.llm.provider", "rag.asr.provider")
+_LOWERCASE_PATHS = ("rag.embedding.provider", "rag.llm.provider", "rag.asr.provider",
+                   "rag.retrieval.segmenter")
+
+
+def _segmenters():
+    from src.domain.rag.text_segmenter import SEGMENTERS
+    return SEGMENTERS
 
 
 def _choices(path: str):
@@ -109,6 +119,7 @@ def _choices(path: str):
         "rag.llm.provider": LLM_PROVIDERS,
         "rag.asr.provider": ASR_PROVIDERS,
         "rag.retrieval.hybrid_fusion": ("rrf", "concat"),
+        "rag.retrieval.segmenter": _segmenters(),
         "rag.contextual_retrieval.reasoning_effort": ("low", "medium", "high"),
     }.get(path)
 
@@ -118,7 +129,7 @@ def _check_constraints(path: str, value: Any) -> Any:
 
     Raises ValueError with a readable reason. Type coercion is left to pydantic.
     """
-    if path in _PROVIDER_PATHS and isinstance(value, str):
+    if path in _LOWERCASE_PATHS and isinstance(value, str):
         value = value.strip().lower()
     if value is None or (value == "" and path in _NULLABLE):
         if path in _NULLABLE:

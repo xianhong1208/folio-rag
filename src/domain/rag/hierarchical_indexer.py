@@ -381,17 +381,18 @@ class HierarchicalIndexer:
             # Non-fatal: it still works without HNSW (just a slower seq scan).
             logger.warning(f"⚠️ HNSW post-index hook failed (not fatal): {e}")
 
-        # 6b. CKIP mode: overwrite the FTS tsvector with Python-side CKIP tokens so
-        # BM25 matches space-less Chinese (llama-index's to_tsvector('simple', text)
-        # cannot segment it). Only the tsv changes; stored `text` stays original.
-        # Any other config no-ops. Runs off the loop (blocking DB + CKIP inference).
+        # 6b. simple-config mode: overwrite the FTS tsvector with Python-segmented
+        # tokens (rag.retrieval.segmenter: ckip / jieba / bigram) so BM25 matches
+        # space-less Chinese (llama-index's to_tsvector('simple', text) cannot
+        # segment it). Only the tsv changes; stored `text` stays original. Any
+        # other config no-ops. Runs off the loop (blocking DB + segmentation).
         if self._ckip_fts_enabled():
             try:
                 from src.domain.rag.chunk_lookup import ChunkLookup
                 from src.domain.rag.vector_store_manager import (
                     rebuild_text_search_tsv,
                 )
-                from src.domain.rag.ckip_segmenter import get_segmenter
+                from src.domain.rag.text_segmenter import get_segmenter
 
                 table_name = ChunkLookup._get_table_name(vector_store)
                 engine = ChunkLookup._get_engine(vector_store)
@@ -403,13 +404,13 @@ class HierarchicalIndexer:
                     document.metadata.get("file_id"),
                 )
                 logger.info(
-                    f"✅ CKIP text_search_tsv rebuilt for {n} row(s) of "
+                    f"✅ {getattr(segmenter, 'name', 'segmented')} text_search_tsv rebuilt for {n} row(s) of "
                     f"{file_name} in {table_name}"
                 )
             except Exception as e:
                 # Non-fatal: falls back to llama-index's native 'simple' tsvector
                 # (degraded Chinese recall) rather than failing the index write.
-                logger.warning(f"⚠️ CKIP tsv rebuild failed (not fatal): {e}")
+                logger.warning(f"⚠️ segmented tsv rebuild failed (not fatal): {e}")
 
         logger.info(
             f"Indexed {file_name}: {len(leaf_nodes)} leaves + {len(parent_nodes)} parents"

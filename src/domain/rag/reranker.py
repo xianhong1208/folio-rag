@@ -175,8 +175,10 @@ class Reranker:
             return result
 
         except Exception as e:
-            logger.warning(f"Reranking failed, returning original results: {e}")
-            return nodes
+            # Keep only top_n: the candidates are 3 × top_k, and handing them all
+            # back made a reranker outage triple the result count.
+            logger.warning(f"Reranking failed, keeping the top {effective_top_n} in retrieval order: {e}")
+            return nodes[:effective_top_n] if effective_top_n else nodes
 
     async def arerank(
         self,
@@ -223,8 +225,19 @@ class Reranker:
             return result
 
         except Exception as e:
-            logger.warning(f"Reranking failed, returning original results: {e}")
-            return nodes
+            # Keep only top_n: the candidates are 3 × top_k, and handing them all
+            # back made a reranker outage triple the result count.
+            logger.warning(f"Reranking failed, keeping the top {effective_top_n} in retrieval order: {e}")
+            return nodes[:effective_top_n] if effective_top_n else nodes
+
+    @property
+    def score_threshold(self) -> float:
+        return self._score_threshold
+
+    async def ascore(self, query: str, texts: List[str]) -> List[float]:
+        """Raw relevance scores, one per text, in input order. Raises on failure
+        (the retrieval layer decides how to degrade; see rerank_policy)."""
+        return await self._aget_scores(query, texts)
 
     async def _aget_scores(self, query: str, texts: List[str]) -> List[float]:
         """Async version of _get_scores (httpx.AsyncClient with connection-pool reuse).

@@ -179,7 +179,11 @@ class RAGRetrievalConfig(BaseModel):
     default_sparse_top_k: int = 12
     default_hybrid_alpha: float = 0.75
     hybrid_search: bool
-    text_search_config: str = "simple"  # CKIP segments in Python; Postgres tokenizes the space-joined result with `simple`
+    text_search_config: str = "simple"  # Chinese is segmented in Python; Postgres tokenizes the space-joined result with `simple`
+    # Python-side segmenter for the `simple` config, used by indexing, Rebuild FTS and queries alike:
+    # ckip (accurate, torch model) | jieba (pure Python, optional extra) | bigram (no dependency).
+    # Changing it flags existing folders for Rebuild FTS (no re-embedding needed).
+    segmenter: Literal["ckip", "jieba", "bigram"] = "ckip"
     # "rrf" = Reciprocal Rank Fusion (BM25 affects ordering); "concat" = llama_index native
     # (dense dominates, effectively vector-only; legacy).
     hybrid_fusion: str = "rrf"
@@ -234,6 +238,14 @@ class RerankConfig(BaseModel):
     # cross-encoders (bge-family) keep the default = raw text sent through as-is.
     query_template: str = "{text}"
     document_template: str = "{text}"
+    # mxbai-rerank-*-v2 needs the Qwen chat prompt for calibrated scores; when True it is applied
+    # automatically if the templates above are the default or the old chat-less form. Turn it off
+    # when the rerank server already applies a chat template (vLLM --chat-template), or the
+    # prompt is wrapped twice.
+    auto_template: bool = True
+    # Knowledge-gap analytics: a question whose latest search's best rerank score is below this
+    # (or that returned nothing) is listed as a gap. Model-specific like score_threshold.
+    gap_threshold: float = 0.5
 
 
 class DoclingConfig(BaseModel):
