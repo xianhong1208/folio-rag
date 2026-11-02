@@ -4,6 +4,14 @@ All notable changes to this project are documented here. The format is based on
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project adheres
 to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Changed
+- **The authorization server is now called MCP Gate** (formerly MCP Center). Docs
+  and log messages follow the new name; `src/auth/mcp_center_auth.py` is now
+  `src/auth/mcp_gate_auth.py` and `McpCenterTokenVerifier` is
+  `McpGateTokenVerifier`. Configuration and issued tokens are unaffected.
+
 ## [1.1.0] — 2026-09-18
 
 ### Added

@@ -40,17 +40,17 @@ class DynamicToolsConfig(BaseModel):
 
 
 class AuthConfig(BaseModel):
-    """Bearer-token verification against an OAuth 2.1 authorization server (MCP Center).
+    """Bearer-token verification against an OAuth 2.1 authorization server (MCP Gate).
 
     Access tokens are RS256 JWTs verified OFFLINE through the issuer's JWKS; no
     per-request network round-trip is needed once the signing keys are cached.
-    `audience` must match the resource URI registered for this server in MCP Center
+    `audience` must match the resource URI registered for this server in MCP Gate
     (defaults to the server's own MCP URL, i.e. http://<host>:<port>/mcp).
     """
     enabled: bool
 
-    # -- MCP Center (OAuth 2.1 authorization server) --
-    issuer: Optional[str] = None  # MCP Center base URL (RS256 JWKS issuer); required when enabled
+    # -- MCP Gate (OAuth 2.1 authorization server) --
+    issuer: Optional[str] = None  # MCP Gate base URL (RS256 JWKS issuer); required when enabled
     audience: Optional[str] = None  # Resource id; empty -> defaults to <server base>/mcp
     required_scopes: List[str] = []  # Scopes every token must carry (empty = none required)
 

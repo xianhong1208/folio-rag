@@ -2,7 +2,7 @@
 
 **一套開源的 Model Context Protocol 檢索增強生成（RAG）伺服器 —— 階層式切塊、auto-merging 檢索、向量 + 中文 BM25 混合搜尋,以「每個資料夾一個工具」的形式提供給 MCP 用戶端。**
 
-Agentic RAG 把一個文件資料夾變成 Claude Code、Claude Desktop、Cursor 等任何 MCP 用戶端都能呼叫的檢索工具。每個資料夾成為一個 `Agentic_<folder>` 工具,含三種模式 —— **search**、**list**、**read** —— 底層是一條會**階層切塊、以密集+稀疏訊號檢索、把相鄰命中合併成完整段落、再用 cross-encoder 重排**的管線。它是一台 **resource server**:只在本地離線驗證 OAuth token、從不簽發,搭配 [MCP Center](https://github.com/xianhong1208/MCP_Center) 當授權伺服器。
+Agentic RAG 把一個文件資料夾變成 Claude Code、Claude Desktop、Cursor 等任何 MCP 用戶端都能呼叫的檢索工具。每個資料夾成為一個 `Agentic_<folder>` 工具,含三種模式 —— **search**、**list**、**read** —— 底層是一條會**階層切塊、以密集+稀疏訊號檢索、把相鄰命中合併成完整段落、再用 cross-encoder 重排**的管線。它是一台 **resource server**:只在本地離線驗證 OAuth token、從不簽發,搭配 [MCP Gate](https://github.com/xianhong1208/MCP_Gate) 當授權伺服器。
 
 License: MIT&nbsp;·&nbsp;Python 3.12&nbsp;·&nbsp;PostgreSQL + pgvector&nbsp;·&nbsp;相容 FastMCP&nbsp;·&nbsp;OAuth 2.1（resource server）
 
@@ -16,7 +16,7 @@ License: MIT&nbsp;·&nbsp;Python 3.12&nbsp;·&nbsp;PostgreSQL + pgvector&nbsp;·
         │ OAuth 流程                                                             │ 離線驗證 JWT
         ▼                                                                        ▼
   ┌─────────────┐                              檢索管線（每次查詢）
-  │  MCP Center │  RS256 JWKS                  ingest ─▶ chunk ─▶ embed ─▶ pgvector ─▶ 混合檢索
+  │  MCP Gate │  RS256 JWKS                  ingest ─▶ chunk ─▶ embed ─▶ pgvector ─▶ 混合檢索
   │ OAuth 2.1 AS│  （離線驗證）                (Docling) (leaf+parent) (e5·1024d)   (向量 + BM25/CKIP)
   └─────────────┘                                   └▶ auto-merge + 擴展 ─▶ rerank ─▶ gpt-oss-120b
 ```
@@ -28,7 +28,7 @@ License: MIT&nbsp;·&nbsp;Python 3.12&nbsp;·&nbsp;PostgreSQL + pgvector&nbsp;·
 - **Cross-encoder 重排。** 以 `bge-reranker-v2-m3` / `mxbai-rerank-base-v2` 對融合後的候選重新評分,提升 Top-K 精度。
 - **Contextual Retrieval。** 索引時由 LLM 為每個 chunk 加上一段依文件脈絡的前綴（Anthropic 建議的做法),提升原本模稜兩可片段的可檢索性。
 - **每資料夾一個 MCP 工具,依 token 隔離。** 每個資料夾註冊成 `Agentic_<folder>` 工具;呼叫者看到的工具清單會依其 token 過濾 —— 你只看得到自己擁有的資料夾。歸屬以 token 穩定的 `jti` 為 key。
-- **OAuth 2.1 resource server。** 一個 `RemoteAuthProvider` + `JWTVerifier` 保護 `/mcp`;token 用 MCP Center 的 JWKS 在本地離線驗證（RS256),並綁定本伺服器的 audience,別台的 token 在這裡無效。
+- **OAuth 2.1 resource server。** 一個 `RemoteAuthProvider` + `JWTVerifier` 保護 `/mcp`;token 用 MCP Gate 的 JWKS 在本地離線驗證（RS256),並綁定本伺服器的 audience,別台的 token 在這裡無效。
 - **文件 + 音訊匯入。** [Docling](https://github.com/DS4SD/docling) 解析 PDF / DOCX / PPTX / XLSX / 圖片（含 OCR）;**FireRedASR** 在本地做繁體中文語音轉錄（或任何 OpenAI 相容的 `/v1/transcriptions`）。
 - **內建評測 harness。** 從你自己的 chunk 自動生成問題,對 `vector` / `hybrid` / `rerank` 評 **Recall@k · MRR · nDCG@k**,讓你針對真實語料調校檢索。
 - **Retrieval Terminal 主控台。** `/admin` 的 React 單頁主控台:管線總覽、資料夾與檔案、會顯示**逐訊號檢索軌跡**的 Search Playground、即時索引任務串流、查詢分析、評測 harness、即時設定、健康狀態與稽核時間軸。
@@ -63,16 +63,16 @@ uv run python main.py
 
 ## 快速開始
 
-Agentic RAG 透過 [MCP Center](https://github.com/xianhong1208/MCP_Center) 驗證。**順序很重要:先在 MCP Center 註冊這台伺服器** —— 它只會為它認得的 audience 簽 token。
+Agentic RAG 透過 [MCP Gate](https://github.com/xianhong1208/MCP_Gate) 驗證。**順序很重要:先在 MCP Gate 註冊這台伺服器** —— 它只會為它認得的 audience 簽 token。
 
-**1 — 在 MCP Center 註冊伺服器。** 到 MCP Center 主控台 *Services → Register Service*,填入本伺服器的 host / port / path（`/mcp`）。它的 audience 預設為 MCP URL,例如 `http://127.0.0.1:5039/mcp`。把同一個值設進 `config/config.yaml` 的 `auth.audience`。
+**1 — 在 MCP Gate 註冊伺服器。** 到 MCP Gate 主控台 *Services → Register Service*,填入本伺服器的 host / port / path（`/mcp`）。它的 audience 預設為 MCP URL,例如 `http://127.0.0.1:5039/mcp`。把同一個值設進 `config/config.yaml` 的 `auth.audience`。
 
-**2 — 讓 Agentic RAG 指向 MCP Center**（`config/config.yaml`）:
+**2 — 讓 Agentic RAG 指向 MCP Gate**（`config/config.yaml`）:
 
 ```yaml
 auth:
   enabled: true
-  issuer:   "http://localhost:4568"          # MCP Center 位址（RS256 JWKS issuer）
+  issuer:   "http://localhost:4568"          # MCP Gate 位址（RS256 JWKS issuer）
   audience: "http://127.0.0.1:5039/mcp"      # 必須等於主控台註冊的 audience
 ```
 
@@ -85,13 +85,13 @@ curl -X POST http://127.0.0.1:5039/api/folders/ \
   -d '{"name":"product-docs"}'
 ```
 
-**4 — 接上用戶端。** 有 MCP Center 擋在前面,支援 OAuth 的用戶端不需預先設定:
+**4 — 接上用戶端。** 有 MCP Gate 擋在前面,支援 OAuth 的用戶端不需預先設定:
 
 ```bash
 claude mcp add --transport http agentic-rag http://127.0.0.1:5039/mcp
 ```
 
-首次使用時,用戶端會向 MCP Center 註冊並開啟同意畫面;你按 Allow 後,`Agentic_product-docs` 工具就會出現。腳本 / CI 則在 MCP Center 簽一個 **personal access token**,以 bearer header 帶入。
+首次使用時,用戶端會向 MCP Gate 註冊並開啟同意畫面;你按 Allow 後,`Agentic_product-docs` 工具就會出現。腳本 / CI 則在 MCP Gate 簽一個 **personal access token**,以 bearer header 帶入。
 
 **5 — 開始問。** 在用戶端呼叫資料夾工具:
 
@@ -115,7 +115,7 @@ Agentic_product-docs  mode="search"  query="要怎麼輪替簽章金鑰?"
 | **Rerank** | cross-encoder（`bge-reranker-v2-m3` / `mxbai-rerank-base-v2`）重排,決定最終 Top-K 精度。 |
 | **Answer** | 走 `answer` 路徑時,`gpt-oss-120b` 依檢索到的脈絡合成回答,並由 corrective-RAG 信心檢查把關。 |
 
-**驗證。** Agentic RAG 是 *resource server*。FastMCP 會發佈 `/.well-known/oauth-protected-resource/mcp`,把用戶端導向 MCP Center;伺服器抓一次 MCP Center 的 JWKS,之後每個 bearer token 都離線驗證（RS256 —— 簽章、issuer、audience、效期、scope）。MCP Center 從不在請求路徑上。
+**驗證。** Agentic RAG 是 *resource server*。FastMCP 會發佈 `/.well-known/oauth-protected-resource/mcp`,把用戶端導向 MCP Gate;伺服器抓一次 MCP Gate 的 JWKS,之後每個 bearer token 都離線驗證（RS256 —— 簽章、issuer、audience、效期、scope）。MCP Gate 從不在請求路徑上。
 
 ## 設定
 
@@ -125,7 +125,7 @@ Agentic_product-docs  mode="search"  query="要怎麼輪替簽章金鑰?"
 |------------|------|------|
 | `DATABASE_URL` | `postgresql://…/agentic_rag` | PostgreSQL DSN。需 **pgvector** 擴充。用**同步** `postgresql://`（psycopg2),不要 `+asyncpg`。 |
 | `server.port` | `5039` | HTTP + MCP 綁定 port。MCP 端點是 `/mcp`。 |
-| `auth.enabled` / `auth.issuer` / `auth.audience` | `true` / MCP Center 位址 / 本伺服器 `/mcp` URL | 對 MCP Center 做 OAuth 2.1 驗證。 |
+| `auth.enabled` / `auth.issuer` / `auth.audience` | `true` / MCP Gate 位址 / 本伺服器 `/mcp` URL | 對 MCP Gate 做 OAuth 2.1 驗證。 |
 | `rag.embedding.{model,dimension,base_url}` | `intfloat/multilingual-e5-large`、`1024`、`:7075/v1` | embedding 模型;`dimension` **必須**等於模型實際輸出維度。 |
 | `rag.llm.{model,base_url}` | `openai/gpt-oss-120b`、`:5052/v1` | Contextual Retrieval 與 `answer` 路徑用的 LLM。 |
 | `rag.rerank.{model,base_url}` | `mixedbread-ai/mxbai-rerank-base-v2`、`:8787` | cross-encoder 重排器。 |

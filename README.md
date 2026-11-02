@@ -2,7 +2,7 @@
 
 **An open-source Retrieval-Augmented Generation server for the Model Context Protocol — hierarchical chunking, auto-merging retrieval, and hybrid vector + Chinese BM25 search, exposed to MCP clients as per-folder tools.**
 
-Agentic RAG turns a folder of documents into a retrieval tool that Claude Code, Claude Desktop, Cursor and any other MCP client can call. Each folder becomes an `Agentic_<folder>` tool with three modes — **search**, **list** and **read** — backed by a pipeline that chunks hierarchically, retrieves with dense + sparse signals, merges neighbouring hits into whole passages, and re-ranks with a cross-encoder. It is a **resource server**: it verifies OAuth tokens offline and never issues them, pairing with [MCP Center](https://github.com/xianhong1208/MCP_Center) as the authorization server.
+Agentic RAG turns a folder of documents into a retrieval tool that Claude Code, Claude Desktop, Cursor and any other MCP client can call. Each folder becomes an `Agentic_<folder>` tool with three modes — **search**, **list** and **read** — backed by a pipeline that chunks hierarchically, retrieves with dense + sparse signals, merges neighbouring hits into whole passages, and re-ranks with a cross-encoder. It is a **resource server**: it verifies OAuth tokens offline and never issues them, pairing with [MCP Gate](https://github.com/xianhong1208/MCP_Gate) as the authorization server.
 
 License: MIT&nbsp;·&nbsp;Python 3.12&nbsp;·&nbsp;PostgreSQL + pgvector&nbsp;·&nbsp;Works with FastMCP&nbsp;·&nbsp;OAuth 2.1 (resource server)
 
@@ -16,7 +16,7 @@ License: MIT&nbsp;·&nbsp;Python 3.12&nbsp;·&nbsp;PostgreSQL + pgvector&nbsp;·
         │ OAuth flow                                                             │ verify JWT offline
         ▼                                                                        ▼
   ┌─────────────┐                              retrieval pipeline (per query)
-  │  MCP Center │  RS256 JWKS                  ingest ─▶ chunk ─▶ embed ─▶ pgvector ─▶ hybrid retrieve
+  │  MCP Gate │  RS256 JWKS                  ingest ─▶ chunk ─▶ embed ─▶ pgvector ─▶ hybrid retrieve
   │ OAuth 2.1 AS│  (offline verify)            (Docling) (leaf+parent) (e5·1024d)   (vector + BM25/CKIP)
   └─────────────┘                                   └▶ auto-merge + expand ─▶ rerank ─▶ gpt-oss-120b
 ```
@@ -28,7 +28,7 @@ License: MIT&nbsp;·&nbsp;Python 3.12&nbsp;·&nbsp;PostgreSQL + pgvector&nbsp;·
 - **Cross-encoder reranking.** A `bge-reranker-v2-m3` / `mxbai-rerank-base-v2` model re-scores the fused candidates for fine-grained Top-K precision.
 - **Contextual retrieval.** At index time an LLM prepends a short, document-aware context to each chunk (Anthropic's recommended technique), improving retrievability of otherwise ambiguous fragments.
 - **Per-folder MCP tools, scoped per token.** Every folder is registered as an `Agentic_<folder>` tool; the tool list a caller sees is filtered by their token — you only see folders you own. Ownership is keyed on the token's stable `jti`.
-- **OAuth 2.1 resource server.** One `RemoteAuthProvider` + `JWTVerifier` protects `/mcp`; tokens are verified locally against MCP Center's JWKS (RS256, offline), and are bound to this server's audience so a token for another server never works here.
+- **OAuth 2.1 resource server.** One `RemoteAuthProvider` + `JWTVerifier` protects `/mcp`; tokens are verified locally against MCP Gate's JWKS (RS256, offline), and are bound to this server's audience so a token for another server never works here.
 - **Document + audio ingestion.** [Docling](https://github.com/DS4SD/docling) parses PDF / DOCX / PPTX / XLSX / images (with OCR); **FireRedASR** transcribes audio locally in Traditional Chinese (or any OpenAI-compatible `/v1/transcriptions` endpoint).
 - **Built-in evaluation harness.** Auto-generates questions from your own chunks and scores `vector` / `hybrid` / `rerank` on **Recall@k · MRR · nDCG@k**, so you can tune retrieval against your real corpus.
 - **Retrieval Terminal console.** A React single-page console at `/admin`: pipeline overview, folders & files, a **Search Playground** that shows the per-signal retrieval trace, live index-job stream, query analytics, the evaluation harness, live settings, health and an audit timeline.
@@ -63,16 +63,16 @@ The server listens on `http://0.0.0.0:5039` by default; the MCP endpoint is `/mc
 
 ## Quick start
 
-Agentic RAG authenticates through [MCP Center](https://github.com/xianhong1208/MCP_Center). The order matters: **register this server in MCP Center first** — it only issues tokens for audiences it knows.
+Agentic RAG authenticates through [MCP Gate](https://github.com/xianhong1208/MCP_Gate). The order matters: **register this server in MCP Gate first** — it only issues tokens for audiences it knows.
 
-**1 — Register the server in MCP Center.** In the MCP Center console, *Services → Register Service*, enter this server's host / port / path (`/mcp`). Its audience defaults to the MCP URL, e.g. `http://127.0.0.1:5039/mcp`. Set the same value as `auth.audience` in `config/config.yaml`.
+**1 — Register the server in MCP Gate.** In the MCP Gate console, *Services → Register Service*, enter this server's host / port / path (`/mcp`). Its audience defaults to the MCP URL, e.g. `http://127.0.0.1:5039/mcp`. Set the same value as `auth.audience` in `config/config.yaml`.
 
-**2 — Point Agentic RAG at MCP Center** (`config/config.yaml`):
+**2 — Point Agentic RAG at MCP Gate** (`config/config.yaml`):
 
 ```yaml
 auth:
   enabled: true
-  issuer:   "http://localhost:4568"          # MCP Center base URL (RS256 JWKS issuer)
+  issuer:   "http://localhost:4568"          # MCP Gate base URL (RS256 JWKS issuer)
   audience: "http://127.0.0.1:5039/mcp"      # must equal the audience registered in the console
 ```
 
@@ -85,13 +85,13 @@ curl -X POST http://127.0.0.1:5039/api/folders/ \
   -d '{"name":"product-docs"}'
 ```
 
-**4 — Connect a client.** With MCP Center in front, an OAuth-capable client needs nothing up front:
+**4 — Connect a client.** With MCP Gate in front, an OAuth-capable client needs nothing up front:
 
 ```bash
 claude mcp add --transport http agentic-rag http://127.0.0.1:5039/mcp
 ```
 
-On first use the client registers with MCP Center and opens the consent screen; after you allow it, the `Agentic_product-docs` tool appears. For scripts / CI, mint a **personal access token** in MCP Center and pass it as a bearer header.
+On first use the client registers with MCP Gate and opens the consent screen; after you allow it, the `Agentic_product-docs` tool appears. For scripts / CI, mint a **personal access token** in MCP Gate and pass it as a bearer header.
 
 **5 — Ask.** In the client, call the folder tool:
 
@@ -115,7 +115,7 @@ Your folder is indexed once, then every query runs through the pipeline:
 | **Rerank** | A cross-encoder (`bge-reranker-v2-m3` / `mxbai-rerank-base-v2`) re-scores for final Top-K precision. |
 | **Answer** | For the `answer` path, `gpt-oss-120b` synthesises a response from the retrieved context, gated by a corrective-RAG confidence check. |
 
-**Auth.** Agentic RAG is a *resource server*. FastMCP publishes `/.well-known/oauth-protected-resource/mcp`, which points clients at MCP Center; the server fetches MCP Center's JWKS once and verifies every bearer token offline (RS256 — signature, issuer, audience, expiry, scopes). MCP Center is never on the request path.
+**Auth.** Agentic RAG is a *resource server*. FastMCP publishes `/.well-known/oauth-protected-resource/mcp`, which points clients at MCP Gate; the server fetches MCP Gate's JWKS once and verifies every bearer token offline (RS256 — signature, issuer, audience, expiry, scopes). MCP Gate is never on the request path.
 
 ## Configuration
 
@@ -125,7 +125,7 @@ Settings live in `config/config.yaml`; secrets come from environment variables (
 |--------------------|---------|---------|
 | `DATABASE_URL` | `postgresql://…/agentic_rag` | PostgreSQL DSN. Requires the **pgvector** extension. Use **sync** `postgresql://` (psycopg2), not `+asyncpg`. |
 | `server.port` | `5039` | HTTP + MCP bind port. The MCP endpoint is `/mcp`. |
-| `auth.enabled` / `auth.issuer` / `auth.audience` | `true` / MCP Center URL / this server's `/mcp` URL | OAuth 2.1 verification against MCP Center. |
+| `auth.enabled` / `auth.issuer` / `auth.audience` | `true` / MCP Gate URL / this server's `/mcp` URL | OAuth 2.1 verification against MCP Gate. |
 | `rag.embedding.{model,dimension,base_url}` | `intfloat/multilingual-e5-large`, `1024`, `:7075/v1` | Embedding model; `dimension` **must** equal the model's real output dim. |
 | `rag.llm.{model,base_url}` | `openai/gpt-oss-120b`, `:5052/v1` | LLM for Contextual Retrieval and the `answer` path. |
 | `rag.rerank.{model,base_url}` | `mixedbread-ai/mxbai-rerank-base-v2`, `:8787` | Cross-encoder reranker. |
