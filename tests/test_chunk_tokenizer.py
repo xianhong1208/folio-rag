@@ -1,7 +1,6 @@
 """Chunk token counting never downloads and never crashes (fresh clone, cloud embeddings)."""
 
 import sys
-from pathlib import Path
 
 import pytest
 
@@ -27,9 +26,6 @@ def test_bundled_tokenizer_is_shipped():
 
 def test_none_model_name_uses_bundled_without_network(no_assets, monkeypatch):
     # A fresh clone with OpenAI/Azure embeddings: no assets, no HF model name.
-    def _boom(*a, **k):
-        raise AssertionError("must not download")
-
     monkeypatch.setitem(sys.modules, "huggingface_hub", None)
     tok = ct.get_chunk_tokenizer(None)
     assert isinstance(tok, ct.FastTokenizerCounter)

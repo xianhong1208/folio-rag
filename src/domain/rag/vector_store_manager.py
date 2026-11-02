@@ -40,8 +40,8 @@ def rebuild_text_search_tsv(
     text-search config), so we first detach the generated expression, turning it into
     a plain tsvector column we own. `DROP EXPRESSION IF EXISTS` is idempotent and a
     no-op once detached; existing values are kept until this UPDATE overwrites them.
-    (Rows llama-index inserts afterwards land with NULL tsv until the next rebuild,
-    which runs after every add — see hierarchical_indexer.)
+    (The indexer writes the tsv itself in the same transaction as the rows — see
+    chunk_store.replace_file_chunks.)
 
     Blocking (sync SQLAlchemy + CKIP inference); callers must run it off the event
     loop. Returns the number of rows updated.
@@ -55,8 +55,12 @@ def rebuild_text_search_tsv(
     # file_id scopes the rebuild to one file's rows (the per-file indexing hook);
     # None re-segments the whole table (the admin Rebuild-FTS backfill). Without
     # the scope, every single-file add re-ran CKIP over the entire folder.
+    # Leaves are searched by their retrieval text (prefix + breadcrumb + original text,
+    # see chunk_identity); SEARCH_TEXT_SQL is plain `text` for rows indexed before that.
+    from src.domain.rag.chunk_identity import SEARCH_TEXT_SQL
+
     select_sql = text(
-        f'SELECT id, text FROM "{table_name}"'
+        f'SELECT id, {SEARCH_TEXT_SQL} FROM "{table_name}"'
         + (" WHERE metadata_->>'file_id' = :fid" if file_id else "")
     )
     update_sql = text(

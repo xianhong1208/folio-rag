@@ -226,6 +226,8 @@ def chunks_for_file(folder_id: int, file_id: str, limit: int = 500) -> Dict[str,
             "headings": meta.get("headings"),
             "page": meta.get("page_no"),
             "content_type": meta.get("content_type"),
+            # LLM-written situating sentence: retrieval aid, not document text (shown apart)
+            "context": meta.get("context_prefix"),
         })
     return {"chunks": chunks, "total": len(chunks), "file_name": fidx}
 

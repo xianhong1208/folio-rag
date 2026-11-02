@@ -34,3 +34,13 @@ def test_splitter_drops_placeholders_and_exact_duplicates():
     assert [d.text for d in leaves] == ["Warranty is 36 months.", "Pricing starts at 100."]
     assert leaves[0].metadata["headings"] == ["A"]
     assert "_docling_chunks" not in leaves[0].metadata
+
+
+def test_same_sentence_in_two_sections_is_not_a_duplicate():
+    splitter = LeafSplitter(leaf_chunk_size=256, chunk_overlap=0)
+    doc = Document(text="x", metadata={"file_id": "f", "_docling_chunks": [
+        {"text": "Warranty: 24 months.", "headings": ["Product A"]},
+        {"text": "Warranty: 24 months.", "headings": ["Product B"]},
+    ]})
+    leaves = splitter.split_into_leaf_documents(doc)
+    assert [d.metadata["headings"] for d in leaves] == [["Product A"], ["Product B"]]

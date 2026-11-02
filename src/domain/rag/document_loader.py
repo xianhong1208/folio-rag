@@ -30,6 +30,7 @@ from src.domain.rag.docling_loader import (
     ocr_enabled,
 )
 from src.domain.rag.asr_provider import AsrProvider, create_asr_provider
+from src.domain.rag.chunk_identity import token_budgets
 from src.domain.rag.audio_defense import (
     _AUDIO_TRIM_EXTENSIONS,
     _filter_whisper_hallucinations,
@@ -145,9 +146,8 @@ class DocumentLoader:
             )
 
         if is_docling_supported(file_name):
-            docling_max_tokens = min(
-                self._leaf_chunk_size, 380 if self._has_context_generator else 450
-            )
+            docling_max_tokens, table_max_tokens = token_budgets(
+                self._leaf_chunk_size, self._has_context_generator)
             report: Dict[str, Any] = {}
             full_text, chunk_texts = docling_convert_once(
                 file_path=resolved_path,
@@ -156,6 +156,7 @@ class DocumentLoader:
                 tokenizer=self._embedding_model_name,
                 progress_cb=progress_cb,
                 report=report,
+                table_max_tokens=table_max_tokens,
             )
             content = clean_text(full_text)
             if not content.strip():
@@ -203,9 +204,7 @@ class DocumentLoader:
         Trimming/filtering are model-agnostic pre/post-processing (audio_defense), deliberately kept
         outside the provider so both defenses survive swapping in any provider.
         """
-        docling_max_tokens = min(
-            self._leaf_chunk_size, 380 if self._has_context_generator else 450
-        )
+        docling_max_tokens, _ = token_budgets(self._leaf_chunk_size, self._has_context_generator)
 
         # 1. Trim leading silence (on failure, fall back to the original file; don't block transcription)
         effective_path = resolved_path

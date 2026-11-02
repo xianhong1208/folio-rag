@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { parseMarkdownTable, parseTripletTable } from './ChunkText'
+import { parseMarkdownTable, parseTripletTable, isTripletLine, splitChunkSegments } from './ChunkText'
 
 describe('parseMarkdownTable', () => {
   it('parses a GFM table with leading/trailing pipes', () => {
@@ -86,5 +86,26 @@ describe('parseTripletTable (Docling chunker serialization)', () => {
   it('returns null for prose', () => {
     expect(parseTripletTable('Just a sentence, with a comma = but no table.')).toBeNull()
     expect(parseTripletTable('')).toBeNull()
+  })
+})
+
+describe('splitChunkSegments (prose merged with a table in one section)', () => {
+  it('keeps a lead-in paragraph as text and the triplet line as a table', () => {
+    const segs = splitChunkSegments('Power consumption depends on the load:\nIdle, Consumption = 11 W. Peak, Consumption = 18 W')
+    expect(segs.map((s) => s.type)).toEqual(['text', 'table'])
+    expect(segs[0].text).toBe('Power consumption depends on the load:')
+    expect(segs[1].table.body).toEqual([['Idle', '11 W'], ['Peak', '18 W']])
+  })
+
+  it('handles text after the table and the old prefix + blank line layout', () => {
+    const segs = splitChunkSegments('Prefix sentence.\n\nA, x = 1. B, x = 2\nFootnote.')
+    expect(segs.map((s) => s.type)).toEqual(['text', 'table', 'text'])
+    expect(segs[2].text).toBe('Footnote.')
+  })
+
+  it('does not turn prose with an equals sign into a table', () => {
+    expect(isTripletLine('Set the value x = 3, then restart.')).toBe(false)
+    expect(isTripletLine('Basic, Fee = 15. Pro, Fee = 35')).toBe(true)
+    expect(splitChunkSegments('Set the value x = 3, then restart.').map((s) => s.type)).toEqual(['text'])
   })
 })
