@@ -58,9 +58,10 @@ class TestH1LeafFilterInRestQuery:
             return [node("leaf", "L1", "00000000-0000-0000-0000-000000000001"),
                     node("parent", "P-superset", "00000000-0000-0000-0000-000000000002"),
                     node(None, "legacy", "00000000-0000-0000-0000-000000000003")]
+        searcher.sparse = AsyncMock(return_value=[])  # BM25 leaf filtering is in SQL
         with patch("llama_index.core.retrievers.VectorIndexRetriever") as R:
             R.return_value.aretrieve = AsyncMock(side_effect=lambda *a, **k: _hits())
-            results = await qe.aquery("q", SearchSettings(top_k=5, text_search_config="x"))
+            results = await qe.aquery("q", SearchSettings(top_k=5))
         texts = [r.text for r in results]
         assert "P-superset" not in texts          # parent filtered out
         assert "L1" in texts and "legacy" in texts  # legacy has no node_role, treated as a leaf

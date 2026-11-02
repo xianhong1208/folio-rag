@@ -188,40 +188,13 @@ class _Recorder:
         return _R()
 
 
-class TestDenseSparse:
-    async def test_dense_and_sparse_keep_leaves_only(self):
-        rec = _Recorder({"default": [nws("a"), nws("p", role="parent"), nws("old", role=None)],
-                         "sparse": [nws("p", role="parent"), nws("b")]})
+class TestDense:
+    async def test_dense_keeps_leaves_only(self):
+        rec = _Recorder({"default": [nws("a"), nws("p", role="parent"), nws("old", role=None)]})
         s = HybridSearcher(MagicMock(), index=MagicMock())
-        with patch("llama_index.core.retrievers.VectorIndexRetriever", rec), \
-             patch.object(s, "_or_query", AsyncMock(return_value="q")):
+        with patch("llama_index.core.retrievers.VectorIndexRetriever", rec):
             assert ids(await s.dense("q", 5)) == ["a", "old"]
-            assert ids(await s.sparse("q", 5, SearchSettings())) == ["b"]
-
-    async def test_simple_config_segments_query_in_python(self):
-        seg = MagicMock()
-        seg.segment.return_value = "退貨 政策"
-        s = HybridSearcher(MagicMock(), index=MagicMock())
-        with patch("src.domain.rag.ckip_segmenter.get_segmenter", return_value=seg):
-            assert await s._or_query("退貨政策", SearchSettings()) == "退貨 政策"
-
-    async def test_segmentation_failure_falls_back_to_raw(self):
-        s = HybridSearcher(MagicMock(), index=MagicMock())
-        with patch("src.domain.rag.ckip_segmenter.get_segmenter", side_effect=RuntimeError):
-            assert await s._or_query("raw", SearchSettings()) == "raw"
-
-    async def test_other_configs_use_database_lexemes(self):
-        conn = MagicMock()
-        conn.execute.return_value.scalar.return_value = "return polici"
-        eng = MagicMock()
-        eng.connect.return_value.__enter__.return_value = conn
-        s = HybridSearcher(MagicMock(), index=MagicMock())
-        with patch("db.db.get_engine", return_value=eng):
-            out = await s._or_query("return policies", SearchSettings(text_search_config="english"))
-        assert out == "return polici"
-        with patch("db.db.get_engine", side_effect=RuntimeError):
-            out = await s._or_query("x y", SearchSettings(text_search_config="english"))
-        assert out == "x y"
+        assert rec.calls[0][0] == "default"
 
 
 # ------------------------------------------------- MCP uses the same path
@@ -231,18 +204,21 @@ class TestMcpUsesSharedPath:
         """The MCP retriever must not use llama-index's native hybrid on the raw query."""
         from src.domain.rag.auto_merging import AutoMergingRetriever
 
-        rec = _Recorder({"default": [nws("a", 0.8)], "sparse": [nws("b", 2.0)]})
+        from tests.test_bm25_search import _row, _searcher_with_db
+
+        rec = _Recorder({"default": [nws("a", 0.8)]})
         seg = MagicMock()
         seg.segment.return_value = "退貨 政策"
-        searcher = HybridSearcher(MagicMock(), index=MagicMock())
+        searcher, conn, engine = _searcher_with_db({"'退貨' & '政策'": [_row("b", 2.0)]})
+        del searcher.segment_query                              # use the real one
         retr = AutoMergingRetriever(MagicMock(), merge_threshold=1.1,
                                     expand_context_neighbors=0, searcher=searcher)
         with patch("llama_index.core.retrievers.VectorIndexRetriever", rec), \
-             patch("src.domain.rag.ckip_segmenter.get_segmenter", return_value=seg):
+             patch("src.domain.rag.ckip_segmenter.get_segmenter", return_value=seg), \
+             patch("db.db.get_async_engine", return_value=engine):
             out = await retr.aquery("退貨政策", SearchSettings(top_k=5), expand_context=False)
-        modes = [c[0] for c in rec.calls]
-        assert "hybrid" not in modes
-        assert ("sparse", "退貨 政策") in [(c[0], c[1]) for c in rec.calls]
+        assert [c[0] for c in rec.calls] == ["default"]         # no native "hybrid"
+        assert conn.calls[0][1]["q"] == "'退貨' & '政策'"         # segmented BM25
         assert {r.node_id for r in out} == {"a", "b"}          # BM25 hit reaches agents
         assert retr.last_outcome is not None
 
