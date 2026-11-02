@@ -36,6 +36,11 @@ def load_overrides_on_startup() -> int:
     by one and logged — a single bad row must not block service startup.
     Returns the number successfully applied.
     """
+    # main.py runs this before init_db(); bind the ORM session to the engine first,
+    # or every read fails with "Could not locate a bind" and load_all() quietly
+    # returns nothing, dropping the saved console settings on every restart.
+    from db.db import get_engine
+    get_engine()
     overrides = RuntimeSettingsDB.load_all()
     if not overrides:
         return 0

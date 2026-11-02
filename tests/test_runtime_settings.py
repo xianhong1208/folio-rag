@@ -165,7 +165,7 @@ class TestService:
     def test_startup_overlay_skips_invalid_rows(self):
         cfg = _mk_config()
         from src.adapter import runtime_settings_service as svc
-        with self._with_cfg(cfg), \
+        with self._with_cfg(cfg), patch("db.db.get_engine"), \
              patch(f"{_SVC}.RuntimeSettingsDB") as db:
             db.load_all.return_value = {
                 "rag.retrieval.default_top_k": 15,
@@ -175,6 +175,22 @@ class TestService:
             applied = svc.load_overrides_on_startup()
         assert applied == 1
         assert cfg.rag.retrieval.default_top_k == 15
+
+    def test_startup_overlay_binds_the_engine_before_reading(self):
+        """main.py overlays the overrides before it calls init_db. Without binding the
+        session first, every read failed ("Could not locate a bind") and the saved
+        console settings were silently dropped on each restart."""
+        cfg = _mk_config()
+        from src.adapter import runtime_settings_service as svc
+        order = []
+        with self._with_cfg(cfg), \
+             patch("db.db.get_engine", side_effect=lambda: order.append("bind")) as ge, \
+             patch(f"{_SVC}.RuntimeSettingsDB") as db:
+            db.load_all.side_effect = lambda: order.append("read") or {"rag.retrieval.default_top_k": 9}
+            assert svc.load_overrides_on_startup() == 1
+        ge.assert_called_once()
+        assert order == ["bind", "read"]
+        assert cfg.rag.retrieval.default_top_k == 9
 
     def test_reset_without_override_returns_false(self):
         from src.adapter import runtime_settings_service as svc
