@@ -41,7 +41,7 @@ export default function JobsPage() {
       <div className="card">
         <div className="card-head">
           <div className="icon"><Zap size={16} /></div>
-          <div><h2>Index Jobs</h2><div className="desc">Recent jobs · refreshes every 10s</div></div>
+          <div><h2>Index Jobs</h2><div className="desc">Recent jobs on your folders (every folder for admins) · refreshes every 10s</div></div>
         </div>
         <div className="jobstream">
           {jobs == null ? <div className="sec" style={{ marginTop: 8 }}>loading…</div>
@@ -56,7 +56,7 @@ export default function JobsPage() {
                       <div className="js-top">
                         <span className="js-folder">{j.folder_name || ('#' + j.folder_id)}</span>
                         <span className="js-count">{j.processed_files}/{j.total_files}</span>
-                        {running && (
+                        {running && j.owned !== false && (
                           <button className="act-btn danger" title="Cancel job" onClick={() => cancel(j)}><XCircle size={14} /></button>
                         )}
                       </div>

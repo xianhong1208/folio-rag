@@ -23,7 +23,9 @@ export default defineConfig({
   },
   server: {
     proxy: {
-      '/api': { target: BACKEND, changeOrigin: true },
+      // The backend's CSRF check wants Origin to match the host it sees; changeOrigin
+      // rewrites Host to BACKEND, so present the same origin.
+      '/api': { target: BACKEND, changeOrigin: true, headers: { origin: BACKEND } },
     },
   },
   // Vitest reads this same config. Pure-function suites run in Node (no jsdom),

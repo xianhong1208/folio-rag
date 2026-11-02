@@ -1,6 +1,6 @@
 import { useEffect, useState, useCallback, useRef } from 'react'
 import { Folder, Play, Pencil, Trash2, Download, Eye, X, RefreshCw } from 'lucide-react'
-import { get, post, api } from '../services/api'
+import { get, post, api, upload as uploadFile } from '../services/api'
 import { fmtNum, fmtBytes, fmtTime, shortModel } from '../lib/format'
 import EmptyState from '../components/ui/EmptyState'
 import ChunkText, { ContentBadge } from '../components/ui/ChunkText'
@@ -113,12 +113,11 @@ export default function FoldersPage() {
       title: 'New Folder', action: 'Create',
       fields: [
         { id: 'name', label: 'Name', placeholder: 'e.g. product-docs', required: true },
-        { id: 'owner_token', label: 'Owner Token', placeholder: 'user token that owns this folder', required: true },
       ],
-      note: 'Folders are token-scoped — users access this folder with this token via REST / MCP.',
+      note: 'The folder is owned by the token you signed in with — reach it over REST / MCP with that same token.',
     })
     if (!r) return
-    try { await post('/api/admin/manage/folders', { name: r.name.trim(), owner_token: r.owner_token.trim() }); toast('Folder created', 'ok'); loadFolders() }
+    try { await post('/api/admin/manage/folders', { name: r.name.trim() }); toast('Folder created', 'ok'); loadFolders() }
     catch (e) { toast('Create failed: ' + e.message, 'bad') }
   }
   const reindexFolder = async (fid, skip) => {
@@ -172,15 +171,7 @@ export default function FoldersPage() {
       fd.append('file', f)
       fd.append('auto_index', 'true')
       try {
-        const res = await fetch(`/api/admin/manage/folders/${cur.id}/files`, { method: 'POST', body: fd })
-        if (!res.ok) {
-          let msg = `HTTP ${res.status}`
-          try {
-            const d = await res.json()
-            msg = d.detail?.error || d.detail?.[0]?.msg || (typeof d.detail === 'string' ? d.detail : null) || d.message || msg
-          } catch { /* non-JSON */ }
-          throw new Error(msg)
-        }
+        await uploadFile(`/api/admin/manage/folders/${cur.id}/files`, fd)
         ok++
       } catch (err) { toast(`Upload failed: ${f.name} — ${err.message}`, 'bad') }
     }
