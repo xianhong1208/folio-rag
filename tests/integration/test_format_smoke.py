@@ -117,13 +117,13 @@ def test_pure_parser_format(samples, converter, ext, monkeypatch):
     assert SENT in text, f".{ext}: sentinel text missing from the parse"
 
 
-@pytest.mark.skipif(not _SOFFICE, reason="LibreOffice(soffice)未安裝")
+@pytest.mark.skipif(not _SOFFICE, reason="LibreOffice (soffice) is not installed")
 @pytest.mark.parametrize("ext", _LEGACY_EXTS)
 def test_legacy_office_format(samples, converter, ext):
     f = samples / f"t.{ext}"
-    assert f.exists(), f"soffice 轉檔未產出 t.{ext}"
+    assert f.exists(), f"soffice conversion did not produce t.{ext}"
     text = converter.convert(str(f)).document.export_to_markdown()
-    assert SENT in text, f".{ext} 解析結果不含哨兵內容"
+    assert SENT in text, f"parsed .{ext} does not contain the sentinel text"
 
 
 # Citation provenance: verify the meta shape (meta.headings, doc_items[].prov[].page_no)
@@ -143,9 +143,9 @@ def test_chunk_records_carry_headings_md(samples, converter):
     doc = converter.convert(str(samples / "t.md")).document
     chunks = list(HierarchicalChunker().chunk(doc))
     recs = _refine_chunks_for_token_budget(chunks, _LenTok(), 512)
-    assert recs, "md 解析後無 chunk 記錄"
+    assert recs, "no chunk records after parsing md"
     assert any(r["headings"] for r in recs), \
-        "真 docling chunk 的 meta.headings 未進記錄(schema 走樣?)"
+        "a real docling chunk's meta.headings did not reach the record (schema drift?)"
 
 
 def test_chunk_records_carry_page_no_pdf(samples, converter):
@@ -163,6 +163,6 @@ def test_chunk_records_carry_page_no_pdf(samples, converter):
     doc = converter.convert(str(pdf_path)).document
     chunks = list(HierarchicalChunker().chunk(doc))
     recs = _refine_chunks_for_token_budget(chunks, _LenTok(), 512)
-    assert recs, "PDF 解析後無 chunk 記錄"
+    assert recs, "no chunk records after parsing the PDF"
     assert any(r["page_no"] == 1 for r in recs), \
-        "真 docling chunk 的 prov.page_no 未進記錄(schema 走樣?)"
+        "a real docling chunk's prov.page_no did not reach the record (schema drift?)"

@@ -72,9 +72,9 @@ def pyproject() -> dict:
 def test_torch_groups_present(pyproject):
     """Precondition: torch groups are actually parsed (otherwise later assertions run empty and pass falsely)."""
     groups = _torch_groups(pyproject)
-    assert groups, "沒有解析到任何宣告 torch 的 dependency-group"
+    assert groups, "no dependency-group declaring torch was parsed"
     # Should currently cover at least these; adding others won't fail the test, but a missing existing one matters
-    assert {"cuda", "cpu"} <= groups, f"預期 cuda/cpu 為 torch group,實得 {groups}"
+    assert {"cuda", "cpu"} <= groups, f"expected cuda/cpu to be torch groups, got {groups}"
 
 
 def test_every_torch_group_in_conflicts(pyproject):
@@ -83,8 +83,8 @@ def test_every_torch_group_in_conflicts(pyproject):
     conflict_groups = _conflict_groups(pyproject)
     missing = torch_groups - conflict_groups
     assert not missing, (
-        f"torch group {sorted(missing)} 不在 [tool.uv] conflicts 清單裡;"
-        f"同時啟用會互相覆蓋且 uv 不會警告。請加進互斥清單。"
+        f"torch groups {sorted(missing)} are missing from the [tool.uv] conflicts list; "
+        f"enabled together they overwrite each other and uv does not warn. Add them to the conflicts list."
     )
 
 
@@ -92,7 +92,7 @@ def test_conflicts_only_reference_real_groups(pyproject):
     """Reverse: conflicts must not reference a nonexistent group (e.g. a leftover old per-gfx alias)."""
     declared = set(pyproject.get("dependency-groups", {}))
     stale = _conflict_groups(pyproject) - declared
-    assert not stale, f"conflicts 引用了不存在的 group {sorted(stale)}(可能是刪 group 時漏清)"
+    assert not stale, f"conflicts reference groups that do not exist: {sorted(stale)} (left over from a removed group?)"
 
 
 @pytest.mark.parametrize("package", _TORCH_STACK)
@@ -107,5 +107,5 @@ def test_every_torch_group_has_source_mapping(pyproject, package):
     mapped = _source_groups(pyproject, package)
     missing = torch_groups - mapped
     assert not missing, (
-        f"{package} 缺少 group {sorted(missing)} 的 [tool.uv.sources] index 對應"
+        f"{package} has no [tool.uv.sources] index mapping for groups {sorted(missing)}"
     )

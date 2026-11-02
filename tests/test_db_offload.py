@@ -26,7 +26,7 @@ async def test_run_db_executes_off_loop_thread():
 
     result = await _run_db(_blocking)
     assert result == "ok"
-    assert seen["thread"] != loop_thread, "DB helper 仍在 event loop 執行緒上跑(沒 offload)"
+    assert seen["thread"] != loop_thread, "the DB helper still runs on the event-loop thread (not offloaded)"
 
 
 async def test_run_db_passes_args_and_returns():

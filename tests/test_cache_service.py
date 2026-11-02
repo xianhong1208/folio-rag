@@ -47,21 +47,21 @@ def clean_singleton():
 # InMemoryCache basic behavior
 
 def test_set_get_roundtrip():
-    """get after set returns the original value (TC-cache-01)"""
+    """get after set returns the original value"""
     cache = InMemoryCache()
     cache.set("k1", {"a": 1})
     assert cache.get("k1") == {"a": 1}
 
 
 def test_get_missing_key_returns_none():
-    """get on a missing key returns None and records a miss (TC-cache-02)"""
+    """get on a missing key returns None and records a miss"""
     cache = InMemoryCache()
     assert cache.get("nope") is None
     assert cache.get_stats()["misses"] == 1
 
 
 def test_set_overwrites_existing_key():
-    """set on an existing key overwrites the old value (TC-cache-03)"""
+    """set on an existing key overwrites the old value"""
     cache = InMemoryCache()
     cache.set("k", "old")
     cache.set("k", "new")
@@ -71,7 +71,7 @@ def test_set_overwrites_existing_key():
 # TTL expiry
 
 def test_get_after_ttl_expired_returns_none(fake_time):
-    """After TTL, get returns None and the entry is removed (TC-cache-04)"""
+    """After TTL, get returns None and the entry is removed"""
     cache = InMemoryCache()
     cache.set("k", "v", ttl=10)
     fake_time.advance(11)
@@ -80,7 +80,7 @@ def test_get_after_ttl_expired_returns_none(fake_time):
 
 
 def test_get_at_exact_expiry_still_hits(fake_time):
-    """Exactly at the expiry time still counts as valid (expiry check is strictly greater-than) (TC-cache-05)"""
+    """Exactly at the expiry time still counts as valid (expiry check is strictly greater-than)"""
     cache = InMemoryCache()
     cache.set("k", "v", ttl=10)
     fake_time.advance(10)  # now == expiry_time
@@ -88,7 +88,7 @@ def test_get_at_exact_expiry_still_hits(fake_time):
 
 
 def test_set_without_ttl_uses_default_ttl(fake_time):
-    """When ttl is unspecified, the constructor's default_ttl is used (TC-cache-06)"""
+    """When ttl is unspecified, the constructor's default_ttl is used"""
     cache = InMemoryCache(default_ttl=50)
     cache.set("k", "v")  # ttl=None -> default 50
     fake_time.advance(49)
@@ -100,7 +100,7 @@ def test_set_without_ttl_uses_default_ttl(fake_time):
 # delete / clear_pattern / clear_all
 
 def test_delete_existing_key():
-    """After deleting an existing key, get returns None and the deletes counter +1 (TC-cache-07)"""
+    """After deleting an existing key, get returns None and the deletes counter +1"""
     cache = InMemoryCache()
     cache.set("k", "v")
     cache.delete("k")
@@ -109,14 +109,14 @@ def test_delete_existing_key():
 
 
 def test_delete_missing_key_is_noop():
-    """delete on a missing key does not raise, deletes counter unchanged (TC-cache-08)"""
+    """delete on a missing key does not raise, deletes counter unchanged"""
     cache = InMemoryCache()
     cache.delete("ghost")  # should not raise
     assert cache.get_stats()["deletes"] == 0
 
 
 def test_clear_pattern_star_wildcard():
-    """clear_pattern("folder:*") clears only keys with the folder: prefix (TC-cache-09)"""
+    """clear_pattern("folder:*") clears only keys with the folder: prefix"""
     cache = InMemoryCache()
     cache.set("folder:t1:a", 1)
     cache.set("folder:t1:b", 2)
@@ -129,7 +129,7 @@ def test_clear_pattern_star_wildcard():
 
 
 def test_clear_pattern_question_mark_single_char():
-    """clear_pattern's ? matches only a single character (TC-cache-10)"""
+    """clear_pattern's ? matches only a single character"""
     cache = InMemoryCache()
     cache.set("k1", 1)
     cache.set("k2", 2)
@@ -141,7 +141,7 @@ def test_clear_pattern_question_mark_single_char():
 
 
 def test_clear_all_empties_cache():
-    """clear_all empties the entire cache (TC-cache-11)"""
+    """clear_all empties the entire cache"""
     cache = InMemoryCache()
     cache.set("a", 1)
     cache.set("b", 2)
@@ -153,7 +153,7 @@ def test_clear_all_empties_cache():
 # LRU eviction
 
 def test_lru_eviction_removes_least_recently_used(fake_time):
-    """When the cache is full, adding a key evicts the least recently used entry (TC-cache-12)"""
+    """When the cache is full, adding a key evicts the least recently used entry"""
     cache = InMemoryCache(max_size=2)
     cache.set("a", 1)
     fake_time.advance(1)
@@ -168,7 +168,7 @@ def test_lru_eviction_removes_least_recently_used(fake_time):
 
 
 def test_set_existing_key_when_full_does_not_evict(fake_time):
-    """Overwriting an existing key when the cache is full does not trigger eviction (TC-cache-13)"""
+    """Overwriting an existing key when the cache is full does not trigger eviction"""
     cache = InMemoryCache(max_size=2)
     cache.set("a", 1)
     fake_time.advance(1)
@@ -182,7 +182,7 @@ def test_set_existing_key_when_full_does_not_evict(fake_time):
 # cleanup_expired / get_stats
 
 def test_cleanup_expired_removes_only_expired(fake_time):
-    """cleanup_expired removes only expired entries, keeping live ones (TC-cache-14)"""
+    """cleanup_expired removes only expired entries, keeping live ones"""
     cache = InMemoryCache()
     cache.set("short", 1, ttl=5)
     cache.set("long", 2, ttl=100)
@@ -193,7 +193,7 @@ def test_cleanup_expired_removes_only_expired(fake_time):
 
 
 def test_get_stats_counters_and_hit_rate():
-    """get_stats correctly accumulates hits/misses/sets/deletes and hit_rate (TC-cache-15)"""
+    """get_stats correctly accumulates hits/misses/sets/deletes and hit_rate"""
     cache = InMemoryCache(max_size=7)
     cache.get("miss")          # miss 1
     cache.set("k", "v")        # set 1
@@ -209,7 +209,7 @@ def test_get_stats_counters_and_hit_rate():
 
 
 def test_get_stats_initial_hit_rate_zero():
-    """With no requests, hit_rate is 0.0 rather than a division-by-zero error (TC-cache-16)"""
+    """With no requests, hit_rate is 0.0 rather than a division-by-zero error"""
     stats = InMemoryCache().get_stats()
     assert stats["hit_rate"] == 0.0
     assert stats["size"] == 0
@@ -218,14 +218,14 @@ def test_get_stats_initial_hit_rate_zero():
 # CacheService singleton
 
 def test_cache_service_returns_same_instance(clean_singleton):
-    """Two get_instance calls return the same object (TC-cache-17)"""
+    """Two get_instance calls return the same object"""
     a = CacheService.get_instance()
     b = CacheService.get_instance()
     assert a is b
 
 
 def test_reset_instance_creates_new_instance(clean_singleton):
-    """After reset_instance, get_instance returns a brand-new instance (TC-cache-18)"""
+    """After reset_instance, get_instance returns a brand-new instance"""
     a = CacheService.get_instance()
     a.set("k", "v")
     CacheService.reset_instance()
@@ -249,12 +249,12 @@ def test_reset_instance_creates_new_instance(clean_singleton):
     ],
 )
 def test_cache_keys_formats(generated, expected):
-    """Each CacheKeys staticmethod produces a fixed-format key (TC-cache-19)"""
+    """Each CacheKeys staticmethod produces a fixed-format key"""
     assert generated == expected
 
 
 def test_cache_ttl_constants():
-    """CacheTTL constant values match the design (seconds) (TC-cache-20)"""
+    """CacheTTL constant values match the design (seconds)"""
     assert CacheTTL.FOLDER == 300
     assert CacheTTL.FILE_LIST == 180
     assert CacheTTL.FILE_DETAIL == 300

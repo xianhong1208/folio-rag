@@ -159,4 +159,4 @@ class TestAdvisoryLock:
              patch.object(DatabaseMigrator, "_get_head_revision", return_value="aaa111"), \
              patch.object(DatabaseMigrator, "_execute_upgrade", return_value=False):
             assert m.upgrade("head") is False
-        assert _lock_calls(conn)[-1] == "unlock", "失敗路徑也必須解鎖"
+        assert _lock_calls(conn)[-1] == "unlock", "the failure path must unlock too"

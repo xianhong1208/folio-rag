@@ -41,7 +41,7 @@ class TestSimplifiedRatio:
 
     def test_pure_simplified(self):
         r = simplified_char_ratio("会议记录与检索系统")
-        assert r > 0.5, f"明顯簡體文本應被偵測,實得 {r}"
+        assert r > 0.5, f"clearly Simplified text should be detected, got {r}"
 
     def test_no_cjk_returns_zero(self):
         assert simplified_char_ratio("hello 123") == 0.0

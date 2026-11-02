@@ -1,7 +1,6 @@
 """Unit tests for src/domain/exceptions.py — the domain exception hierarchy and HTTP status mapping.
 
 No dependency on the DB / vLLM / any external service — pure logic tests.
-Related docs: docs/testing/specs/SPEC-exceptions.md, docs/testing/test-cases/TC-exceptions.md
 """
 
 import pytest
@@ -24,7 +23,7 @@ from src.domain.exceptions import (
 
 
 def test_domain_exception_attributes_and_default_details():
-    """message / error_code are stored correctly; details defaults to an empty dict when not given (TC-exceptions-01)."""
+    """message / error_code are stored correctly; details defaults to an empty dict when not given."""
     exc = DomainException(message="something broke", error_code="SOME_CODE")
     assert exc.message == "something broke"
     assert exc.error_code == "SOME_CODE"
@@ -32,26 +31,26 @@ def test_domain_exception_attributes_and_default_details():
 
 
 def test_domain_exception_str_and_inheritance():
-    """str(exc) equals message, and it is a standard Exception subclass (TC-exceptions-02)."""
+    """str(exc) equals message, and it is a standard Exception subclass."""
     exc = DomainException(message="msg here", error_code="X")
     assert str(exc) == "msg here"
     assert isinstance(exc, Exception)
 
 
 def test_to_dict_without_details():
-    """When details is empty, to_dict contains only the error and message keys (TC-exceptions-03)."""
+    """When details is empty, to_dict contains only the error and message keys."""
     exc = DomainException(message="m", error_code="CODE")
     assert exc.to_dict() == {"error": "CODE", "message": "m"}
 
 
 def test_to_dict_with_details():
-    """When details is non-empty, to_dict includes the details key (TC-exceptions-04)."""
+    """When details is non-empty, to_dict includes the details key."""
     exc = DomainException(message="m", error_code="CODE", details={"k": "v"})
     assert exc.to_dict() == {"error": "CODE", "message": "m", "details": {"k": "v"}}
 
 
 def test_resource_not_found_default_message_and_code():
-    """Auto-composed message, error_code of {TYPE}_NOT_FOUND, and details with the stringified identifier (TC-exceptions-05)."""
+    """Auto-composed message, error_code of {TYPE}_NOT_FOUND, and details with the stringified identifier."""
     exc = ResourceNotFoundError(resource_type="folder", identifier=42)
     assert exc.message == "folder not found: 42"
     assert exc.error_code == "FOLDER_NOT_FOUND"
@@ -59,35 +58,35 @@ def test_resource_not_found_default_message_and_code():
 
 
 def test_resource_not_found_custom_message():
-    """A custom message overrides the default format (TC-exceptions-06)."""
+    """A custom message overrides the default format."""
     exc = ResourceNotFoundError(resource_type="file", identifier="abc", message="custom words")
     assert exc.message == "custom words"
     assert exc.error_code == "FILE_NOT_FOUND"
 
 
 def test_folder_not_found_by_id():
-    """When built from folder_id, the identifier uses the id (TC-exceptions-07)."""
+    """When built from folder_id, the identifier uses the id."""
     exc = FolderNotFoundError(folder_id=7)
     assert exc.error_code == "FOLDER_NOT_FOUND"
     assert exc.details["identifier"] == "7"
 
 
 def test_folder_not_found_by_name():
-    """When only folder_name is given, the identifier uses the name (TC-exceptions-08)."""
+    """When only folder_name is given, the identifier uses the name."""
     exc = FolderNotFoundError(folder_name="財報")
     assert exc.details["identifier"] == "財報"
     assert "財報" in exc.message
 
 
 def test_file_not_found():
-    """FILE_NOT_FOUND code with the file_id identifier (TC-exceptions-09)."""
+    """FILE_NOT_FOUND code with the file_id identifier."""
     exc = DomainFileNotFoundError(file_id="f-123")
     assert exc.error_code == "FILE_NOT_FOUND"
     assert exc.details == {"resource_type": "file", "identifier": "f-123"}
 
 
 def test_file_index_not_found():
-    """FILE_INDEX_NOT_FOUND code with a "not yet indexed" message (TC-exceptions-10)."""
+    """FILE_INDEX_NOT_FOUND code with a "not yet indexed" message."""
     exc = FileIndexNotFoundError(file_id="f-9")
     assert exc.error_code == "FILE_INDEX_NOT_FOUND"
     assert exc.message == "File f-9 has not been indexed yet"
@@ -95,7 +94,7 @@ def test_file_index_not_found():
 
 
 def test_unauthorized_without_reason():
-    """Without a reason, the message contains only the resource information (TC-exceptions-11)."""
+    """Without a reason, the message contains only the resource information."""
     exc = UnauthorizedAccessError(resource_type="folder", resource_id=5)
     assert exc.error_code == "UNAUTHORIZED_ACCESS"
     assert exc.message == "Not authorized to access folder: 5"
@@ -103,13 +102,13 @@ def test_unauthorized_without_reason():
 
 
 def test_unauthorized_with_reason():
-    """When a reason is given, it is appended to the end of the message (TC-exceptions-12)."""
+    """When a reason is given, it is appended to the end of the message."""
     exc = UnauthorizedAccessError(resource_type="file", resource_id="x", reason="not owner")
     assert exc.message == "Not authorized to access file: x - not owner"
 
 
 def test_invalid_token_default_and_custom_reason():
-    """INVALID_TOKEN code; both the default and a custom reason serve directly as the message (TC-exceptions-13)."""
+    """INVALID_TOKEN code; both the default and a custom reason serve directly as the message."""
     default_exc = InvalidTokenError()
     assert default_exc.error_code == "INVALID_TOKEN"
     assert default_exc.message == "Invalid or expired token"
@@ -118,7 +117,7 @@ def test_invalid_token_default_and_custom_reason():
 
 
 def test_validation_error_with_value():
-    """When value is not None, details contains the stringified invalid_value (TC-exceptions-14)."""
+    """When value is not None, details contains the stringified invalid_value."""
     exc = ValidationError(field="top_k", message="must be positive", value=-3)
     assert exc.error_code == "VALIDATION_ERROR"
     assert exc.message == "Validation failed for top_k: must be positive"
@@ -126,27 +125,27 @@ def test_validation_error_with_value():
 
 
 def test_validation_error_without_value():
-    """When value is None, details does not contain invalid_value (TC-exceptions-15)."""
+    """When value is None, details does not contain invalid_value."""
     exc = ValidationError(field="query", message="empty")
     assert exc.details == {"field": "query"}
     assert "invalid_value" not in exc.details
 
 
 def test_conflict_with_resource():
-    """When resource is given, it goes into details (TC-exceptions-16)."""
+    """When resource is given, it goes into details."""
     exc = ConflictError(message="already indexing", resource="file f-1")
     assert exc.error_code == "CONFLICT"
     assert exc.details == {"resource": "file f-1"}
 
 
 def test_conflict_without_resource():
-    """Without a resource, details is an empty dict (TC-exceptions-17)."""
+    """Without a resource, details is an empty dict."""
     exc = ConflictError(message="state conflict")
     assert exc.details == {}
 
 
 def test_rag_operation_error_code_from_operation():
-    """error_code is composed as RAG_{OP}_ERROR from the uppercased operation (TC-exceptions-18)."""
+    """error_code is composed as RAG_{OP}_ERROR from the uppercased operation."""
     exc = RAGOperationError(operation="indexing", reason="disk full")
     assert exc.error_code == "RAG_INDEXING_ERROR"
     assert exc.message == "RAG indexing failed: disk full"
@@ -154,7 +153,7 @@ def test_rag_operation_error_code_from_operation():
 
 
 def test_file_indexing_error():
-    """RAG_INDEXING_ERROR code, with file_id in details (TC-exceptions-19)."""
+    """RAG_INDEXING_ERROR code, with file_id in details."""
     exc = FileIndexingError(file_id="f-7", reason="parse failed")
     assert exc.error_code == "RAG_INDEXING_ERROR"
     assert exc.details == {"file_id": "f-7"}
@@ -162,14 +161,14 @@ def test_file_indexing_error():
 
 
 def test_query_execution_error_with_folder():
-    """When folder_id is given, details contains both query and folder_id (TC-exceptions-20)."""
+    """When folder_id is given, details contains both query and folder_id."""
     exc = QueryExecutionError(query="財報重點", reason="timeout", folder_id=3)
     assert exc.error_code == "RAG_QUERY_ERROR"
     assert exc.details == {"query": "財報重點", "folder_id": 3}
 
 
 def test_query_execution_error_without_folder():
-    """Without folder_id, details contains only query (TC-exceptions-21)."""
+    """Without folder_id, details contains only query."""
     exc = QueryExecutionError(query="q", reason="r")
     assert exc.details == {"query": "q"}
     assert "folder_id" not in exc.details
@@ -195,19 +194,19 @@ def test_query_execution_error_without_folder():
     ],
 )
 def test_http_status_mapping(exc, expected_status):
-    """Each known error_code maps to its corresponding HTTP status (TC-exceptions-22)."""
+    """Each known error_code maps to its corresponding HTTP status."""
     assert get_http_status_for_exception(exc) == expected_status
 
 
 def test_http_status_unknown_code_defaults_to_500():
-    """An unknown error_code (including unlisted RAG operations) always returns 500 (TC-exceptions-23)."""
+    """An unknown error_code (including unlisted RAG operations) always returns 500."""
     assert get_http_status_for_exception(DomainException("m", "TOTALLY_UNKNOWN")) == 500
     # RAG_EMBEDDING_ERROR is not in the mapping table and also falls through to the default 500
     assert get_http_status_for_exception(RAGOperationError("embedding", "r")) == 500
 
 
 def test_all_exceptions_inherit_domain_exception():
-    """The whole family are DomainException subclasses, catchable by a single except (TC-exceptions-24)."""
+    """The whole family are DomainException subclasses, catchable by a single except."""
     instances = [
         ResourceNotFoundError("folder", 1),
         FolderNotFoundError(folder_id=1),

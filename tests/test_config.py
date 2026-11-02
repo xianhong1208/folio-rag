@@ -77,7 +77,7 @@ def _write_config(tmp_path, monkeypatch, text, name="config.yaml"):
 # config/model.py -- representative Pydantic models
 
 def test_server_config_required_and_coercion():
-    """ServerConfig builds with all required fields; a string port is auto-coerced to int (TC-config-01)"""
+    """ServerConfig builds with all required fields; a string port is auto-coerced to int"""
     cfg = ServerConfig(host="0.0.0.0", port="8080", transport="sse")
     assert cfg.host == "0.0.0.0"
     assert cfg.port == 8080
@@ -85,7 +85,7 @@ def test_server_config_required_and_coercion():
 
 
 def test_server_config_missing_required():
-    """ServerConfig missing any of the required host/port/transport -> ValidationError (TC-config-02)"""
+    """ServerConfig missing any of the required host/port/transport -> ValidationError"""
     with pytest.raises(ValidationError) as exc_info:
         ServerConfig(host="0.0.0.0")
     missing = {e["loc"][0] for e in exc_info.value.errors()}
@@ -93,7 +93,7 @@ def test_server_config_missing_required():
 
 
 def test_database_config_optional_defaults():
-    """DatabaseConfig host/port/database/user/password default to None (TC-config-03)"""
+    """DatabaseConfig host/port/database/user/password default to None"""
     cfg = DatabaseConfig(
         url="sqlite://", echo=False, pool_size=5,
         max_overflow=10, pool_timeout=30, pool_recycle=3600,
@@ -106,7 +106,7 @@ def test_database_config_optional_defaults():
 
 
 def test_auth_config_defaults():
-    """AuthConfig with only enabled given; the rest of the connection settings use defaults (TC-config-04)"""
+    """AuthConfig with only enabled given; the rest of the connection settings use defaults"""
     cfg = AuthConfig(enabled=True)
     assert cfg.token_server_url is None
     assert cfg.cache_ttl == 60
@@ -116,18 +116,18 @@ def test_auth_config_defaults():
 
 
 def test_auth_config_missing_enabled():
-    """AuthConfig missing required enabled -> ValidationError (TC-config-05)"""
+    """AuthConfig missing required enabled -> ValidationError"""
     with pytest.raises(ValidationError):
         AuthConfig()
 
 
 def test_dynamic_tools_config_default_disabled():
-    """DynamicToolsConfig.enabled defaults to False (TC-config-06)"""
+    """DynamicToolsConfig.enabled defaults to False"""
     assert DynamicToolsConfig().enabled is False
 
 
 def test_app_config_all_defaults():
-    """AppConfig built with no arguments uses all defaults (TC-config-07)"""
+    """AppConfig built with no arguments uses all defaults"""
     cfg = AppConfig()
     assert cfg.name == "Agentic RAG"
     # The version field was removed from AppConfig -- the single source of the
@@ -140,7 +140,7 @@ def test_app_config_all_defaults():
 
 
 def test_rag_chunking_config_defaults():
-    """RAGChunkingConfig flat fields default to None; max_chunk_size=2000, chunk_overlap=50 (TC-config-08)"""
+    """RAGChunkingConfig flat fields default to None; max_chunk_size=2000, chunk_overlap=50"""
     cfg = RAGChunkingConfig()
     assert cfg.default_chunk_size is None
     assert cfg.default_overlap is None
@@ -150,14 +150,14 @@ def test_rag_chunking_config_defaults():
 
 
 def test_auto_merging_config_defaults():
-    """AutoMergingConfig defaults enabled=True, merge_threshold=0.5 (TC-config-09)"""
+    """AutoMergingConfig defaults enabled=True, merge_threshold=0.5"""
     cfg = AutoMergingConfig()
     assert cfg.enabled is True
     assert cfg.merge_threshold == 0.5
 
 
 def test_rag_retrieval_config_required_and_defaults():
-    """RAGRetrievalConfig three required fields + the rest defaulted (sparse 12 / alpha 0.75 / simple, etc.) (TC-config-10)"""
+    """RAGRetrievalConfig three required fields + the rest defaulted (sparse 12 / alpha 0.75 / simple, etc.)"""
     cfg = RAGRetrievalConfig(
         default_top_k=10, default_similarity_cutoff=0.25, hybrid_search=True,
     )
@@ -171,7 +171,7 @@ def test_rag_retrieval_config_required_and_defaults():
 
 
 def test_contextual_retrieval_config_defaults():
-    """ContextualRetrievalConfig defaults enabled=False, apply_to='all' (TC-config-11)"""
+    """ContextualRetrievalConfig defaults enabled=False, apply_to='all'"""
     cfg = ContextualRetrievalConfig()
     assert cfg.enabled is False
     assert cfg.max_context_length == 150
@@ -180,7 +180,7 @@ def test_contextual_retrieval_config_defaults():
 
 
 def test_rerank_config_defaults():
-    """RerankConfig defaults disabled, bge-reranker model, threshold 0.0 (TC-config-12)"""
+    """RerankConfig defaults disabled, bge-reranker model, threshold 0.0"""
     cfg = RerankConfig()
     assert cfg.enabled is False
     assert cfg.model == "BAAI/bge-reranker-v2-m3"
@@ -190,7 +190,7 @@ def test_rerank_config_defaults():
 
 
 def test_indexing_config_defaults():
-    """IndexingConfig defaults: high concurrency / 10-day per-file / 10-day job cap (TC-config-13)
+    """IndexingConfig defaults: high concurrency / 10-day per-file / 10-day job cap
 
     The timeout defaults were relaxed to 10 days (for OCR of large files on slow
     machines; watchdog false positives are backstopped by a 60s keepalive
@@ -203,7 +203,7 @@ def test_indexing_config_defaults():
 
 
 def test_rag_config_nested_assembly():
-    """RAGConfig assembles sub-models from nested dicts; optional sub-items default to None (TC-config-14)"""
+    """RAGConfig assembles sub-models from nested dicts; optional sub-items default to None"""
     cfg = RAGConfig(
         embedding={"provider": "vllm", "model": "bge-m3", "dimension": 1024},
         chunking={"hierarchy_sizes": [1024, 256]},
@@ -227,7 +227,7 @@ def test_rag_config_nested_assembly():
 
 
 def test_config_model_full_tree():
-    """ConfigModel main tree assembles from nested dicts; rag defaults to None (TC-config-15)"""
+    """ConfigModel main tree assembles from nested dicts; rag defaults to None"""
     cfg = ConfigModel(
         server={"host": "h", "port": 1, "transport": "sse"},
         database={
@@ -248,7 +248,7 @@ def test_config_model_full_tree():
 
 
 def test_config_model_missing_section():
-    """ConfigModel missing the server section -> ValidationError (TC-config-16)"""
+    """ConfigModel missing the server section -> ValidationError"""
     with pytest.raises(ValidationError) as exc_info:
         ConfigModel(
             database={
@@ -267,7 +267,7 @@ def test_config_model_missing_section():
 
 
 def test_modules_config_extra_allowed():
-    """ModulesConfig extra='allow': extra module sections are preserved without error (TC-config-17)"""
+    """ModulesConfig extra='allow': extra module sections are preserved without error"""
     cfg = ModulesConfig(enabled=["demo"], demo={"description": "x"})
     assert cfg.enabled == ["demo"]
     assert cfg.model_dump()["demo"] == {"description": "x"}
@@ -276,7 +276,7 @@ def test_modules_config_extra_allowed():
 # config/config_manager.py -- _validate_config_path
 
 def test_validate_config_path_allows_relative_paths(tmp_path, monkeypatch):
-    """Relative paths under cwd (root level / config/ / subdirectory) all pass validation (TC-config-18)"""
+    """Relative paths under cwd (root level / config/ / subdirectory) all pass validation"""
     monkeypatch.chdir(tmp_path)
     assert Config._validate_config_path("config.yaml").name == "config.yaml"
     assert Config._validate_config_path("config/app.yaml").name == "app.yaml"
@@ -285,21 +285,21 @@ def test_validate_config_path_allows_relative_paths(tmp_path, monkeypatch):
 
 
 def test_validate_config_path_rejects_traversal(tmp_path, monkeypatch):
-    """../ path traversal outside cwd -> ValueError (TC-config-19)"""
+    """../ path traversal outside cwd -> ValueError"""
     monkeypatch.chdir(tmp_path)
     with pytest.raises(ValueError, match="outside the allowed base directory"):
         Config._validate_config_path("../evil.yaml")
 
 
 def test_validate_config_path_rejects_absolute_outside(tmp_path, monkeypatch):
-    """An absolute path outside cwd -> ValueError (TC-config-20)"""
+    """An absolute path outside cwd -> ValueError"""
     monkeypatch.chdir(tmp_path)
     with pytest.raises(ValueError, match="outside the allowed base directory"):
         Config._validate_config_path("/etc/passwd.yaml")
 
 
 def test_validate_config_path_rejects_bad_extension(tmp_path, monkeypatch):
-    """A non-.yaml/.yml extension -> ValueError (TC-config-21)"""
+    """A non-.yaml/.yml extension -> ValueError"""
     monkeypatch.chdir(tmp_path)
     with pytest.raises(ValueError, match="extension"):
         Config._validate_config_path("config.txt")
@@ -308,7 +308,7 @@ def test_validate_config_path_rejects_bad_extension(tmp_path, monkeypatch):
 # config/config_manager.py -- get_config / set_config lifecycle
 
 def test_get_config_valid_yaml(tmp_path, monkeypatch):
-    """Valid YAML -> returns a ConfigModel, getters can access each section (TC-config-22)"""
+    """Valid YAML -> returns a ConfigModel, getters can access each section"""
     name = _write_config(tmp_path, monkeypatch, VALID_YAML)
     model = get_config(name)
     assert isinstance(model, ConfigModel)
@@ -324,7 +324,7 @@ def test_get_config_valid_yaml(tmp_path, monkeypatch):
 
 
 def test_get_config_env_var_placeholder_expanded(tmp_path, monkeypatch):
-    """`${VAR:-default}` is expanded from the environment at load time (TC-config-23).
+    """`${VAR:-default}` is expanded from the environment at load time.
 
     config_manager.expand_env_vars runs over the parsed YAML, so the DB URL can
     come from the environment while config.yaml keeps a safe default.
@@ -340,7 +340,7 @@ def test_get_config_env_var_placeholder_expanded(tmp_path, monkeypatch):
 
 
 def test_get_config_env_var_placeholder_uses_default_when_unset(tmp_path, monkeypatch):
-    """With the variable unset, the `:-default` part is used (TC-config-23b)."""
+    """With the variable unset, the `:-default` part is used."""
     monkeypatch.delenv("TEST_DB_URL", raising=False)
     yaml_text = VALID_YAML.replace(
         'url: "postgresql://u:p@localhost:5432/db"',
@@ -352,21 +352,21 @@ def test_get_config_env_var_placeholder_uses_default_when_unset(tmp_path, monkey
 
 
 def test_get_config_invalid_schema_returns_none(tmp_path, monkeypatch):
-    """YAML missing a required section (Pydantic validation fails) -> get_config returns None (TC-config-24)"""
+    """YAML missing a required section (Pydantic validation fails) -> get_config returns None"""
     name = _write_config(tmp_path, monkeypatch, "server:\n  host: only-host\n")
     assert get_config(name) is None
     assert Config.get_config_model() is None
 
 
 def test_get_config_malformed_yaml_returns_none(tmp_path, monkeypatch):
-    """YAML syntax error -> swallowed internally, _config cleared, returns None (TC-config-25)"""
+    """YAML syntax error -> swallowed internally, _config cleared, returns None"""
     name = _write_config(tmp_path, monkeypatch, "server: [unclosed\n  :::")
     assert get_config(name) is None
     assert Config.get_config() == {}
 
 
 def test_get_config_missing_file_returns_none(tmp_path, monkeypatch):
-    """File does not exist -> returns None (the FileNotFoundError is swallowed by _load_config's catch-all) (TC-config-26)
+    """File does not exist -> returns None (the FileNotFoundError is swallowed by _load_config's catch-all)
 
     Note: the _load_config docstring claims it raises FileNotFoundError, but in
     the implementation the raise is inside a try block and caught by
@@ -379,7 +379,7 @@ def test_get_config_missing_file_returns_none(tmp_path, monkeypatch):
 
 
 def test_set_config_loads_enabled_module_configs(tmp_path, monkeypatch):
-    """An enabled module's detailed config goes into the safe dict, retrievable via get_module_model; a disabled one returns None (TC-config-27)"""
+    """An enabled module's detailed config goes into the safe dict, retrievable via get_module_model; a disabled one returns None"""
     yaml_text = VALID_YAML.replace(
         "modules:\n  enabled: []\n",
         "modules:\n"
@@ -390,7 +390,7 @@ def test_set_config_loads_enabled_module_configs(tmp_path, monkeypatch):
         "      router_name: router\n"
         "      prefix: /api/demo\n"
         "    mcp_tools: null\n"
-        "    description: 示範模組\n",
+        "    description: demo module\n",
     )
     name = _write_config(tmp_path, monkeypatch, yaml_text)
     Config.set_config(name)
@@ -398,18 +398,18 @@ def test_set_config_loads_enabled_module_configs(tmp_path, monkeypatch):
     assert module is not None
     assert module.api_router.prefix == "/api/demo"
     assert module.mcp_tools is None
-    assert module.description == "示範模組"
+    assert module.description == "demo module"
     assert Config.get_module_model("not_enabled") is None
 
 
 def test_set_config_skips_invalid_module_config(tmp_path, monkeypatch):
-    """A single module config missing required fields -> that module is skipped, the main config still loads successfully (TC-config-28)"""
+    """A single module config missing required fields -> that module is skipped, the main config still loads successfully"""
     yaml_text = VALID_YAML.replace(
         "modules:\n  enabled: []\n",
         "modules:\n"
         "  enabled: [broken]\n"
         "  broken:\n"
-        "    description: 缺 api_router 與 mcp_tools\n",
+        "    description: missing api_router and mcp_tools\n",
     )
     name = _write_config(tmp_path, monkeypatch, yaml_text)
     Config.set_config(name)
@@ -418,7 +418,7 @@ def test_set_config_skips_invalid_module_config(tmp_path, monkeypatch):
 
 
 def test_getters_return_none_before_load():
-    """Before config is loaded (model is None), all getters return None (TC-config-29)"""
+    """Before config is loaded (model is None), all getters return None"""
     assert Config.get_config_model() is None
     assert Config.get_server_config() is None
     assert Config.get_database_config() is None
@@ -438,7 +438,7 @@ def test_config_path_outside_allowed_dirs_rejected(tmp_path):
 
 
 def test_asr_config_defaults():
-    """AsrConfig minimal field set: enabled + provider + the cloud fields, nothing else (TC-config-16)
+    """AsrConfig minimal field set: enabled + provider + the cloud fields, nothing else
 
     Deliberately lean: every config field is a permanent maintenance surface;
     trimming/filtering is always on in code, and FireRedASR-specific fields are
@@ -464,7 +464,7 @@ _RAG_REQUIRED = dict(
 
 
 def test_rag_config_asr_nested_assembly():
-    """RAGConfig nested assembly of the asr section; defaults to None when omitted (backward compat) (TC-config-17)"""
+    """RAGConfig nested assembly of the asr section; defaults to None when omitted (backward compat)"""
     from src.config.model import AsrConfig
     cfg = RAGConfig(
         **_RAG_REQUIRED,

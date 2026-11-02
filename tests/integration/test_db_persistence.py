@@ -43,7 +43,7 @@ class TestIndexJobDB:
         IndexJobDB.upsert(state)
 
         row = IndexJobDB.get_by_id(state["job_id"])
-        assert row is not None, "upsert 靜默失敗(它吞例外只 log — roundtrip 才驗得出)"
+        assert row is not None, "upsert failed silently (it swallows exceptions and only logs; only a round trip catches it)"
         assert row["status"] == "running"
         assert row["total_files"] == 3
         # JSONB fields round-trip verbatim
@@ -69,7 +69,7 @@ class TestIndexJobDB:
         active_ids = {str(r["job_id"]) for r in IndexJobDB.load_active()}
         assert running["job_id"] in active_ids
         assert pending["job_id"] in active_ids
-        assert done["job_id"] not in active_ids, "terminal job 不該被 startup 回收撈到"
+        assert done["job_id"] not in active_ids, "a terminal job must not be picked up by startup recovery"
 
     def test_delete_for_folder(self, itest_db, folder):
         state = _job_state(folder.id)
@@ -125,5 +125,5 @@ class TestFileIndexDB:
             embedding_model="e5-large", chunk_size=256, chunk_overlap=50,
         )
         rec = FileIndexDB.get_by_file(file_row.id)
-        assert rec is not None, "無先前記錄時必須建 failed row,前端才有失敗 tag"
+        assert rec is not None, "with no previous record a failed row must be created so the console can show the failure tag"
         assert rec.status == "failed"

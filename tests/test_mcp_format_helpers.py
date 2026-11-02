@@ -19,83 +19,83 @@ from src.fastmcp_tools.agentic_tools import (
 
 
 def test_truncate_none_returns_empty_string():
-    """A None input returns an empty string (TC-mcp-format-01)."""
+    """A None input returns an empty string."""
     assert _truncate(None, 10) == ""
 
 
 def test_truncate_short_and_exact_length_unchanged():
-    """A string of length <= max_len is returned unchanged (including exactly equal) (TC-mcp-format-02)."""
+    """A string of length <= max_len is returned unchanged (including exactly equal)."""
     assert _truncate("abc", 10) == "abc"
     assert _truncate("abcdefghij", 10) == "abcdefghij"
 
 
 def test_truncate_long_string_appends_ellipsis():
-    """An over-long string is truncated to max_len-1 characters plus an ellipsis, total length == max_len (TC-mcp-format-03)."""
+    """An over-long string is truncated to max_len-1 characters plus an ellipsis, total length == max_len."""
     out = _truncate("abcdefghijk", 10)
     assert out == "abcdefghi…"
     assert len(out) == 10
 
 
 def test_truncate_coerces_non_string_input():
-    """A non-string input is str()-coerced before processing (TC-mcp-format-04)."""
+    """A non-string input is str()-coerced before processing."""
     assert _truncate(12345, 10) == "12345"
     assert _truncate(12345678901, 10) == "123456789…"
 
 
 def test_visual_width_ascii_one_column_each():
-    """Each ASCII character counts as 1 column (TC-mcp-format-05)."""
+    """Each ASCII character counts as 1 column."""
     assert _visual_width("abc 123") == 7
 
 
 def test_visual_width_cjk_and_fullwidth_two_columns():
-    """Each CJK and full-width character counts as 2 columns (TC-mcp-format-06)."""
+    """Each CJK and full-width character counts as 2 columns."""
     assert _visual_width("中文") == 4
     assert _visual_width("Ａ") == 2  # fullwidth A
 
 
 def test_visual_width_emoji_two_columns():
-    """Each emoji (0x1F000-0x1FFFF / 0x2600-0x27FF) counts as 2 columns (TC-mcp-format-07)."""
+    """Each emoji (0x1F000-0x1FFFF / 0x2600-0x27FF) counts as 2 columns."""
     assert _visual_width("😀") == 2
     assert _visual_width("☀") == 2
 
 
 def test_visual_width_mixed_and_empty():
-    """A mixed string's width is the per-character sum; an empty string is 0 (TC-mcp-format-08)."""
+    """A mixed string's width is the per-character sum; an empty string is 0."""
     assert _visual_width("") == 0
     assert _visual_width("a中b") == 4  # 1 + 2 + 1
 
 
 def test_center_line_pads_ascii():
-    """Centering ASCII text: pad (width - vw) // 2 spaces on the left, none on the right (TC-mcp-format-09)."""
+    """Centering ASCII text: pad (width - vw) // 2 spaces on the left, none on the right."""
     assert _center_line("ab", width=10) == "    ab"
 
 
 def test_center_line_accounts_for_cjk_width():
-    """Chinese width is computed at 2 columns before centering (TC-mcp-format-10)."""
+    """Chinese width is computed at 2 columns before centering."""
     # "中文" has visual width 4, (10-4)//2 = 3 leading spaces
     assert _center_line("中文", width=10) == "   中文"
 
 
 def test_center_line_wide_text_returned_as_is():
-    """When visual width >= width, it is returned unchanged with no padding (TC-mcp-format-11)."""
+    """When visual width >= width, it is returned unchanged with no padding."""
     text = "x" * 12
     assert _center_line(text, width=10) == text
 
 
 def test_center_line_default_width_is_box_width():
-    """When width is unspecified, centering uses the _BOX_WIDTH constant (TC-mcp-format-12)."""
+    """When width is unspecified, centering uses the _BOX_WIDTH constant."""
     out = _center_line("hi")
     assert out == " " * ((_BOX_WIDTH - 2) // 2) + "hi"
 
 
 def test_format_search_body_empty_response():
-    """An empty response outputs only the Query and Results lines, no Roles/Files/Scores/Hint (TC-mcp-format-13)."""
+    """An empty response outputs only the Query and Results lines, no Roles/Files/Scores/Hint."""
     lines = _format_search_body({})
     assert lines == ['  Query     : ""', "  Results   : 0"]
 
 
 def test_format_search_body_full_response():
-    """A full response outputs the roles distribution (including merged), files distribution, scores stats, and hint (TC-mcp-format-14)."""
+    """A full response outputs the roles distribution (including merged), files distribution, scores stats, and hint."""
     response = {
         "query": "營收表現",
         "total_results": 3,
@@ -121,7 +121,7 @@ def test_format_search_body_full_response():
 
 
 def test_format_search_body_more_than_three_files_summarized():
-    """With more than 3 files, only the top 3 are listed and the rest summarized as +N more (TC-mcp-format-15)."""
+    """With more than 3 files, only the top 3 are listed and the rest summarized as +N more."""
     response = {
         "query": "q",
         "total_results": 4,
@@ -134,7 +134,7 @@ def test_format_search_body_more_than_three_files_summarized():
 
 
 def test_format_search_body_long_query_truncated():
-    """An over-long query is truncated to within 70 characters plus an ellipsis (TC-mcp-format-16)."""
+    """An over-long query is truncated to within 70 characters plus an ellipsis."""
     response = {"query": "q" * 100, "total_results": 0, "results": []}
     lines = _format_search_body(response)
     assert lines[0] == '  Query     : "' + "q" * 69 + '…"'

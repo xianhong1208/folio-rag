@@ -32,14 +32,14 @@ class _FakeLLMClient:
     def create(self, **kwargs):
         if self.closed.wait(timeout=self._HANG_SECONDS):
             raise RuntimeError("connection closed by abort watcher")
-        raise AssertionError("fake LLM 請求跑滿 30s — abort 沒有斷線")
+        raise AssertionError("the fake LLM request ran the full 30s: abort did not disconnect")
 
     def close(self):
         self.closed.set()
 
 
 async def test_abort_closes_client_and_cuts_inflight_calls(mocker):
-    """Once the abort flag is set, in-flight LLM calls must be disconnected and wrap up quickly (TC-ctx-abort-01)"""
+    """Once the abort flag is set, in-flight LLM calls must be disconnected and wrap up quickly"""
     fake = _FakeLLMClient()
     gen = ContextGenerator.__new__(ContextGenerator)  # skip __init__ (avoids config)
     gen._llm_config = None
@@ -74,7 +74,7 @@ async def test_abort_closes_client_and_cuts_inflight_calls(mocker):
     )
     elapsed = time.monotonic() - t0
 
-    assert fake.closed.is_set(), "abort 後 client 必須被 close"
+    assert fake.closed.is_set(), "the client must be closed after abort"
     # Without a disconnect it would hang at least 30s; after disconnect everything wraps up fast (no prefix)
-    assert elapsed < 5.0, f"abort 斷線失效,耗時 {elapsed:.1f}s"
-    assert len(results) == 4, "每個 chunk 都要有結果(fallback),不能缺"
+    assert elapsed < 5.0, f"abort did not disconnect, took {elapsed:.1f}s"
+    assert len(results) == 4, "every chunk needs a result (the fallback); none may be missing"

@@ -53,11 +53,11 @@ async def _wait_status(m, job_id, statuses, timeout=5.0):
         if st and st["status"] in statuses:
             return st
         await asyncio.sleep(0.02)
-    raise AssertionError(f"job {job_id} 沒到達 {statuses}: {st}")
+    raise AssertionError(f"job {job_id} did not reach {statuses}: {st}")
 
 
 async def test_queued_upload_gets_own_stable_job_id(manager):
-    """A queued upload immediately has its own job_id, unchanged for its whole lifecycle (TC-job-queue-01)."""
+    """A queued upload immediately has its own job_id, unchanged for its whole lifecycle."""
     ad = SlowAdapter()
     j1 = await manager.start_indexing_files(
         ad, file_ids=["f1"], folder_id=7, token="t", chunk_size=None, chunk_overlap=None)
@@ -65,7 +65,7 @@ async def test_queued_upload_gets_own_stable_job_id(manager):
     # Upload again while the folder is busy → must get its "own" new job_id, not j1's
     j2 = await manager.start_indexing_files(
         ad, file_ids=["f2"], folder_id=7, token="t", chunk_size=None, chunk_overlap=None)
-    assert j2["job_id"] != j1["job_id"], "排隊上傳不能回別人的 job_id(舊 bug)"
+    assert j2["job_id"] != j1["job_id"], "a queued upload must not return another job's job_id (old bug)"
     assert j2["status"] == "pending" and j2["queued"] is True
 
     # The queued job appears in the list immediately (the frontend can see "queued")
@@ -76,13 +76,13 @@ async def test_queued_upload_gets_own_stable_job_id(manager):
     ad.release.set()
     await _wait_status(manager, j1["job_id"], {"succeeded"})
     await _wait_status(manager, j2["job_id"], {"running"})
-    assert ad.calls[-1] == ["f2"], "dequeue 啟動的就是排隊那批檔案"
+    assert ad.calls[-1] == ["f2"], "dequeue starts exactly the queued batch of files"
     ad.release.set()
     await _wait_status(manager, j2["job_id"], {"succeeded"})
 
 
 async def test_queued_job_started_at_reset_on_launch(manager):
-    """A queued job's started_at is reset at actual launch, excluding the queue wait (TC-job-queue-03).
+    """A queued job's started_at is reset at actual launch, excluding the queue wait.
 
     Previously started_at was fixed at enqueue and unchanged after dequeue, so
     the frontend counted the queue wait as elapsed time. Now started_at is the
@@ -108,14 +108,14 @@ async def test_queued_job_started_at_reset_on_launch(manager):
 
     running_started_at = (await manager.get_status(j2["job_id"]))["started_at"]
     assert running_started_at > queued_started_at, (
-        "排隊 job 啟動時 started_at 應重設為啟動時刻,不該還停在入佇列時刻"
+        "when a queued job starts, started_at must be reset to the start time, not left at the enqueue time"
     )
     ad.release.set()
     await _wait_status(manager, j2["job_id"], {"succeeded"})
 
 
 async def test_stale_cleanup_reentry_does_not_drain_queue(manager):
-    """A late cleanup from a non-owner must not drain the queue / seize the folder lock (TC-job-queue-04).
+    """A late cleanup from a non-owner must not drain the queue / seize the folder lock.
 
     Scenario: after the watchdog forcibly reclaims job1's lock and dequeues job2,
     job1's wedged thread finally finishes and its finally block calls
@@ -136,8 +136,8 @@ async def test_stale_cleanup_reentry_does_not_drain_queue(manager):
     manager._cleanup_job_slot("stale-ghost-job-id", 11)
 
     # The lock still belongs to j1, j2 stays quietly queued, and no new job is launched
-    assert manager._active_folders.get(11) == j1["job_id"], "非持有者不得動 folder lock"
-    assert ad.calls == [["a"]], "非持有者的 cleanup 不得啟動排隊 job"
+    assert manager._active_folders.get(11) == j1["job_id"], "a non-holder must not touch the folder lock"
+    assert ad.calls == [["a"]], "a non-holder's cleanup must not start the queued job"
     assert (await manager.get_status(j2["job_id"]))["status"] == "pending"
 
     # The guard must not break the normal chain: j1 completes → j2 is dequeued and runs under the same id as usual
@@ -149,7 +149,7 @@ async def test_stale_cleanup_reentry_does_not_drain_queue(manager):
 
 
 async def test_cancelled_queued_job_is_skipped_at_dequeue(manager):
-    """A job cancelled while queued is skipped automatically at dequeue, moving to the next (TC-job-queue-02)."""
+    """A job cancelled while queued is skipped automatically at dequeue, moving to the next."""
     ad = SlowAdapter()
     j1 = await manager.start_indexing_files(
         ad, file_ids=["a"], folder_id=8, token="t", chunk_size=None, chunk_overlap=None)

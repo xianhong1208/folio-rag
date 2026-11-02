@@ -37,13 +37,13 @@ class TestSettingsApi:
 
     def test_put_applies_and_reports_warnings(self, client):
         with patch(f"{_SVC}.apply_settings",
-                   return_value=({"rag.embedding.model": "m"}, ["警告文案"])) as ap:
+                   return_value=({"rag.embedding.model": "m"}, ["warning text"])) as ap:
             r = client.put("/api/admin/settings",
                            json={"settings": {"rag.embedding.model": "m"}})
         assert r.status_code == 200
         body = r.json()
         assert body["data"]["applied"] == {"rag.embedding.model": "m"}
-        assert body["data"]["warnings"] == ["警告文案"]
+        assert body["data"]["warnings"] == ["warning text"]
         # The audit field records the session's sub (never a token)
         assert ap.call_args.kwargs.get("updated_by") == "alice"
 
@@ -61,11 +61,11 @@ class TestSettingsApi:
                           json={"settings": {}}).status_code == 422
 
     def test_put_validation_error_becomes_422(self, client):
-        with patch(f"{_SVC}.apply_settings", side_effect=ValueError("不可熱改的設定路徑")):
+        with patch(f"{_SVC}.apply_settings", side_effect=ValueError("setting path cannot be changed at runtime")):
             r = client.put("/api/admin/settings",
                            json={"settings": {"database.url": "x"}})
         assert r.status_code == 422
-        assert "不可熱改" in r.json()["detail"]
+        assert "cannot be changed at runtime" in r.json()["detail"]
 
     def test_delete_resets_override(self, client):
         with patch(f"{_SVC}.reset_setting", return_value=True) as rs:
@@ -102,13 +102,13 @@ class TestProbe:
         ac = MagicMock()
         ac.__aenter__ = AsyncMock(return_value=ac)
         ac.__aexit__ = AsyncMock(return_value=False)
-        ac.get = AsyncMock(side_effect=OSError("conn refused at 10.0.0.5:8080"))
+        ac.get = AsyncMock(side_effect=OSError("conn refused at 192.0.2.5:8080"))
         with patch("src.api.router.admin_settings.httpx.AsyncClient", return_value=ac):
             r = client.post("/api/admin/probe", json={"base_url": "http://down:1/v1"})
         d = r.json()["data"]
         # Return only the exception class name -- the original message (which may contain internal addresses) must not be echoed back
         assert d["reachable"] is False and d["error"] == "OSError"
-        assert "10.0.0.5" not in str(d)
+        assert "192.0.2.5" not in str(d)
 
     def test_probe_does_not_follow_redirects(self, client):
         resp = MagicMock(status_code=302)

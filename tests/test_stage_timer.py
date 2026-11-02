@@ -12,7 +12,7 @@ from src.domain.rag.stage_timer import StageTimer
 
 
 def test_measures_each_stage_duration():
-    """Each stage is timed by its transition points (TC-stage-timer-01)."""
+    """Each stage is timed by its transition points."""
     t = StageTimer()
     t("loading", None, None)
     time.sleep(0.10)
@@ -31,7 +31,7 @@ def test_measures_each_stage_duration():
 
 
 def test_same_stage_repeats_do_not_reset_clock():
-    """Repeated reports of the same stage (progress ticks / keepalive heartbeats) do not reset the stopwatch (TC-stage-timer-02)."""
+    """Repeated reports of the same stage (progress ticks / keepalive heartbeats) do not reset the stopwatch."""
     t = StageTimer()
     t("embedding", 0, 100)
     time.sleep(0.03)
@@ -43,12 +43,12 @@ def test_same_stage_repeats_do_not_reset_clock():
 
 
 def test_forwards_to_inner_cb_and_swallows_inner_errors():
-    """Forwarded unchanged to the inner cb; an inner failure does not affect timing (TC-stage-timer-03)."""
+    """Forwarded unchanged to the inner cb; an inner failure does not affect timing."""
     seen = []
 
     def inner(stage, done, total):
         seen.append((stage, done, total))
-        raise RuntimeError("inner 故意炸")
+        raise RuntimeError("inner fails on purpose")
 
     t = StageTimer(inner=inner)
     t("loading", 1, 3)
@@ -59,7 +59,7 @@ def test_forwards_to_inner_cb_and_swallows_inner_errors():
 
 
 def test_finish_is_idempotent():
-    """finish() can be called repeatedly with a consistent result (TC-stage-timer-04)."""
+    """finish() can be called repeatedly with a consistent result."""
     t = StageTimer()
     t("writing", 10, 10)
     time.sleep(0.02)
@@ -69,7 +69,7 @@ def test_finish_is_idempotent():
 
 
 def test_interleaved_stage_accumulates():
-    """Time accumulates when a stage reappears intermittently (defensive) (TC-stage-timer-05)."""
+    """Time accumulates when a stage reappears intermittently (defensive)."""
     t = StageTimer()
     t("loading", None, None)
     time.sleep(0.02)

@@ -20,13 +20,13 @@ def _write(tmp_path, name: str, data: bytes):
 
 
 def test_plain_utf8(tmp_path):
-    """A plain UTF-8 file is read back unchanged (TC-text-io-01)."""
+    """A plain UTF-8 file is read back unchanged."""
     p = _write(tmp_path, "a.txt", SAMPLE.encode("utf-8"))
     assert read_text_robust(p) == SAMPLE
 
 
 def test_utf8_with_bom_stripped(tmp_path):
-    """A UTF-8 BOM (common in Excel exports) must be stripped, leaving no \\ufeff (TC-text-io-02)."""
+    """A UTF-8 BOM (common in Excel exports) must be stripped, leaving no \\ufeff."""
     p = _write(tmp_path, "a.csv", b"\xef\xbb\xbf" + SAMPLE.encode("utf-8"))
     out = read_text_robust(p)
     assert out == SAMPLE
@@ -34,13 +34,13 @@ def test_utf8_with_bom_stripped(tmp_path):
 
 
 def test_utf16_le_bom(tmp_path):
-    """UTF-16 LE + BOM (Windows Notepad "Unicode") — reproduces the reported incident (TC-text-io-03)."""
+    """UTF-16 LE + BOM (Windows Notepad "Unicode") — reproduces the reported incident."""
     p = _write(tmp_path, "notepad.txt", SAMPLE.encode("utf-16"))  # includes LE BOM
     assert read_text_robust(p) == SAMPLE
 
 
 def test_utf16_be_bom(tmp_path):
-    """UTF-16 BE + BOM is equally readable (TC-text-io-04)."""
+    """UTF-16 BE + BOM is equally readable."""
     p = _write(tmp_path, "be.txt", codecs_encode_utf16_be(SAMPLE))
     assert read_text_robust(p) == SAMPLE
 
@@ -51,26 +51,26 @@ def codecs_encode_utf16_be(s: str) -> bytes:
 
 
 def test_utf32_le_bom_not_mistaken_for_utf16(tmp_path):
-    """The first two bytes of a UTF-32 LE BOM equal a UTF-16 LE BOM — an order-sensitive regression test (TC-text-io-05)."""
+    """The first two bytes of a UTF-32 LE BOM equal a UTF-16 LE BOM — an order-sensitive regression test."""
     p = _write(tmp_path, "u32.txt", SAMPLE.encode("utf-32"))  # includes LE BOM
     assert read_text_robust(p) == SAMPLE
 
 
 def test_big5_detected(tmp_path):
-    """Big5/CP950 (legacy Taiwan txt/csv) is read via charset detection (TC-text-io-06)."""
+    """Big5/CP950 (legacy Taiwan txt/csv) is read via charset detection."""
     text = "品名,單價,數量\n無線滑鼠,450,12\n機械鍵盤,2300,5\n螢幕支架,890,8"
     p = _write(tmp_path, "big5.csv", text.encode("cp950"))
     assert read_text_robust(p) == text
 
 
 def test_undecodable_binary_raises_actionable_error(tmp_path):
-    """Unrecognizable random binary → ValueError with actionable guidance, never garbled text (TC-text-io-07)."""
+    """Unrecognizable random binary → ValueError with actionable guidance, never garbled text."""
     p = _write(tmp_path, "junk.txt", bytes(range(256)) * 8)
     with pytest.raises(ValueError, match="Save the file as UTF-8"):
         read_text_robust(p)
 
 
 def test_empty_file_returns_empty_string(tmp_path):
-    """An empty file returns an empty string without raising (empty-content checks are handled upstream) (TC-text-io-08)."""
+    """An empty file returns an empty string without raising (empty-content checks are handled upstream)."""
     p = _write(tmp_path, "empty.txt", b"")
     assert read_text_robust(p) == ""
