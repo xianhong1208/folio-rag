@@ -123,36 +123,11 @@ class TestProbe:
 
 
 class TestAdminPage:
-    def test_root_serves_console(self, client):
-        # Product front door: the root URL is the settings page
-        r = client.get("/")
-        assert r.status_code == 200 and "Control Center" in r.text
+    def test_root_redirects_to_console(self, client):
+        # Product front door: the root URL sends the browser to the React console
+        r = client.get("/", follow_redirects=False)
+        assert r.status_code == 302 and r.headers["location"] == "/admin/"
 
-    def test_page_served(self, client):
-        r = client.get("/admin")
-        assert r.status_code == 200
-        assert "Agentic RAG" in r.text and "Control Center" in r.text
-        # External resources are limited to Google Fonts (aligned with the
-        # MCP_Gate design language; when offline the fallback stack degrades
-        # gracefully without breaking the layout) -- everything else is inline
-        import re
-        externals = set(re.findall(r'https?://([^/"]+)', r.text))
-        # www.w3.org is the xmlns declaration of an inline SVG, not a network request
-        assert externals <= {"fonts.googleapis.com", "fonts.gstatic.com", "www.w3.org"}, externals
-
-
-class TestAdminHtmlLoader:
-    """Loader behavior after the console HTML was extracted into web/admin_console.html."""
-
-    def test_reads_real_file(self):
-        from src.api.router import admin_page_html as m
-        html = m._load_admin_html()
-        assert html.startswith("<!DOCTYPE html>") and "%%LOGO%%" in html
-
-    def test_fallback_when_missing(self):
-        from src.api.router import admin_page_html as m
-        # None of the candidate paths exist -> return an explicit fallback page, no crash, no empty response
-        with patch("src.utils.runtime_paths.resolve_external_dir", return_value=None), \
-             patch("pathlib.Path.is_file", return_value=False):
-            html = m._load_admin_html()
-        assert "admin_console.html not found" in html
+    def test_legacy_console_removed(self, client):
+        # The single-file console at /admin-classic has been deleted
+        assert client.get("/admin-classic").status_code == 404

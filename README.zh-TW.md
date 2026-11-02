@@ -136,7 +136,7 @@ GPU 選擇是 `uv sync --group {rocm-r714|rocm-r713|cuda|cpu}` 的取捨 —— 
 
 ## 使用主控台
 
-**Retrieval Terminal** 主控台是 `/admin` 的 React SPA(舊的單檔主控台仍保留在 `/admin-classic`)。
+**Retrieval Terminal** 主控台是 `/admin` 的 React SPA。
 
 | 頁面 | 功能 |
 |------|------|

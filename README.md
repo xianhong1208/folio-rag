@@ -136,7 +136,7 @@ GPU selection is a `uv sync --group {rocm-r714|rocm-r713|cuda|cpu}` choice — s
 
 ## Use the console
 
-The **Retrieval Terminal** console is a React SPA served at `/admin` (the previous single-file console remains at `/admin-classic`).
+The **Retrieval Terminal** console is a React SPA served at `/admin`.
 
 | Page | What you do there |
 |------|-------------------|

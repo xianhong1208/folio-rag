@@ -6,6 +6,11 @@ to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Removed
+- **The legacy single-file console** (`/admin-classic`, `web/admin_console.html`
+  and its loader `src/api/router/admin_page_html.py`). The React console at
+  `/admin` is the only console.
+
 ### Changed
 - **The authorization server is now called MCP Gate** (formerly MCP Center). Docs
   and log messages follow the new name; `src/auth/mcp_center_auth.py` is now
