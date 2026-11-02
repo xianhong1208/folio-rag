@@ -918,10 +918,37 @@ def _doc_item_kind(item: Any) -> Optional[str]:
     return None
 
 
-def _chunk_provenance(chunk: Any) -> dict:
+def _container_headings(item: Any, doc: Any) -> List[str]:
+    """Names of the named containers a doc_item sits in, outermost first.
+
+    Only xlsx sheets for now: docling puts each sheet's tables in a GroupItem
+    labelled ``sheet`` named after the sheet, but no heading — so a table on the
+    "Borealis plan" sheet never says "Borealis". Defensive: any resolution failure
+    yields no extra heading.
+    """
+    names: List[str] = []
+    ref = getattr(item, "parent", None)
+    hops = 0
+    while ref is not None and doc is not None and hops < 32:
+        hops += 1
+        try:
+            node = ref.resolve(doc)
+        except Exception:
+            break
+        label = getattr(node, "label", None)
+        label = str(getattr(label, "value", label) or "").lower()
+        name = getattr(node, "name", None)
+        if label == "sheet" and name:
+            names.append(str(name))
+        ref = getattr(node, "parent", None)
+    return list(reversed(names))
+
+
+def _chunk_provenance(chunk: Any, doc: Any = None) -> dict:
     """Extract headings / page_no / content_type from a docling chunk object (bare strings return empty meta).
 
-    - headings: HierarchicalChunker's meta.headings (the section path, list[str])
+    - headings: HierarchicalChunker's meta.headings (the section path, list[str]),
+      prefixed with the xlsx sheet name when ``doc`` is given (see _container_headings)
     - page_no: the page_no of the first prov of the first doc_item (present for PDF; usually absent for docx etc.)
     - content_type: "table" when the chunk carries a table doc_item (Docling keeps the
       table as Markdown in the chunk text; this flag lets the UI badge / render it).
@@ -936,7 +963,12 @@ def _chunk_provenance(chunk: Any) -> dict:
         h = getattr(meta, "headings", None)
         if h:
             headings = list(h)
-        for item in (getattr(meta, "doc_items", None) or []):
+        items = list(getattr(meta, "doc_items", None) or [])
+        if items and doc is not None:
+            containers = _container_headings(items[0], doc)
+            if containers:
+                headings = containers + [x for x in (headings or []) if x not in containers]
+        for item in items:
             kind = _doc_item_kind(item)
             if kind == "table":  # a table anywhere in the chunk wins
                 content_type = "table"
@@ -953,55 +985,131 @@ def _chunk_provenance(chunk: Any) -> dict:
     return {"headings": headings, "page_no": page_no, "content_type": content_type}
 
 
+def _is_triplet_table(text: str) -> bool:
+    """Docling's table serialization: one line of ``row, col = value`` cells joined by ". "."""
+    return "\n" not in text.strip() and " = " in text and ", " in text
+
+
+def _split_triplet_table(text: str, tokenizer, max_tokens: int) -> List[str]:
+    """Split an oversized triplet table at row boundaries (a row = consecutive cells
+    with the same row label), so every piece is itself a valid table. A single row
+    larger than the budget falls back to cell boundaries."""
+    cells = [c.strip() for c in text.strip().rstrip(".").split(". ") if c.strip()]
+    rows: List[List[str]] = []
+    last_label = None
+    for cell in cells:
+        label = cell.split(", ", 1)[0] if ", " in cell else None
+        if rows and label == last_label:
+            rows[-1].append(cell)
+        else:
+            rows.append([cell])
+        last_label = label
+    units: List[str] = []
+    for row in rows:
+        joined = ". ".join(row)
+        if _count_tokens(tokenizer, joined) <= max_tokens:
+            units.append(joined)
+        else:
+            units.extend(row)
+    out: List[str] = []
+    buf: List[str] = []
+    for unit in units:
+        candidate = ". ".join(buf + [unit])
+        if buf and _count_tokens(tokenizer, candidate) > max_tokens:
+            out.append(". ".join(buf))
+            buf = [unit]
+        else:
+            buf.append(unit)
+    if buf:
+        out.append(". ".join(buf))
+    # A cell longer than the budget on its own still has to be cut.
+    final: List[str] = []
+    for piece in out:
+        if _count_tokens(tokenizer, piece) > max_tokens:
+            final.extend(_split_by_chars(piece, tokenizer, max_tokens))
+        else:
+            final.append(piece)
+    return final
+
+
 def _refine_chunks_for_token_budget(
     raw_chunks: List[Any],
     tokenizer,
     max_tokens: int,
+    doc: Any = None,
+    table_max_tokens: Optional[int] = None,
 ) -> List[dict]:
-    """Refine HierarchicalChunker output into ≤ max_tokens chunk records.
+    """Refine HierarchicalChunker output into token-bounded chunk records.
 
     Same contract as HybridChunker (token-bounded, merge_peers, repeat_table_header)
-    but with per-chunk tokenize calls. Returns records
-    ``{"text", "headings", "page_no"}``: split pieces inherit the source chunk's meta,
-    merged chunks take the buffer's first-chunk meta, bare-string input has meta None.
+    but with per-chunk tokenize calls, and section-aligned: small chunks merge only
+    with neighbours of the same section (chunk_identity.section_key), and a merged
+    chunk is labelled with the headings all its pieces share. Returns records
+    ``{"text", "headings", "page_no", "content_type"}``; split pieces inherit the
+    source chunk's meta, bare-string input has meta None.
+
+    ``table_max_tokens`` (default ``max_tokens``) lets a table stay whole up to a
+    larger budget than prose; an oversized docling table is split at row
+    boundaries so each piece remains a readable table.
     """
+    from src.domain.rag.chunk_identity import (
+        common_headings,
+        merge_content_type,
+        section_key,
+    )
+
+    table_budget = max(max_tokens, table_max_tokens or max_tokens)
     # merge_peers heuristic — flush the buffer when the token budget reaches
     # half of max_tokens. Matches HybridChunker default behavior:
     # produce chunks at roughly 50-100% of max_tokens for retrieval.
     merge_flush_threshold = max(max_tokens // 2, 1)
 
     output: List[dict] = []
-    pending_buf: List[str] = []
-    pending_meta: Optional[dict] = None  # first-chunk meta
+    pending: List[tuple] = []  # (text, meta)
     pending_tokens = 0
 
     def _flush_pending():
-        nonlocal pending_buf, pending_meta, pending_tokens
-        if pending_buf:
-            output.append({"text": "\n".join(pending_buf), **(pending_meta or {"headings": None, "page_no": None, "content_type": None})})
-            pending_buf = []
-            pending_meta = None
-            pending_tokens = 0
+        nonlocal pending, pending_tokens
+        if not pending:
+            return
+        metas = [m for _, m in pending]
+        page = next((m.get("page_no") for m in metas if m.get("page_no") is not None), None)
+        output.append({
+            "text": "\n".join(t for t, _ in pending),
+            "headings": common_headings(m.get("headings") for m in metas),
+            "page_no": page,
+            "content_type": merge_content_type(m.get("content_type") for m in metas),
+        })
+        pending = []
+        pending_tokens = 0
 
     for chunk in raw_chunks:
         # Accept a HierarchicalChunker chunk object or a bare string (used by the fallback splitting path)
         text = (chunk.text if hasattr(chunk, "text") else chunk).strip()
         if not text:
             continue
-        meta = _chunk_provenance(chunk)
+        meta = _chunk_provenance(chunk, doc)
 
         token_count = _count_tokens(tokenizer, text)
+        is_table = meta.get("content_type") == "table"
+        budget = table_budget if is_table else max_tokens
 
-        if token_count > max_tokens:
+        # Never merge across a section boundary.
+        if pending and section_key(pending[0][1].get("headings")) != section_key(meta.get("headings")):
+            _flush_pending()
+
+        if token_count > budget:
             # Oversized — flush any pending small chunks first
             _flush_pending()
-            for part in _split_by_lines(text, tokenizer, max_tokens, header=None):
+            if is_table and _is_triplet_table(text):
+                parts = _split_triplet_table(text, tokenizer, budget)
+            else:
+                parts = _split_by_lines(text, tokenizer, budget, header=None)
+            for part in parts:
                 output.append({"text": part, **meta})  # split pieces inherit the source chunk's meta
         elif token_count < merge_flush_threshold:
-            # Small — accumulate, flush when buffer crosses threshold
-            if not pending_buf:
-                pending_meta = meta
-            pending_buf.append(text)
+            # Small — accumulate (both halves stay under max_tokens), flush past the threshold
+            pending.append((text, meta))
             pending_tokens += token_count
             if pending_tokens >= merge_flush_threshold:
                 _flush_pending()
@@ -1021,6 +1129,7 @@ def docling_convert_once(
     tokenizer: Optional[str] = None,
     progress_cb: Optional[Any] = None,
     report: Optional[dict] = None,
+    table_max_tokens: Optional[int] = None,
 ) -> tuple[str, List[dict]]:
     """Parse with Docling once, returning both the full text and chunk records (with headings/page_no).
 
@@ -1037,6 +1146,7 @@ def docling_convert_once(
             bar; non-paginated formats (docx etc.) don't report counts, with unchanged behavior.
         report: optional dict filled with ``warning`` (pages that could not be parsed,
             None when complete) and ``missing_pages``.
+        table_max_tokens: budget a table may use before it is split (default max_tokens).
 
     Returns:
         (full_text, chunk_records) — full Markdown text + chunk records
@@ -1100,7 +1210,8 @@ def docling_convert_once(
         hf_tok = get_hf_tokenizer(tokenizer)
 
         raw_chunks = list(HierarchicalChunker().chunk(dl_doc=doc))
-        texts = _refine_chunks_for_token_budget(raw_chunks, hf_tok, max_tokens)
+        texts = _refine_chunks_for_token_budget(
+            raw_chunks, hf_tok, max_tokens, doc=doc, table_max_tokens=table_max_tokens)
 
         logger.info(
             f"Docling processed {file_name}: {len(texts)} chunks "

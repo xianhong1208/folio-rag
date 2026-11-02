@@ -16,6 +16,8 @@ from typing import List, Optional, TYPE_CHECKING
 import httpx
 import requests as http_requests
 from src.log import get_api_logger
+# Rerank on what the chunk is retrieved by: prefix + breadcrumb + original text.
+from src.domain.rag.chunk_identity import node_retrieval_text
 
 if TYPE_CHECKING:
     from llama_index.core.schema import NodeWithScore
@@ -154,7 +156,7 @@ class Reranker:
         effective_top_n = top_n or self._top_n
 
         try:
-            scores = self._get_scores(query, [node.text for node in nodes])
+            scores = self._get_scores(query, [node_retrieval_text(n) for n in nodes])
 
             scored_nodes = list(zip(nodes, scores))
             scored_nodes.sort(key=lambda x: x[1], reverse=True)
@@ -202,7 +204,7 @@ class Reranker:
         effective_top_n = top_n or self._top_n
 
         try:
-            scores = await self._aget_scores(query, [node.text for node in nodes])
+            scores = await self._aget_scores(query, [node_retrieval_text(n) for n in nodes])
 
             scored_nodes = list(zip(nodes, scores))
             scored_nodes.sort(key=lambda x: x[1], reverse=True)

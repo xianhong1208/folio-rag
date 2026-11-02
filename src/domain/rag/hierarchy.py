@@ -5,9 +5,10 @@ Design trade-offs:
 - LlamaIndex's built-in HierarchicalNodeParser works well on plain text, but it bypasses
   the structured Docling chunks. Docling already produces good chunks (tables preserved /
   headings aligned), which would be wasteful to discard.
-- So we use a post-synthesis strategy: Docling produces the leaves first, then a token
-  budget aggregates leaves into parents. A parent is not re-split — it is just an ordered
-  join of its leaves plus metadata linkage.
+- So we use a post-synthesis strategy: Docling produces the leaves first, then leaves are
+  grouped by section (chunk_identity.section_key) and a token budget splits a section that
+  is too big. A parent is not re-split — it is just an ordered join of its leaves (their
+  original text, never the contextual prefix) plus metadata linkage.
 
 Metadata schema (written to LlamaIndex Node.metadata; the PGVector schema is untouched):
     leaf:
@@ -32,6 +33,7 @@ from llama_index.core import Document
 from llama_index.core.schema import TextNode
 
 from src.log import get_api_logger
+from src.domain.rag.chunk_identity import common_headings, section_key
 
 logger = get_api_logger()
 
@@ -110,8 +112,10 @@ def build_hierarchy(
         # Create parent node — text is the children joined in order,
         # separated by "\n\n" to preserve structural readability
         parent_text = "\n\n".join(leaf_texts)
+        shared = common_headings(d.metadata.get("headings") for _, d in current_group)
         parent_meta = {
             **base_metadata,
+            **({"headings": shared} if shared else {}),
             "node_role": "parent",
             "children_node_ids": leaf_ids,
             "children_index_range": [index_start, index_end],
@@ -124,13 +128,21 @@ def build_hierarchy(
         )
         parent_nodes.append(parent_node)
 
+    current_section = None
     for i, leaf_doc in enumerate(leaf_documents):
         tokens = estimate_tokens(leaf_doc.text)
+        section = section_key(leaf_doc.metadata.get("headings"))
 
-        if current_tokens + tokens > parent_target_tokens and current_group:
+        # A parent never spans two sections (auto-merge then returns a whole section,
+        # not an arbitrary window); within a section, split only by the token budget.
+        if current_group and (
+            section != current_section or current_tokens + tokens > parent_target_tokens
+        ):
             flush_group()
             current_group = []
             current_tokens = 0
+
+        current_section = section
 
         current_group.append((i, leaf_doc))
         current_tokens += tokens

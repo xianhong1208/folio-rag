@@ -7,11 +7,14 @@ Reference: Anthropic "Introducing Contextual Retrieval" (2024-09)
 
 Usage:
     generator = ContextGenerator.from_config(rag_config)
-    contextualized_texts = await generator.generate_batch(
-        chunks=["The circumstances described in the preceding paragraph are not subject to this article.", ...],
+    prefixes = await generator.generate_prefixes(
+        chunks=["The provisions above do not apply in this case.", ...],
         full_document="Full text of the travel policy...",
         file_name="travel_policy.docx",
     )
+
+Each prefix is stored next to the chunk (metadata.context_prefix), never inside the
+chunk's displayed text; see chunk_identity for how it joins the retrieval text.
 
 Performance:
     Uses a sync OpenAI client + asyncio.to_thread to call the LLM concurrently, throttled by an
@@ -118,14 +121,6 @@ def _is_script_mismatch(chunk_text: str, candidate_prefix: str) -> bool:
     prefix_main = prefix_scripts - {"Latin"}
 
     return bool(chunk_main) and not prefix_main
-
-
-def _safe_fallback_prefix(chunk_text: str, file_name: str) -> str:
-    """Fallback prefix when the LLM fails: use file_name directly, adding no natural-
-    language wrapper, so the prefix stays language-neutral (bge-m3 is fairly
-    insensitive to naming-like noise). Returns "{file_name}\n\n{chunk_text}".
-    """
-    return f"{file_name}\n\n{chunk_text}"
 
 
 class ContextGenerator:
@@ -262,16 +257,21 @@ class ContextGenerator:
         client,
         semaphore: asyncio.Semaphore,
         should_abort: Optional[Callable[[], bool]] = None,
-    ) -> str:
-        """Generate the context-prefixed text for a single chunk.
+    ) -> Optional[str]:
+        """Generate the context prefix for a single chunk.
 
-        When should_abort holds, return the original chunk_text and skip the LLM — after an abort
-        the whole batch's results are discarded by the indexer (raises IndexingAbortedError), so
-        the goal here is only to let gather finish quickly without wasting LLM calls.
+        Returns the prefix, "" when the model's answer was unusable (wrong script), or
+        None when no answer was obtained (empty response, error, abort) so a later
+        re-index can try again. There is no file-name fallback any more: the chunk's
+        breadcrumb already carries the file name.
+
+        When should_abort holds, skip the LLM — after an abort the whole batch's results
+        are discarded by the indexer (raises IndexingAbortedError), so the goal here is
+        only to let gather finish quickly without wasting LLM calls.
         """
         try:
             if should_abort and should_abort():
-                return chunk_text
+                return None
 
             doc_text = full_document[:self._max_doc_chars]
             if len(full_document) > self._max_doc_chars:
@@ -287,15 +287,14 @@ class ContextGenerator:
             async with semaphore:
                 # A chunk queued behind the semaphore may have waited a while; re-check once it acquires the slot
                 if should_abort and should_abort():
-                    return chunk_text
+                    return None
                 raw_content = await asyncio.to_thread(self._call_llm_sync, prompt, client)
 
             if not raw_content:
                 logger.warning(
-                    f"LLM returned empty content for chunk in '{file_name}',"
-                    f" using safe fallback prefix"
+                    f"LLM returned empty content for chunk in '{file_name}'; no prefix"
                 )
-                return _safe_fallback_prefix(chunk_text, file_name)
+                return None
 
             context = raw_content.strip()
 
@@ -306,25 +305,25 @@ class ContextGenerator:
                     f"LLM produced script-mismatched prefix for chunk in '{file_name}',"
                     f" discarding. context_preview={context[:60]!r}"
                 )
-                return _safe_fallback_prefix(chunk_text, file_name)
+                return ""
 
             if len(context) > self._max_context_length:
                 context = context[:self._max_context_length]
 
-            return f"{context}\n\n{chunk_text}"
+            return context
 
         except Exception as e:
             logger.warning(f"Context generation failed for chunk in '{file_name}': {e}")
-            return _safe_fallback_prefix(chunk_text, file_name)
+            return None
 
-    async def generate_batch(
+    async def generate_prefixes(
         self,
         chunks: List[str],
         full_document: str,
         file_name: str,
         on_progress: Optional[Callable[[int, int], None]] = None,
         should_abort: Optional[Callable[[], bool]] = None,
-    ) -> List[str]:
+    ) -> List[Optional[str]]:
         """Generate contextual prefixes for a batch of chunks (concurrent LLM calls).
 
         Sync OpenAI client + asyncio.to_thread for concurrency; asyncio.Semaphore for throttling.
@@ -341,7 +340,8 @@ class ContextGenerator:
                 job, and this method returns normally.
 
         Returns:
-            A list the same length as chunks; each element is the assembled `prefix\n\nchunk_text` string.
+            A list the same length as chunks: each chunk's prefix, "" when the answer was
+            discarded, None when no answer was obtained (see _generate_one).
         """
         total = len(chunks)
 
@@ -424,7 +424,7 @@ class ContextGenerator:
         semaphore: asyncio.Semaphore,
         on_done: Callable[[], None],
         should_abort: Optional[Callable[[], bool]] = None,
-    ) -> str:
+    ) -> Optional[str]:
         """Generate one chunk's context and report completion."""
         result = await self._generate_one(
             chunk_text, full_document, file_name, client, semaphore, should_abort

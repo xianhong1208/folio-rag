@@ -539,6 +539,8 @@
   .chunk-row .c-idx { font-family: "JetBrains Mono", monospace; font-size: 11px; font-weight: 600;
     background: var(--cyber-soft); color: var(--cyber); border-radius: 6px; padding: 1px 8px; }
   .chunk-row .c-meta { font-size: 11px; color: var(--ink-subtle); }
+  .chunk-row .c-context { font-size: 11.5px; line-height: 1.5; color: var(--ink-subtle); font-style: italic;
+    border-left: 2px solid var(--hairline); padding-left: 8px; margin-bottom: 6px; }
   .chunk-row .c-text { font-size: 12.5px; line-height: 1.6; color: var(--ink); white-space: pre-wrap;
     max-height: 160px; overflow-y: auto; }
   .answer-card { border: 1px solid var(--cyber-line); background: var(--cyber-soft);

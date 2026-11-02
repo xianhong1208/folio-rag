@@ -16,6 +16,7 @@ from llama_index.core.node_parser import SentenceSplitter
 
 from src.log import get_api_logger
 from src.domain.rag.document_loader import clean_text
+from src.domain.rag.chunk_identity import token_budgets
 
 logger = get_api_logger()
 
@@ -123,9 +124,7 @@ class LeafSplitter:
                     _refine_chunks_for_token_budget,
                 )
                 hf_tok = get_hf_tokenizer(self._embedding_model_name)
-                budget = min(
-                    self._leaf_chunk_size, 380 if self._has_context_generator else 450
-                )
+                budget, _ = token_budgets(self._leaf_chunk_size, self._has_context_generator)
                 chunk_texts = _refine_chunks_for_token_budget(chunk_texts, hf_tok, budget)
             except Exception as e:
                 # When the tokenizer is unavailable, degrade to the structure-only split (legacy behavior) without blocking indexing
@@ -135,7 +134,10 @@ class LeafSplitter:
                 )
 
         leaf_docs: List[Document] = []
-        seen_texts: set = set()  # dedupe within the same document (placeholder residual chunks often repeat 10+ times)
+        # Dedupe within the same document (placeholder residual chunks often repeat 10+
+        # times). Keyed on the heading path too: the same sentence under two different
+        # sections (two products' "Warranty: 24 months") is not a duplicate.
+        seen_texts: set = set()
         dropped_lowvalue = 0
         dropped_dup = 0
         for item in chunk_texts:
@@ -158,7 +160,7 @@ class LeafSplitter:
                 dropped_lowvalue += 1
                 continue
             # Dedupe within the document: placeholder residuals often repeat verbatim many times; keep only one
-            key = text.strip()
+            key = (tuple(provenance.get("headings") or ()), text.strip())
             if key in seen_texts:
                 dropped_dup += 1
                 continue

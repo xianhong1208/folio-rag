@@ -28,6 +28,8 @@ from src.domain.rag.embedding.batch_exec import (
     _embed_batch_with_retry,
 )
 from src.domain.rag.hierarchy import build_hierarchy
+from src.domain.rag.chunk_identity import breadcrumb, retrieval_text
+from src.domain.rag.chunk_store import replace_file_chunks
 
 if TYPE_CHECKING:
     from src.domain.rag.context_generator import ContextGenerator
@@ -179,13 +181,12 @@ class HierarchicalIndexer:
         )
 
     @staticmethod
-    def _ckip_fts_enabled() -> bool:
-        """True when FTS runs in CKIP mode (text_search_config == 'simple').
+    def _text_search_config() -> str:
+        """Postgres text-search config for the FTS column ('simple' = CKIP mode).
 
-        In CKIP mode Chinese is segmented in Python and stored into the
-        `text_search_tsv` column via to_tsvector('simple', ...). Any other
-        config (e.g. 'english') keeps llama-index's native tsvector untouched.
-        Reads the global config; defaults to 'simple' when unavailable.
+        In CKIP mode Chinese is segmented in Python and the tokens are written with
+        to_tsvector('simple', ...); any other config (e.g. 'english') tokenizes the
+        retrieval text directly. Reads the global config; 'simple' when unavailable.
         """
         try:
             from src.config.config_manager import Config
@@ -193,10 +194,9 @@ class HierarchicalIndexer:
             ret = getattr(
                 getattr(Config.get_config_model(), "rag", None), "retrieval", None
             )
-            cfg = getattr(ret, "text_search_config", "simple") or "simple"
-            return cfg == "simple"
+            return getattr(ret, "text_search_config", "simple") or "simple"
         except Exception:
-            return True
+            return "simple"
 
     @staticmethod
     def _clean_text(text: str) -> str:
@@ -254,13 +254,16 @@ class HierarchicalIndexer:
         n_chunks = len(leaf_docs)
         logger.info(f"Chunked {file_name}: {n_chunks} leaf chunks")
 
-        # 2. Apply Contextual Retrieval to leaves
+        # 2. Breadcrumb (file › heading path) and contextual prefix for each leaf. Both
+        # live in metadata; the leaf's text stays the original document text, which is
+        # what every read path shows. Retrieval uses prefix + breadcrumb + text.
+        for ld in leaf_docs:
+            ld.metadata["breadcrumb"] = breadcrumb(file_name, ld.metadata.get("headings"))
         if self._context_generator and document.text:
             _raise_if_aborted(should_abort, file_name, "contextualizing")
             _report_chunk_progress(progress_cb, "contextualizing", 0, n_chunks)
-            chunk_texts = [d.text for d in leaf_docs]
-            contextualized = await self._context_generator.generate_batch(
-                chunks=chunk_texts,
+            prefixes = await self._context_generator.generate_prefixes(
+                chunks=[d.text for d in leaf_docs],
                 full_document=document.text,
                 file_name=file_name,
                 on_progress=lambda done, total: _report_chunk_progress(
@@ -268,16 +271,15 @@ class HierarchicalIndexer:
                 ),
                 should_abort=should_abort,
             )
-            # generate_batch no-ops through the rest on abort; this is the real
+            # generate_prefixes no-ops through the rest on abort; this is the real
             # stopping point — the result is discarded and never reaches embedding.
             _raise_if_aborted(should_abort, file_name, "contextualizing")
-            # Clean the LLM contextual prefix too: reasoning models occasionally emit
-            # control characters, so make it safe before PGVector.
-            leaf_docs = [
-                Document(text=self._clean_text(ct), metadata=ld.metadata.copy())
-                for ld, ct in zip(leaf_docs, contextualized)
-            ]
-            logger.info(f"Contextual prefixes applied to {len(leaf_docs)} leaves ({file_name})")
+            for ld, prefix in zip(leaf_docs, prefixes):
+                # Reasoning models occasionally emit control characters: clean before PGVector.
+                prefix = self._clean_text(prefix or "").strip()
+                if prefix:
+                    ld.metadata["context_prefix"] = prefix
+            logger.info(f"Contextual prefixes generated for {len(leaf_docs)} leaves ({file_name})")
 
         # 3. Build hierarchy (leaves + parents)
         base_metadata = {
@@ -289,6 +291,7 @@ class HierarchicalIndexer:
             parent_target_tokens=self._parent_target_tokens,
             base_metadata=base_metadata,
         )
+        search_texts = {n.node_id: retrieval_text(n.text, n.metadata) for n in leaf_nodes}
 
         # 4. Embed leaves only (parents stay un-embedded); prefer the injected
         # embed_model, falling back to the global one only when not injected.
@@ -296,7 +299,7 @@ class HierarchicalIndexer:
         if embed_model is None:
             raise RuntimeError("Embedding model not configured (neither injected nor global)")
 
-        leaf_texts = [n.text for n in leaf_nodes]
+        leaf_texts = [search_texts[n.node_id] for n in leaf_nodes]
         n_leaves = len(leaf_texts)
         n_batches = (n_leaves + _EMBEDDING_BATCH_SIZE - 1) // _EMBEDDING_BATCH_SIZE
         _report_chunk_progress(progress_cb, "embedding", 0, n_leaves)
@@ -332,36 +335,29 @@ class HierarchicalIndexer:
         for p in parent_nodes:
             p.embedding = zero_vec
 
-        # 5. Bulk insert (leaves + parents in single transaction)
+        # 5. Replace this file's rows in ONE transaction: old rows out, new rows in, with
+        # the full-text vector written in the same INSERT. Re-indexing never leaves a
+        # window with no chunks or with NULL search vectors (see chunk_store).
         _raise_if_aborted(should_abort, file_name, "writing")
         _report_chunk_progress(progress_cb, "writing", n_leaves, n_leaves)
         all_nodes: List[TextNode] = list(leaf_nodes) + list(parent_nodes)
+        file_id_meta = str(document.metadata.get("file_id") or "")
+        if not file_id_meta:
+            raise ValueError(f"{file_name}: document has no file_id; cannot replace its chunks")
+        tsv_config = self._text_search_config()
+        segment = None
+        if tsv_config == "simple":
+            # CKIP mode: Chinese is segmented in Python; Postgres's 'simple' parser then
+            # splits on the inserted spaces. Same segmenter as the Rebuild-FTS backfill.
+            from src.domain.rag.ckip_segmenter import get_segmenter
 
-        # Idempotently purge this file's stale chunks before writing. Node ids are
-        # regenerated with uuid4 each time and PGVector does not de-duplicate, so
-        # any re-run after a "write succeeded but finalize failed" case (timeout
-        # cancel / record_index_success blew up / a later gate) would stack a
-        # second full copy of the vectors into the same table. Silently skipped
-        # when the table does not exist (first index).
-        file_id_meta = document.metadata.get("file_id")
-        if file_id_meta:
-            def _purge_stale():
-                from src.domain.rag.chunk_lookup import ChunkLookup
-                from src.domain.rag.vector_store_manager import VectorStoreManager
-                try:
-                    table = ChunkLookup._get_table_name(vector_store)
-                    removed = VectorStoreManager.delete_chunks_by_file(table, str(file_id_meta))
-                    if removed:
-                        logger.info(
-                            f"[REINDEX_PURGE] removed {removed} stale chunk(s) of "
-                            f"file {file_id_meta} before write")
-                except Exception as purge_err:  # table missing etc. — normal on first index
-                    logger.debug(f"stale-chunk purge skipped: {purge_err}")
-            await _to_thread_protected(_purge_stale)
-        # Sync SQLAlchemy insert, offloaded off the loop. _to_thread_protected (not
-        # a bare to_thread) so on cancel the write finishes rather than leaving an
-        # orphan insert racing DROP TABLE.
-        await _to_thread_protected(vector_store.add, all_nodes)
+            segment = get_segmenter().segment_batch
+        # _to_thread_protected (not a bare to_thread) so on cancel the write finishes
+        # rather than leaving an orphan insert racing DROP TABLE.
+        await _to_thread_protected(
+            replace_file_chunks, vector_store, file_id_meta, all_nodes,
+            search_texts, tsv_config, segment,
+        )
 
         # 6. Ensure this (possibly just-created) table has an HNSW vector index now,
         # so a new folder gets fast search without waiting for the next boot.
@@ -380,36 +376,6 @@ class HierarchicalIndexer:
         except Exception as e:
             # Non-fatal: it still works without HNSW (just a slower seq scan).
             logger.warning(f"⚠️ HNSW post-index hook failed (not fatal): {e}")
-
-        # 6b. CKIP mode: overwrite the FTS tsvector with Python-side CKIP tokens so
-        # BM25 matches space-less Chinese (llama-index's to_tsvector('simple', text)
-        # cannot segment it). Only the tsv changes; stored `text` stays original.
-        # Any other config no-ops. Runs off the loop (blocking DB + CKIP inference).
-        if self._ckip_fts_enabled():
-            try:
-                from src.domain.rag.chunk_lookup import ChunkLookup
-                from src.domain.rag.vector_store_manager import (
-                    rebuild_text_search_tsv,
-                )
-                from src.domain.rag.ckip_segmenter import get_segmenter
-
-                table_name = ChunkLookup._get_table_name(vector_store)
-                engine = ChunkLookup._get_engine(vector_store)
-                segmenter = get_segmenter()
-                # Scope to this file's rows: re-segmenting the whole table on every
-                # add cost ~10 min on a 7k-chunk folder.
-                n = await _to_thread_protected(
-                    rebuild_text_search_tsv, engine, table_name, segmenter,
-                    document.metadata.get("file_id"),
-                )
-                logger.info(
-                    f"✅ CKIP text_search_tsv rebuilt for {n} row(s) of "
-                    f"{file_name} in {table_name}"
-                )
-            except Exception as e:
-                # Non-fatal: falls back to llama-index's native 'simple' tsvector
-                # (degraded Chinese recall) rather than failing the index write.
-                logger.warning(f"⚠️ CKIP tsv rebuild failed (not fatal): {e}")
 
         logger.info(
             f"Indexed {file_name}: {len(leaf_nodes)} leaves + {len(parent_nodes)} parents"
