@@ -710,7 +710,7 @@ class IndexingJobManager:
             return jobs
 
     def active_file_stages(self) -> Dict[str, Dict[str, Any]]:
-        """Return {file_id: {stage, done, total, eta}} — which stage each currently-indexing file is in.
+        """Return {file_id: {folder_id, stage, done, total, eta}} — which stage each currently-indexing file is in.
 
         Used by the admin file list to show "parsing / contextualizing / embedding / writing" live.
         Only includes the current file of RUNNING jobs; in-memory, not persisted.
@@ -721,6 +721,7 @@ class IndexingJobManager:
                 if state.status != JobStatus.RUNNING or not state.current_file_id:
                     continue
                 out[str(state.current_file_id)] = {
+                    "folder_id": state.folder_id,
                     "stage": state.current_file_stage,
                     "done": state.current_file_chunks_done,
                     "total": state.current_file_chunks_total,

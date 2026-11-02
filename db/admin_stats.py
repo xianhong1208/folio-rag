@@ -26,22 +26,35 @@ def _ensure_bound() -> None:
     get_engine()
 
 
-def overview() -> Dict[str, Any]:
-    """Overview KPIs: global folder/file/index/job statistics."""
+def _owned(q, folder_id_col, owner: Optional[str]):
+    """Restrict a query to folders bound to ``owner`` (None = every folder)."""
+    if owner is None:
+        return q
+    from sqlalchemy import select
+    return q.filter(folder_id_col.in_(select(Folder.id).where(Folder.user_token == owner)))
+
+
+def overview(owner: Optional[str] = None) -> Dict[str, Any]:
+    """Overview KPIs: folder/file/index/job statistics.
+
+    ``owner`` limits every count to the folders bound to that owner key (a console
+    session's jti); None covers the whole server.
+    """
     _ensure_bound()
     with Session() as s:
-        folders = s.query(func.count(Folder.id)).scalar() or 0
-        files, total_size = s.query(
+        folders = _owned(s.query(func.count(Folder.id)), Folder.id, owner).scalar() or 0
+        files, total_size = _owned(s.query(
             func.count(File.id), func.coalesce(func.sum(File.file_size), 0)
-        ).one()
-        idx_rows = s.query(
+        ), File.folder_id, owner).one()
+        idx_rows = _owned(s.query(
             FileIndex.status, func.count(FileIndex.id), func.coalesce(func.sum(FileIndex.num_chunks), 0)
-        ).group_by(FileIndex.status).all()
+        ), FileIndex.folder_id, owner).group_by(FileIndex.status).all()
         by_status = {r[0]: {"files": r[1], "chunks": int(r[2])} for r in idx_rows}
-        job_rows = s.query(IndexJob.status, func.count(IndexJob.job_id)) \
-            .group_by(IndexJob.status).all()
+        job_rows = _owned(s.query(IndexJob.status, func.count(IndexJob.job_id)),
+                          IndexJob.folder_id, owner).group_by(IndexJob.status).all()
         jobs_by_status = {r[0]: r[1] for r in job_rows}
-        running = s.query(IndexJob).filter(IndexJob.status.in_(_JOB_ACTIVE)) \
+        running = _owned(s.query(IndexJob), IndexJob.folder_id, owner) \
+            .filter(IndexJob.status.in_(_JOB_ACTIVE)) \
             .order_by(IndexJob.last_updated_at.desc()).limit(5).all()
     indexed = by_status.get("indexed", {"files": 0, "chunks": 0})
     failed = by_status.get("failed", {"files": 0, "chunks": 0})
@@ -62,8 +75,11 @@ def overview() -> Dict[str, Any]:
     }
 
 
-def folders_with_index_stats() -> List[Dict[str, Any]]:
-    """All folders plus their index summaries (single join query, no N+1)."""
+def folders_with_index_stats(owner: Optional[str] = None) -> List[Dict[str, Any]]:
+    """Folders plus their index summaries (single join query, no N+1).
+
+    ``owner`` limits the list to folders bound to that owner key; None lists all.
+    """
     _ensure_bound()
     with Session() as s:
         idx = s.query(
@@ -73,9 +89,11 @@ def folders_with_index_stats() -> List[Dict[str, Any]]:
             func.coalesce(func.sum(FileIndex.num_chunks), 0).label("chunks"),
             func.max(FileIndex.indexed_at).label("last_indexed"),
         ).group_by(FileIndex.folder_id).subquery()
-        rows = s.query(Folder, idx.c.indexed, idx.c.failed, idx.c.chunks, idx.c.last_indexed) \
-            .outerjoin(idx, Folder.id == idx.c.fid) \
-            .order_by(Folder.updated_at.desc()).all()
+        q = s.query(Folder, idx.c.indexed, idx.c.failed, idx.c.chunks, idx.c.last_indexed) \
+            .outerjoin(idx, Folder.id == idx.c.fid)
+        if owner is not None:
+            q = q.filter(Folder.user_token == owner)
+        rows = q.order_by(Folder.updated_at.desc()).all()
         out = []
         for f, indexed, failed_n, chunks, last_indexed in rows:
             out.append({
@@ -122,26 +140,37 @@ def files_with_index_status(folder_id: int) -> List[Dict[str, Any]]:
         return out
 
 
-def recent_jobs(limit: int = 20) -> List[Dict[str, Any]]:
-    """Recent index jobs (including folder name), ordered by last update."""
+def recent_jobs(limit: int = 20, owner: Optional[str] = None,
+                viewer: Optional[str] = None) -> List[Dict[str, Any]]:
+    """Recent index jobs (including folder name), ordered by last update.
+
+    ``owner`` limits the list to jobs on folders bound to that owner key (None = all).
+    Each row carries ``owned``: whether ``viewer`` owns the job's folder (always true
+    when ``viewer`` is None), so the console only offers actions it can perform.
+    """
     _ensure_bound()
     with Session() as s:
-        rows = s.query(IndexJob, Folder.name).outerjoin(
-            Folder, IndexJob.folder_id == Folder.id
-        ).order_by(IndexJob.last_updated_at.desc()).limit(limit).all()
-        return [{**_job_dict(j), "folder_name": name} for j, name in rows]
+        q = s.query(IndexJob, Folder.name, Folder.user_token).outerjoin(
+            Folder, IndexJob.folder_id == Folder.id)
+        if owner is not None:
+            q = q.filter(Folder.user_token == owner)
+        rows = q.order_by(IndexJob.last_updated_at.desc()).limit(limit).all()
+        return [{**_job_dict(j), "folder_name": name,
+                 "owned": viewer is None or (bool(tok) and tok == viewer)}
+                for j, name, tok in rows]
 
 
-def indexing_trend(days: int = 7) -> List[Dict[str, Any]]:
+def indexing_trend(days: int = 7, owner: Optional[str] = None) -> List[Dict[str, Any]]:
     """Daily count of files indexed over the last N days (for the sparkline; by FileIndex.indexed_at)."""
     _ensure_bound()
     from sqlalchemy import func as _f
     from datetime import datetime, timedelta, timezone
     since = datetime.now(timezone.utc) - timedelta(days=days - 1)
     with Session() as s:
-        rows = s.query(
+        rows = _owned(s.query(
             _f.date(FileIndex.indexed_at).label("d"), _f.count(FileIndex.id)
-        ).filter(FileIndex.status == "indexed", FileIndex.indexed_at >= since) \
+        ), FileIndex.folder_id, owner) \
+         .filter(FileIndex.status == "indexed", FileIndex.indexed_at >= since) \
          .group_by("d").all()
     by_day = {str(r[0]): r[1] for r in rows}
     out = []
@@ -167,7 +196,11 @@ def chunks_for_file(folder_id: int, file_id: str, limit: int = 500) -> Dict[str,
         if folder is None:
             return {"chunks": [], "total": 0, "file_name": None}
         table = f"data_{folder_id}_{folder.vector_table_uuid}"
-        fidx = s.query(File.file_name).filter(File.id == file_id).scalar()
+        # The file must belong to this folder (no reading another folder's file name).
+        fidx = s.query(File.file_name).filter(
+            File.id == file_id, File.folder_id == folder_id).scalar()
+        if fidx is None:
+            return {"chunks": [], "total": 0, "file_name": None}
     try:
         with get_engine().connect() as conn:
             rows = conn.execute(text(
