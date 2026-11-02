@@ -141,3 +141,31 @@ class TestInterruptedFiles:
         assert IndexJobDB.get_by_id(jid)["kind"] == "rebuild_fts"
         js = {j["job_id"]: j for j in admin_stats.recent_jobs(50)}
         assert js[jid]["kind"] == "rebuild_fts" and js[jid]["status"] == "interrupted"
+
+
+class TestRuntimeTablesMigration:
+    """ref: the three runtime tables come from Alembic, matching the ORM."""
+
+    @pytest.mark.parametrize("table", ["RuntimeSettings", "SettingsAudit", "QueryLogs"])
+    def test_table_exists_after_chain(self, engine, table):
+        with engine.connect() as c:
+            assert c.execute(text("SELECT to_regclass(:t)"), {"t": f'"{table}"'}).scalar()
+
+    def test_orm_columns_match_migration(self, engine):
+        from sqlalchemy import inspect
+        from db.db import QueryLog, RuntimeSetting, SettingsAudit
+        insp = inspect(engine)
+        for orm in (RuntimeSetting, SettingsAudit, QueryLog):
+            db_cols = {c["name"] for c in insp.get_columns(orm.__tablename__)}
+            assert db_cols == {c.name for c in orm.__table__.columns}, orm.__tablename__
+
+    def test_orm_round_trip(self, itest_db):
+        from db.query_log_db import QueryLogDB
+        from db.settings_audit_db import SettingsAuditDB
+        from db.runtime_settings_db import RuntimeSettingsDB
+        RuntimeSettingsDB.upsert("rag.rerank.score_threshold", 0.3, updated_by="t")
+        assert RuntimeSettingsDB.load_all()["rag.rerank.score_threshold"] == 0.3
+        SettingsAuditDB.record("k", "set", 1, 2, "t")
+        assert SettingsAuditDB.recent(5)[0]["key"] == "k"
+        QueryLogDB.record("hello", 1, 3, 12, "tok…")
+        assert QueryLogDB.analytics(days=1)["total"] >= 1

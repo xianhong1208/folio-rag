@@ -66,7 +66,7 @@ def test_big5_detected(tmp_path):
 def test_undecodable_binary_raises_actionable_error(tmp_path):
     """Unrecognizable random binary → ValueError with actionable guidance, never garbled text (TC-text-io-07)."""
     p = _write(tmp_path, "junk.txt", bytes(range(256)) * 8)
-    with pytest.raises(ValueError, match="另存為 UTF-8"):
+    with pytest.raises(ValueError, match="Save the file as UTF-8"):
         read_text_robust(p)
 
 

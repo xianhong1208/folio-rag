@@ -159,6 +159,8 @@ Paste the token on the login screen. Folders created earlier through the old *Ow
 
 **Dev mode.** With `auth.enabled: false` there is no login: the console is open to anyone who can reach the port, with full admin rights and every folder visible (folders created there are owned by `console`). The server logs a warning at startup. Use it only on a trusted machine.
 
+**Network exposure.** Even with login on, keep the console (`/admin`, `/api/admin/*`) reachable only from trusted networks — a VPN, an internal network, or a reverse proxy that restricts it — and serve it over HTTPS. Login protects folders and settings from people without a valid token, but the console can upload and delete documents, run queries against your model endpoints and (with `rag:admin`) change them, so it should not face the open internet. `/mcp` and `/api/rag/*` are designed to be reachable by MCP clients and need only a valid token.
+
 | Page | What you do there |
 |------|-------------------|
 | **Overview** | The live retrieval pipeline, corpus readouts, index health, and model-service status. |

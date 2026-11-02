@@ -150,7 +150,10 @@ def main():
             log_level = args.log_level.upper()
         log_dir = getattr(log_conf, "log_dir", "logs")
 
-        setup_logger(console_level=log_level, file_level="DEBUG", log_base_dir=log_dir)
+        # logging.max_size / backup_count: rotate at that size, keep that many old files.
+        setup_logger(console_level=log_level, file_level="DEBUG", log_base_dir=log_dir,
+                     rotation=getattr(log_conf, "max_size", None) or "5 MB",
+                     retention=getattr(log_conf, "backup_count", None))
         logger = get_server_logger()
 
         # Migration-only mode: run the action and exit without starting the server.
@@ -203,13 +206,16 @@ def main():
         # Must run before any RAG component is lazily constructed; skipped safely when the
         # DB is unavailable, falling back to yaml defaults.
         try:
-            from db.runtime_settings_db import RuntimeSettingsDB
             from src.adapter.runtime_settings_service import load_overrides_on_startup
-            RuntimeSettingsDB.ensure_table()
-            from db.settings_audit_db import SettingsAuditDB
-            SettingsAuditDB.ensure_table()
-            from db.query_log_db import QueryLogDB
-            QueryLogDB.ensure_table()
+            if args.no_migrate:
+                # The tables are defined by Alembic (20261102a1b2c5); create them here
+                # only when migrations were skipped, as a fallback.
+                from db.runtime_settings_db import RuntimeSettingsDB
+                from db.settings_audit_db import SettingsAuditDB
+                from db.query_log_db import QueryLogDB
+                RuntimeSettingsDB.ensure_table()
+                SettingsAuditDB.ensure_table()
+                QueryLogDB.ensure_table()
             load_overrides_on_startup()
         except Exception as e:
             logger.warning(f"⚠️ Runtime settings overlay skipped: {e}")

@@ -166,7 +166,7 @@ class TestModelPlumbing:
     def test_transcribe_segments_raises_without_weights(self):
         with patch(f"{_FP}._resolve_model_dir", return_value=None):
             import pytest
-            with pytest.raises(RuntimeError, match="權重"):
+            with pytest.raises(RuntimeError, match="weights not found"):
                 FireRedAsrProvider()._transcribe_segments([])
 
     def test_resample_failure_raises(self, tmp_path):
