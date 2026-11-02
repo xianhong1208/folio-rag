@@ -39,6 +39,20 @@ SECTION_DEPTH = 2
 
 BREADCRUMB_SEP = " › "
 
+# Version of the chunking + retrieval-text + prefix pipeline. Bump it whenever chunk
+# boundaries, retrieval text or the prefix prompt change in a way that makes existing
+# indexes stale. Recorded per file (FileIndices.pipeline_version); files indexed by an
+# older pipeline (or before versions were recorded: NULL) are flagged "re-index
+# recommended" in the console and the REST status endpoints. They keep working as-is.
+# 2: section-aligned chunks, breadcrumbs, original-text display, section-scoped prefixes.
+CHUNK_PIPELINE_VERSION = "2"
+
+
+def reindex_recommended(status: Optional[str], pipeline_version: Optional[str]) -> bool:
+    """True for an indexed file whose chunks were made by an older pipeline."""
+    return status == "indexed" and (pipeline_version or "1") != CHUNK_PIPELINE_VERSION
+
+
 # Postgres twin of retrieval_text(): concat_ws skips NULLs, NULLIF drops empty strings.
 SEARCH_TEXT_SQL = (
     "concat_ws(E'\\n', NULLIF(metadata_->>'context_prefix', ''), "

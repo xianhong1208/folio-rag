@@ -39,4 +39,4 @@ def test_real_chain_passes_new_guards(itest_db):
     """The real versions/ chain still passes under the new triple guard (parseable / single head / no orphans)."""
     chain = DatabaseMigrator._discover_revisions(DatabaseMigrator().versions_dir)
     assert len(chain) >= 3
-    assert chain[-1][0] == "20260819cafe01"
+    assert chain[-1][0] == "20261102c0de02"

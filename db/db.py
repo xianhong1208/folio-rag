@@ -95,6 +95,10 @@ class FileIndex(Base):
     # Indexed, but with a caveat the user should see (e.g. pages docling could not parse)
     index_warning = Column(Text, nullable=True)
 
+    # Chunking pipeline that produced this file's chunks (chunk_identity.CHUNK_PIPELINE_VERSION);
+    # NULL = indexed before versions were recorded
+    pipeline_version = Column(String(16), nullable=True)
+
     indexed_at = Column(DateTime, default=func.now())
     updated_at = Column(DateTime, default=func.now(), onupdate=func.now())
 

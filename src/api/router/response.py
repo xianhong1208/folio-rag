@@ -256,6 +256,10 @@ class FileIndexStatusResponse(BaseModel):
     error: Optional[str] = Field(None, description="Last error message (when failed)")
     warning: Optional[str] = Field(
         None, description="Indexed with a caveat, e.g. pages that could not be parsed")
+    pipeline_version: Optional[str] = Field(
+        None, description="Chunking pipeline that produced the chunks (null = before versions were recorded)")
+    reindex_recommended: bool = Field(
+        False, description="Indexed by an older chunking pipeline: re-index to get the current chunks")
 
 
 class IndexingMetadata(BaseModel):
@@ -414,6 +418,10 @@ class IndexedFileEntry(BaseModel):
     chunk_overlap: Optional[int]
     warning: Optional[str] = Field(
         None, description="Indexed with a caveat, e.g. pages that could not be parsed")
+    pipeline_version: Optional[str] = Field(
+        None, description="Chunking pipeline that produced the chunks (null = before versions were recorded)")
+    reindex_recommended: bool = Field(
+        False, description="Indexed by an older chunking pipeline: re-index to get the current chunks")
 
 
 class IndexedFilesResponse(BaseModel):

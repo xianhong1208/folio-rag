@@ -74,3 +74,21 @@ def test_parents_never_span_sections_and_carry_shared_headings():
     assert parents[0].metadata["headings"] == ["M", "1. Intro"]
     assert parents[0].text == "a\n\nb"  # original text only, no prefixes
     assert leaf_nodes[2].metadata["parent_node_id"] == parents[1].id_
+
+
+def test_reindex_recommended_for_files_from_older_pipelines():
+    assert ci.reindex_recommended("indexed", None) is True           # before versions were recorded
+    assert ci.reindex_recommended("indexed", "1") is True
+    assert ci.reindex_recommended("indexed", ci.CHUNK_PIPELINE_VERSION) is False
+    assert ci.reindex_recommended("failed", None) is False
+
+
+def test_status_models_expose_pipeline_fields():
+    from src.api.router.response import FileIndexStatusResponse, IndexedFileEntry
+
+    st = FileIndexStatusResponse(file_id="f", file_name="a", status="indexed")
+    assert st.reindex_recommended is False and st.pipeline_version is None and st.warning is None
+    entry = IndexedFileEntry(file_id="f", file_name="a", num_chunks=1, indexed_at="t", status="indexed",
+                             embedding_model=None, chunk_size=None, chunk_overlap=None,
+                             reindex_recommended=True)
+    assert entry.reindex_recommended is True
