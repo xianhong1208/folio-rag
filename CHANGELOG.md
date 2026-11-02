@@ -7,6 +7,28 @@ to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 ## [Unreleased]
 
 ### Added
+- **Per-file Retry and Cancel in the console.** Retry (or Reindex) any idle
+  file; cancel a queued or indexing file without stopping the rest of its job
+  (`POST …/files/{id}/retry`, `POST …/files/{id}/cancel`, bulk
+  `POST …/folders/{id}/retry`). Retries run as background jobs under the
+  folder lock instead of inside the request.
+- **"Interrupted" status.** Jobs that were running when the server stopped are
+  marked `interrupted` (not `failed`), and so are the files they left
+  unfinished, so the console offers Retry on them. Files cancelled one by one
+  show as `cancelled`.
+- **Rebuild FTS runs as a background job** (`kind: rebuild_fts`) with files
+  done/total progress, cancel and heartbeats; the endpoint returns 202 and the
+  job. A 5.6k-chunk folder used to outlive the HTTP timeout. New
+  `GET …/folders/{id}/jobs/{job_id}` for polling.
+- **Lookup indexes on vector tables** (`node_id`; `file_id` + `chunk_index`),
+  added to existing tables by migration and to new ones after their first
+  write. Neighbour expansion, read mode and per-file deletes no longer scan.
+- **Backend CI** (`.github/workflows/backend.yml`): unit tests with the
+  coverage gates and the integration group against pgvector. `uv.lock` is now
+  committed.
+- Phone-width console: a menu button opens the sidebar (it was unreachable
+  below 900px).
+
 - **Console login.** The `/admin` console now signs in with an MCP Gate access
   token for this service (`POST /api/console/session`). The token is verified
   offline once and exchanged for an HttpOnly, SameSite=Strict session cookie
@@ -19,6 +41,22 @@ to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   it Settings and System Health are read-only.
 
 ### Changed
+- **Evaluation scores the production query path.** Modes are now `vector`,
+  `bm25` and `production` (the same call as `/api/rag/query`, with live fusion,
+  rerank and thresholds); the `hybrid` mode, which always equalled `vector`, is
+  gone. Baseline deltas only compare runs on the same question set, k and
+  harness version. Generated questions follow the passage's language.
+- MCP tool names are always client-safe (`[A-Za-z0-9_-]`, max 64): folder names
+  with spaces, CJK or symbols become `Agentic_<ascii>_<hash>`. Tool
+  descriptions are English.
+- The settings API validates ranges and choices (e.g. `max_concurrent ≥ 1`,
+  `score_threshold` 0–1, known providers, http(s) URLs) and answers 422.
+- Index-job progress ticks are written to the database at most every 5 s
+  (status changes still immediately); SSE still sees every tick.
+- `logging.max_size` / `logging.backup_count` now rotate and prune log files.
+- `RuntimeSettings`, `SettingsAudit` and `QueryLogs` are created by Alembic.
+- Coverage gate set to the measured 91% (it was 95% but never enforced).
+
 - **The console is scoped to the signed-in token.** It shows and manages only
   the folders owned by the token's `jti` (the same ones REST / MCP callers with
   that token reach); folders it creates belong to it. The *Owner Token* field
@@ -31,6 +69,23 @@ to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   logs a warning at startup.
 
 ### Fixed
+- 4xx instead of 500: playground parameters of the wrong type or range,
+  queries over 2000 characters or over the embedding model's context window
+  (422), unsupported upload types (415), oversized uploads (413), folder names
+  over 255 characters (422).
+- macOS (NFD) folder names such as "café" were rejected; names are now
+  NFC-normalised. Upload file names drop client paths and control characters,
+  and the download `Content-Disposition` escapes quotes.
+- Resetting a setting whose whole section is missing from `config.yaml`
+  returned 500 after deleting the override; `${ENV}` placeholders are now
+  expanded on reset.
+- "Reindex selected" started one inline reindex per file outside the folder
+  lock; it is now a single queued job.
+- The Jobs page cancel dialog said cancellation waits for the current file; it
+  is immediate.
+- Thirteen stale unit tests (English messages, the `content_type` key, env
+  expansion, a missing Big5 sample).
+
 - Retrying a file's indexing checked folder ownership but not that the file was
   in that folder.
 - The chunk viewer no longer reads a file name from outside the folder.
