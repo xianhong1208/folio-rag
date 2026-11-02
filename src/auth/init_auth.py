@@ -9,6 +9,7 @@ HTTP call to a token server).
 """
 
 from src.log import get_api_logger
+from src.auth.console_session import build_console_auth, set_console_auth
 from src.auth.dependencies import set_remote_verifier
 from src.auth.mcp_gate_auth import McpGateTokenVerifier, settings_from_config
 
@@ -23,6 +24,8 @@ def initialize_auth_system(config):
 
     if not auth_enabled:
         api_logger.info("Authentication system is disabled")
+        # Console runs in open (dev) mode; build_console_auth logs the warning.
+        set_console_auth(build_console_auth(config))
         return
 
     # Resolve settings (issuer/audience/scopes). Raises clearly if issuer is missing.
@@ -39,4 +42,6 @@ def initialize_auth_system(config):
 
     verifier = McpGateTokenVerifier(settings)
     set_remote_verifier(verifier)
+    # Admin console login reuses the same offline verifier for the pasted PAT.
+    set_console_auth(build_console_auth(config, verifier=verifier))
     api_logger.success("MCP Gate authentication system initialized (offline RS256 JWT)")
