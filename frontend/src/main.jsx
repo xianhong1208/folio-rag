@@ -4,6 +4,7 @@ import { BrowserRouter } from 'react-router-dom'
 import App from './App'
 import { ModalProvider } from './contexts/ModalContext'
 import { ToastProvider } from './contexts/ToastContext'
+import { SessionProvider } from './contexts/SessionContext'
 import './index.css'
 
 // Theme: dark-first, remembered per-viewer.
@@ -15,11 +16,13 @@ try {
 ReactDOM.createRoot(document.getElementById('root')).render(
   <React.StrictMode>
     <BrowserRouter basename="/admin">
-      <ToastProvider>
-        <ModalProvider>
-          <App />
-        </ModalProvider>
-      </ToastProvider>
+      <SessionProvider>
+        <ToastProvider>
+          <ModalProvider>
+            <App />
+          </ModalProvider>
+        </ToastProvider>
+      </SessionProvider>
     </BrowserRouter>
   </React.StrictMode>,
 )
