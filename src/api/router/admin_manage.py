@@ -131,49 +131,78 @@ async def admin_index_folder(
         folder_id, IndexRequest(), skip_existing=False, token=token, folder=folder)
 
 
+def _fts_mode() -> str:
+    from src.config.config_manager import Config
+    ret = getattr(getattr(Config.get_config_model(), "rag", None), "retrieval", None)
+    return getattr(ret, "text_search_config", "simple") or "simple"
+
+
+@router.get("/api/admin/manage/folders/{folder_id}/fts")
+async def admin_fts_status(folder_id: int, ident: ConsoleIdentity = _Session):
+    """Which segmenter built the folder's keyword index, and whether it needs a rebuild.
+
+    ``needs_rebuild`` turns true after ``rag.retrieval.segmenter`` changes: the
+    query side already uses the new segmenter, the stored tsvector does not.
+    """
+    folder, _ = _owner(folder_id, ident)
+    from src.domain.rag.text_segmenter import configured_segmenter_name
+    configured = configured_segmenter_name()
+    if _fts_mode() != "simple":
+        return {"data": {"folder_id": folder_id, "text_search_config": _fts_mode(),
+                         "configured": None, "indexed_with": None, "needs_rebuild": False}}
+    from starlette.concurrency import run_in_threadpool
+    from db.db import get_engine
+    from src.domain.rag.vector_store_manager import VectorStoreManager, fts_status
+    table_name = VectorStoreManager.physical_table_name(folder_id, folder.vector_table_uuid)
+    try:
+        status = await run_in_threadpool(fts_status, get_engine(), table_name, configured)
+    except Exception as e:  # noqa: BLE001 — status is advisory; never break the page
+        logger.warning(f"[ADMIN] fts status failed for folder {folder_id}: {e}")
+        status = {"indexed_with": None, "configured": configured, "needs_rebuild": False}
+    return {"data": {"folder_id": folder_id, "text_search_config": "simple", **status}}
+
+
 @router.post("/api/admin/manage/folders/{folder_id}/rebuild-fts")
 async def admin_rebuild_fts(folder_id: int, ident: ConsoleIdentity = _Session):
-    """Backfill the folder's CKIP full-text search vector (`text_search_tsv`).
+    """Re-segment the folder's full-text search vector (`text_search_tsv`).
 
-    Folders indexed before the CKIP migration carry llama-index's native
-    ``to_tsvector('simple', text)``, which cannot segment space-less Chinese, so
-    BM25 recall on Chinese queries is poor. This re-segments every stored chunk
-    with CKIP and overwrites the tsvector in place — no re-embedding, no
-    re-parsing, only the search vector changes. New indexing already rebuilds it
-    (hierarchical_indexer step 6b); this is the one-click backfill for existing
-    folders. No-op (409) unless FTS is in CKIP mode.
+    Uses the configured segmenter (``rag.retrieval.segmenter``: ckip / jieba /
+    bigram) and stamps the table with it. Needed after switching segmenters,
+    and for folders indexed before Python-side segmentation existed. No
+    re-embedding and no re-parsing — only the search vector changes. No-op (409)
+    unless FTS uses the ``simple`` config (the segmented mode).
 
-    Blocking (sync DB + CKIP inference), so it runs in a threadpool off the loop.
+    Blocking (sync DB + segmentation), so it runs in a threadpool off the loop.
     """
     folder, _ = _owner(folder_id, ident)
 
-    # Only meaningful in CKIP mode; other FTS configs keep the native tsvector.
-    from src.config.config_manager import Config
-    ret = getattr(getattr(Config.get_config_model(), "rag", None), "retrieval", None)
-    if (getattr(ret, "text_search_config", "simple") or "simple") != "simple":
+    # Only meaningful in segmented mode; other FTS configs keep the native tsvector.
+    if _fts_mode() != "simple":
         raise HTTPException(
-            409, "FTS is not in CKIP mode "
+            409, "FTS is not in segmented mode "
             "(rag.retrieval.text_search_config != 'simple'); nothing to rebuild")
 
     from starlette.concurrency import run_in_threadpool
     from db.db import get_engine
     from src.domain.rag.vector_store_manager import (
         VectorStoreManager, rebuild_text_search_tsv)
-    from src.domain.rag.ckip_segmenter import get_segmenter
+    from src.domain.rag.text_segmenter import get_segmenter
 
     table_name = VectorStoreManager.physical_table_name(
         folder_id, folder.vector_table_uuid)
+    segmenter = get_segmenter()
 
     def _work() -> int:
-        return rebuild_text_search_tsv(get_engine(), table_name, get_segmenter())
+        return rebuild_text_search_tsv(get_engine(), table_name, segmenter)
 
     try:
         rows = await run_in_threadpool(_work)
     except Exception as e:
         logger.warning(f"[ADMIN] rebuild-fts failed for folder {folder_id}: {e}")
         raise HTTPException(500, f"Rebuild failed: {e}")
-    return {"data": {"folder_id": folder_id, "rows_updated": rows},
-            "message": f"Rebuilt full-text search for {rows} chunk(s)"}
+    name = getattr(segmenter, "name", "configured")
+    return {"data": {"folder_id": folder_id, "rows_updated": rows, "segmenter": name},
+            "message": f"Rebuilt full-text search for {rows} chunk(s) with {name}"}
 
 
 @router.post("/api/admin/manage/folders/{folder_id}/files/{file_id}/retry")

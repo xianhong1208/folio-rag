@@ -24,7 +24,7 @@ License: MIT&nbsp;·&nbsp;Python 3.12&nbsp;·&nbsp;PostgreSQL + pgvector&nbsp;·
 ## Key features
 
 - **Hierarchical chunking + auto-merging retrieval.** Documents are split into small **leaves** (precise matching) and large **parents** (full context) at index time. When several leaves from the same passage are hit, the whole parent is returned instead of fragments; a single-leaf hit expands to its neighbours so the answer never loses narrative continuity.
-- **Hybrid search, tuned for Chinese.** Dense vector retrieval (pgvector) is fused with sparse **BM25** using Reciprocal Rank Fusion, so keyword signal genuinely affects ranking. Chinese text is word-segmented with **CKIP** (Academia Sinica) before Postgres full-text indexing — space-less Chinese actually gets tokenized instead of collapsing into one term.
+- **Hybrid search, tuned for Chinese.** Dense vector retrieval (pgvector) is fused with sparse **BM25** using Reciprocal Rank Fusion, so keyword signal genuinely affects ranking. Chinese text is word-segmented before Postgres full-text indexing — with **CKIP** (Academia Sinica) by default, or jieba / a dependency-free bigram tokenizer — so space-less Chinese actually gets tokenized instead of collapsing into one term.
 - **Cross-encoder reranking.** A `bge-reranker-v2-m3` / `mxbai-rerank-base-v2` model re-scores the fused candidates for fine-grained Top-K precision.
 - **Contextual retrieval.** At index time an LLM prepends a short, document-aware context to each chunk (Anthropic's recommended technique), improving retrievability of otherwise ambiguous fragments.
 - **Per-folder MCP tools, scoped per token.** Every folder is registered as an `Agentic_<folder>` tool; the tool list a caller sees is filtered by their token — you only see folders you own. Ownership is keyed on the token's stable `jti`.
@@ -121,6 +121,16 @@ Your folder is indexed once, then every query runs through the pipeline:
 
 **Keyword search (BM25).** The query is tokenised the way the index was (segmented for Chinese), question and function words (`什麼`, `嗎`, `what`, `the`, …) are dropped, and Postgres full-text search runs over **leaf chunks only** — first requiring every term (AND), then filling up with any term (OR). Its depth is `max(top_k candidates, rag.retrieval.default_sparse_top_k)`, and it runs concurrently with the vector search. The `simple` text-search config does no English stemming (`policy` ≠ `policies`); set `text_search_config: english` for an English-only corpus.
 
+**Chinese segmentation.** With the default `text_search_config: simple`, Chinese is segmented in Python before it reaches Postgres, by the segmenter in `rag.retrieval.segmenter` — the same function for indexing, *Rebuild FTS* and queries:
+
+| `segmenter` | Notes |
+|---|---|
+| `ckip` *(default)* | Academia Sinica CKIP BERT model — most accurate on Traditional Chinese; needs torch and a model download on first use. |
+| `jieba` | Dictionary-based, pure Python, no GPU. Optional extra: `uv pip install jieba` (or the `jieba` extra in `pyproject.toml`). |
+| `bigram` | Overlapping CJK character pairs + Latin/digit words. No model, no dependency; bigger index. |
+
+Each folder's table records which segmenter built its keyword index. After changing `segmenter` (live, from Settings), the console marks folders whose index was built with another one (**FTS rebuild needed**); *Rebuild FTS* re-segments them with the configured segmenter — no re-embedding.
+
 **Auth.** Agentic RAG is a *resource server*. FastMCP publishes `/.well-known/oauth-protected-resource/mcp`, which points clients at MCP Gate; the server fetches MCP Gate's JWKS once and verifies every bearer token offline (RS256 — signature, issuer, audience, expiry, scopes). MCP Gate is never on the request path.
 
 ## Configuration
@@ -140,6 +150,7 @@ Settings live in `config/config.yaml`; secrets come from environment variables (
 | `rag.llm.{model,base_url}` | `openai/gpt-oss-120b`, `:5052/v1` | LLM for Contextual Retrieval and the `answer` path. |
 | `rag.rerank.{model,base_url}` | `mixedbread-ai/mxbai-rerank-base-v2`, `:8787` | Cross-encoder reranker. |
 | `rag.asr.provider` | `fireredasr` | Audio transcription: `fireredasr` (local zh-TW) · `docling-whisper` · `openai-compatible`. |
+| `rag.retrieval.segmenter` | `ckip` | Chinese segmenter for keyword search: `ckip` · `jieba` · `bigram` (see *Chinese segmentation*). |
 | `rag.retrieval.*` | — | Top-K, similarity cutoff, BM25 candidates, `hybrid_fusion` (`rrf`/`concat`), auto-merging. Tunable live from the console, or via the **High Precision / Balanced / High Recall** presets. |
 
 GPU selection is a `uv sync --group {rocm-r714|rocm-r713|cuda|cpu}` choice — see the top of `pyproject.toml` and `docs/testing/ENVIRONMENTS.md`.

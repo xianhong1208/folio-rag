@@ -24,7 +24,7 @@ License: MIT&nbsp;·&nbsp;Python 3.12&nbsp;·&nbsp;PostgreSQL + pgvector&nbsp;·
 ## 功能特點
 
 - **階層切塊 + auto-merging 檢索。** 索引時把文件切成小的 **leaf**（精準匹配）與大的 **parent**（完整脈絡）。當同一段落的多個 leaf 被命中時,回傳整個 parent 而非碎片;單一 leaf 命中則向鄰居擴展,答案不會失去語意連貫性。
-- **混合搜尋,為中文調校。** 密集向量檢索（pgvector）與稀疏 **BM25** 以 Reciprocal Rank Fusion 融合,讓關鍵字訊號真的影響排名。中文在進 Postgres 全文索引前先用 **CKIP**（中研院）斷詞 —— 無空格的中文會被真正 tokenize,而不是塌成單一詞。
+- **混合搜尋,為中文調校。** 密集向量檢索（pgvector）與稀疏 **BM25** 以 Reciprocal Rank Fusion 融合,讓關鍵字訊號真的影響排名。中文在進 Postgres 全文索引前先斷詞 —— 預設用 **CKIP**（中研院）,也可選 jieba 或零相依的 bigram —— 無空格的中文會被真正 tokenize,而不是塌成單一詞。
 - **Cross-encoder 重排。** 以 `bge-reranker-v2-m3` / `mxbai-rerank-base-v2` 對融合後的候選重新評分,提升 Top-K 精度。
 - **Contextual Retrieval。** 索引時由 LLM 為每個 chunk 加上一段依文件脈絡的前綴（Anthropic 建議的做法),提升原本模稜兩可片段的可檢索性。
 - **每資料夾一個 MCP 工具,依 token 隔離。** 每個資料夾註冊成 `Agentic_<folder>` 工具;呼叫者看到的工具清單會依其 token 過濾 —— 你只看得到自己擁有的資料夾。歸屬以 token 穩定的 `jti` 為 key。
@@ -121,6 +121,16 @@ Agentic_product-docs  mode="search"  query="要怎麼輪替簽章金鑰?"
 
 **關鍵字檢索（BM25）。** 查詢用與索引相同的方式切詞（中文先斷詞）,去掉疑問詞與虛詞（`什麼`、`嗎`、`what`、`the`…）,再以 Postgres 全文檢索**只搜 leaf chunk** —— 先要求所有詞都出現（AND）,不足再用任一詞（OR）補滿。檢索深度為 `max(top_k 候選數, rag.retrieval.default_sparse_top_k)`,並與向量檢索同時執行。`simple` 全文設定不做英文詞幹還原（`policy` ≠ `policies`）;純英文語料可設 `text_search_config: english`。
 
+**中文斷詞。** 預設 `text_search_config: simple` 時,中文在進 Postgres 前先在 Python 端斷詞,斷詞器由 `rag.retrieval.segmenter` 決定 —— 索引、*Rebuild FTS* 與查詢都走同一個函式:
+
+| `segmenter` | 說明 |
+|---|---|
+| `ckip` *(預設)* | 中研院 CKIP BERT 模型 —— 繁體中文最準;需要 torch,第一次使用時下載模型。 |
+| `jieba` | 詞典式、純 Python、不需 GPU。選用套件:`uv pip install jieba`（或 `pyproject.toml` 的 `jieba` extra）。 |
+| `bigram` | 中日韓字元兩兩重疊切分 + 英數詞。不需模型、零相依;索引較大。 |
+
+每個資料夾的資料表會記錄它的關鍵字索引是哪個斷詞器建的。改了 `segmenter`（可在 Settings 即時改）之後,主控台會把用其他斷詞器建索引的資料夾標成 **FTS rebuild needed**;*Rebuild FTS* 會用目前設定的斷詞器重新斷詞 —— 不需重新 embedding。
+
 **驗證。** Agentic RAG 是 *resource server*。FastMCP 會發佈 `/.well-known/oauth-protected-resource/mcp`,把用戶端導向 MCP Gate;伺服器抓一次 MCP Gate 的 JWKS,之後每個 bearer token 都離線驗證（RS256 —— 簽章、issuer、audience、效期、scope）。MCP Gate 從不在請求路徑上。
 
 ## 設定
@@ -140,6 +150,7 @@ Agentic_product-docs  mode="search"  query="要怎麼輪替簽章金鑰?"
 | `rag.llm.{model,base_url}` | `openai/gpt-oss-120b`、`:5052/v1` | Contextual Retrieval 與 `answer` 路徑用的 LLM。 |
 | `rag.rerank.{model,base_url}` | `mixedbread-ai/mxbai-rerank-base-v2`、`:8787` | cross-encoder 重排器。 |
 | `rag.asr.provider` | `fireredasr` | 音訊轉錄:`fireredasr`（本地繁中）· `docling-whisper` · `openai-compatible`。 |
+| `rag.retrieval.segmenter` | `ckip` | 關鍵字檢索的中文斷詞器:`ckip` · `jieba` · `bigram`（見「中文斷詞」）。 |
 | `rag.retrieval.*` | — | Top-K、相似度門檻、BM25 候選數、`hybrid_fusion`（`rrf`/`concat`）、auto-merging。可從主控台即時調,或用 **High Precision / Balanced / High Recall** 預設。 |
 
 GPU 選擇是 `uv sync --group {rocm-r714|rocm-r713|cuda|cpu}` 的取捨 —— 見 `pyproject.toml` 開頭與 `docs/testing/ENVIRONMENTS.md`。

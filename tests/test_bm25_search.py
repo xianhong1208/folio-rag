@@ -157,10 +157,10 @@ class TestSegmentQuery:
         seg = MagicMock()
         seg.segment.return_value = "退貨 政策"
         s = HybridSearcher(MagicMock(), index=MagicMock())
-        with patch("src.domain.rag.ckip_segmenter.get_segmenter", return_value=seg):
+        with patch("src.domain.rag.text_segmenter.get_segmenter", return_value=seg):
             assert await s.segment_query("退貨政策", SearchSettings()) == "退貨 政策"
 
     async def test_segmentation_failure_falls_back_to_raw(self):
         s = HybridSearcher(MagicMock(), index=MagicMock())
-        with patch("src.domain.rag.ckip_segmenter.get_segmenter", side_effect=RuntimeError):
+        with patch("src.domain.rag.text_segmenter.get_segmenter", side_effect=RuntimeError):
             assert await s.segment_query("raw text", SearchSettings()) == "raw text"
