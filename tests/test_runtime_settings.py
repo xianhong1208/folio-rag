@@ -59,7 +59,7 @@ class TestValidateAndApply:
     def test_type_error_is_all_or_nothing(self):
         cfg = _mk_config()
         before = cfg.rag.retrieval.default_top_k
-        with pytest.raises(ValueError, match="驗證失敗"):
+        with pytest.raises(ValueError, match="Settings validation failed"):
             ro.validate_and_apply(cfg, {
                 "rag.retrieval.default_top_k": 99,          # valid
                 "rag.rerank.score_threshold": "not-a-num",  # invalid
@@ -78,7 +78,7 @@ class TestValidateAndApply:
         applied, warnings = ro.validate_and_apply(
             cfg, {"rag.embedding.model": "BAAI/bge-m3"})
         assert applied == {"rag.embedding.model": "BAAI/bge-m3"}
-        assert warnings and "重建索引" in warnings[0]
+        assert warnings and "reindexed" in warnings[0]
 
     def test_live_level_no_warning(self):
         cfg = _mk_config()
@@ -313,7 +313,7 @@ class TestServiceViewAndReset:
 
     def test_reset_unknown_path_rejected(self):
         from src.adapter import runtime_settings_service as svc
-        with pytest.raises(ValueError, match="不可操作"):
+        with pytest.raises(ValueError, match="not editable"):
             svc.reset_setting("database.url")
 
     def test_yaml_value_falls_back_to_field_default(self):

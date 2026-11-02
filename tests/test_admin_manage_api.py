@@ -308,7 +308,7 @@ class TestGenerateAnswer:
              patch("src.domain.rag.context_generator.ContextGenerator._create_sync_client",
                    return_value=fake):
             out = am._generate_answer("q?", [{"text": "ctx", "score": 0.9}])
-        assert out["answer"] and "生成未完成" in out["answer"]
+        assert out["answer"] and "did not complete" in out["answer"]
         assert out["confidence"] == "low" and "finish=length" in out["note"]
 
     def test_crag_gate_blocks_when_nothing_relevant(self):
@@ -322,5 +322,5 @@ class TestGenerateAnswer:
                    return_value=fake):
             out = am._generate_answer("unrelated?", [{"text": "irrelevant", "score": 0.2}])
         assert out["confidence"] == "low" and out["kept"] == 0 and out["dropped"] == 1
-        assert "找不到足夠依據" in out["answer"]
+        assert "no sufficient basis" in out["answer"]
         assert fake.chat.completions.create.call_count == 1  # graded only, no generation
