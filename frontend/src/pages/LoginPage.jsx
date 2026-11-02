@@ -30,7 +30,7 @@ export default function LoginPage() {
     <div className="login-wrap">
       <form className="login-card card" onSubmit={submit}>
         <div className="login-brand">
-          <div className="logo">Agentic RAG</div>
+          <div className="logo">Folio</div>
           <div className="sub">Retrieval Terminal</div>
         </div>
         <div className="card-head">

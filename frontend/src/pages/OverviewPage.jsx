@@ -149,7 +149,7 @@ export default function OverviewPage() {
             <div className="svc"><div className="grow"><div className="name">Speech-to-Text</div><div className="val">{m.asr.provider || '—'}</div></div><Pill state={asrState} /></div>
           </div>
 
-          <div className="sec" style={{ marginTop: 24 }}>Store <span className="r">agentic_rag</span></div>
+          <div className="sec" style={{ marginTop: 24 }}>Store <span className="r">PostgreSQL · pgvector</span></div>
           <div className="svc-grid">
             {res ? (
               <>
