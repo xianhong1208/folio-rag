@@ -82,6 +82,16 @@ def asr_runs_in_process(rag_config) -> bool:
     return bool(asr.enabled and asr.provider in IN_PROCESS_ASR)
 
 
+def docling_warmup_needed(rag_config) -> bool:
+    """Whether startup should pre-load docling's models: only when PDFs/images are parsed
+    locally or local docling-whisper transcribes audio. Office/Markdown/HTML need no models."""
+    if rag_config is None:
+        return True  # unknown config: keep the historical behaviour
+    asr = getattr(rag_config, "asr", None)
+    local_whisper = asr_runs_in_process(rag_config) and (asr is None or asr.provider == "docling-whisper")
+    return needs_local_docling_models(rag_config) or local_whisper
+
+
 def _endpoint(provider, model, base_url, enabled=True, in_process=False) -> Dict[str, Any]:
     return {
         "enabled": bool(enabled),

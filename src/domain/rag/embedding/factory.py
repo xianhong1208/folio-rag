@@ -6,12 +6,16 @@ provider based on configuration, following the Factory Pattern.
 """
 
 from .base import IEmbeddingProvider
+from typing import TYPE_CHECKING
+
 from .openai_provider import OpenAIEmbeddingProvider
-from .huggingface_provider import HuggingFaceEmbeddingProvider
 from .vllm_provider import VLLMEmbeddingProvider
 from .ollama_provider import OllamaEmbeddingProvider
 from .azure_provider import AzureOpenAIEmbeddingProvider
 from src.log import get_api_logger
+
+if TYPE_CHECKING:  # imported lazily: it loads sentence-transformers / torch
+    from .huggingface_provider import HuggingFaceEmbeddingProvider
 
 logger = get_api_logger()
 
@@ -196,8 +200,9 @@ class EmbeddingProviderFactory:
         model_name: str,
         dimension: int,
         **kwargs
-    ) -> HuggingFaceEmbeddingProvider:
-        """Create HuggingFace provider"""
+    ) -> "HuggingFaceEmbeddingProvider":
+        """Create HuggingFace provider (in-process model; imported only when selected)"""
+        from .huggingface_provider import HuggingFaceEmbeddingProvider
         embed_batch_size = kwargs.get('embed_batch_size', 10)
         device = kwargs.get('device', 'cpu')
 

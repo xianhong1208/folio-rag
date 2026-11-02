@@ -11,10 +11,9 @@ Paths:
    through Whisper hallucination filtering).
 4. Fallback: SimpleDirectoryReader.
 
-Import ordering: this module imports audio_defense at the top — the whisper anti-hallucination
-patch is applied at import time and must run before docling's get_converter(). Since
-hierarchical_indexer imports this module at its top, the chain becomes
-… → hierarchical_indexer → document_loader → audio_defense, preserving the required ordering.
+The whisper anti-hallucination patch (audio_defense) is applied by docling_loader._build_converter
+right before it installs the local Whisper pipeline, so importing this module never imports
+whisper/torch.
 """
 
 from __future__ import annotations
