@@ -56,18 +56,43 @@ def get_settings_view() -> Dict[str, Any]:
     config_model = Config.get_config_model()
     effective = ro.get_effective(config_model)
     overridden = set(RuntimeSettingsDB.load_all().keys())
-    return {
-        "settings": [
-            {
-                "path": path,
-                "value": effective.get(path),
-                "level": level,
-                "overridden": path in overridden,
-                "secret": path in ro.SECRET_PATHS,
-            }
-            for path, level in ro.EDITABLE.items()
-        ],
-    }
+    settings = []
+    for path, level in ro.EDITABLE.items():
+        entry = {
+            "path": path,
+            "value": effective.get(path),
+            "level": level,
+            "overridden": path in overridden,
+            "secret": path in ro.SECRET_PATHS,
+        }
+        if entry["secret"]:
+            # Key indicator only: whether a key is set and which env var it comes from.
+            entry["is_set"] = bool(effective.get(path))
+            entry["env"] = ro.secret_ref(path)
+        settings.append(entry)
+    rag = getattr(config_model, "rag", None)
+    return {"settings": settings, **_profile_view(rag, effective)}
+
+
+def _profile_view(rag, effective: Dict[str, Any]) -> Dict[str, Any]:
+    """Profile + one summary per model role (where it runs, key indicator; never key values)."""
+    if rag is None:
+        return {"profile": None, "roles": [], "usage": {}}
+    from src.config.roles import role_summary
+    from src.domain.rag.usage_budget import BUDGET
+    roles = []
+    for r in role_summary(rag):
+        secret_path = r.pop("secret_path")
+        key_set = bool(_secret_value(rag, secret_path))
+        roles.append({**r, "key_set": key_set,
+                      "key_env": ro.secret_ref(secret_path) if key_set else None})
+    return {"profile": rag.profile, "roles": roles, "usage": BUDGET.snapshot()}
+
+
+def _secret_value(rag, path: str):
+    from types import SimpleNamespace
+    parent, field = ro._resolve(SimpleNamespace(rag=rag), path, create=False)
+    return getattr(parent, field, None) if parent is not None else None
 
 
 def apply_settings(patch: Dict[str, Any], updated_by: Optional[str] = None
@@ -83,8 +108,7 @@ def apply_settings(patch: Dict[str, Any], updated_by: Optional[str] = None
         applied, warnings = ro.validate_and_apply(config_model, patch)
         for path, value in applied.items():
             RuntimeSettingsDB.upsert(path, value, updated_by=updated_by)
-            _audit(path, "set", before.get(path),
-                   "•••" if path in ro.SECRET_PATHS else value, updated_by)
+            _audit(path, "set", before.get(path), _audit_value(path, value), updated_by)
         _rebind(list(applied.keys()))
         logger.info(f"[RUNTIME] applied {sorted(applied)} by={updated_by}")
         return applied, warnings
@@ -103,10 +127,17 @@ def reset_setting(path: str, updated_by: Optional[str] = None) -> bool:
         config_model = Config.get_config_model()
         ro.validate_and_apply(config_model, {path: yaml_value})
         _rebind([path])
-        _audit(path, "reset", None,
-               "•••" if path in ro.SECRET_PATHS else yaml_value, updated_by)
+        _audit(path, "reset", None, _audit_value(path, yaml_value), updated_by)
         logger.info(f"[RUNTIME] reset {path} -> yaml default {yaml_value!r}")
         return True
+
+
+def _audit_value(path: str, value: Any) -> Any:
+    """Secrets are audited as the env reference they point at, or masked."""
+    if path not in ro.SECRET_PATHS:
+        return value
+    ref = ro.secret_ref(path)
+    return f"${{{ref}}}" if ref else ro.MASK
 
 
 def _audit(key, action, old, new, by):
