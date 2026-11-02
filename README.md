@@ -119,6 +119,8 @@ Your folder is indexed once, then every query runs through the pipeline:
 
 **One retrieval path.** REST `/api/rag/query`, the MCP search tool, the console Search Playground (and its trace view) and the evaluation harness all retrieve through the same code (`src/domain/rag/hybrid_search.py`): dense + BM25, fused with `rrf` (default) or `concat` (dense hits, then BM25-only hits, left for the reranker to order), reranked, then auto-merged with one shared rule. REST accepts `auto_merge` per request (`null` = follow `rag.retrieval.auto_merging.enabled`); `hybrid_alpha` is accepted and ignored. Per-request settings are passed with each call, never stored on the shared per-folder engine, so concurrent requests with different `top_k` cannot affect each other.
 
+**Keyword search (BM25).** The query is tokenised the way the index was (segmented for Chinese), question and function words (`什麼`, `嗎`, `what`, `the`, …) are dropped, and Postgres full-text search runs over **leaf chunks only** — first requiring every term (AND), then filling up with any term (OR). Its depth is `max(top_k candidates, rag.retrieval.default_sparse_top_k)`, and it runs concurrently with the vector search. The `simple` text-search config does no English stemming (`policy` ≠ `policies`); set `text_search_config: english` for an English-only corpus.
+
 **Auth.** Agentic RAG is a *resource server*. FastMCP publishes `/.well-known/oauth-protected-resource/mcp`, which points clients at MCP Gate; the server fetches MCP Gate's JWKS once and verifies every bearer token offline (RS256 — signature, issuer, audience, expiry, scopes). MCP Gate is never on the request path.
 
 ## Configuration

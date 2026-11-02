@@ -119,6 +119,8 @@ Agentic_product-docs  mode="search"  query="要怎麼輪替簽章金鑰?"
 
 **單一檢索路徑。** REST `/api/rag/query`、MCP search 工具、主控台 Search Playground（含檢索軌跡）與評測 harness 都走同一份程式碼（`src/domain/rag/hybrid_search.py`）:密集向量 + BM25,以 `rrf`（預設）或 `concat`（先放向量命中,再接只有 BM25 命中的段落,交給 reranker 排序）融合,接著 rerank,再用同一條規則做 auto-merge。REST 每次請求可帶 `auto_merge`（`null` = 依 `rag.retrieval.auto_merging.enabled`）;`hybrid_alpha` 仍接受但不再生效。每次請求的參數隨呼叫傳入,不寫進各資料夾共用的 engine,所以不同 `top_k` 的並行請求不會互相干擾。
 
+**關鍵字檢索（BM25）。** 查詢用與索引相同的方式切詞（中文先斷詞）,去掉疑問詞與虛詞（`什麼`、`嗎`、`what`、`the`…）,再以 Postgres 全文檢索**只搜 leaf chunk** —— 先要求所有詞都出現（AND）,不足再用任一詞（OR）補滿。檢索深度為 `max(top_k 候選數, rag.retrieval.default_sparse_top_k)`,並與向量檢索同時執行。`simple` 全文設定不做英文詞幹還原（`policy` ≠ `policies`）;純英文語料可設 `text_search_config: english`。
+
 **驗證。** Agentic RAG 是 *resource server*。FastMCP 會發佈 `/.well-known/oauth-protected-resource/mcp`,把用戶端導向 MCP Gate;伺服器抓一次 MCP Gate 的 JWKS,之後每個 bearer token 都離線驗證（RS256 —— 簽章、issuer、audience、效期、scope）。MCP Gate 從不在請求路徑上。
 
 ## 設定

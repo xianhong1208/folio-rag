@@ -28,6 +28,11 @@ to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   `src/domain/rag/hybrid_search.py`. The MCP path used llama-index's native
   hybrid mode on the raw query (no Chinese segmentation, no RRF), so agents got
   almost no BM25 hits on Chinese questions.
+- **BM25 rewritten.** Keyword search runs its own SQL over leaf chunks only,
+  requires every query term first (AND) and falls back to any term (OR) to fill
+  up, drops question / function words, and runs concurrently with the vector
+  search. A BM25 failure now degrades to vector-only results instead of failing
+  the query.
 - `hybrid_fusion: concat` is now "dense hits, then BM25-only hits" (left for the
   reranker to order) instead of llama-index's native hybrid, which behaved as
   vector-only for Chinese. `hybrid_alpha` is deprecated and ignored.
@@ -49,6 +54,10 @@ to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - Concurrent REST queries on one folder could run with each other's `top_k` /
   cutoff: the cached per-folder engine was reconfigured per request. Settings
   are now passed with each call.
+- Parent chunks crowded leaves out of BM25: they were filtered in Python after
+  the SQL `LIMIT`, so a query could get almost no keyword hits.
+- `rag.retrieval.default_sparse_top_k` (and the REST `sparse_top_k`) had no
+  effect; it now sets the BM25 depth.
 - Retrying a file's indexing checked folder ownership but not that the file was
   in that folder.
 - The chunk viewer no longer reads a file name from outside the folder.
