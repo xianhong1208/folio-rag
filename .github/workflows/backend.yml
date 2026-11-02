@@ -1,0 +1,125 @@
+name: Backend CI
+
+# Unit tests (with the coverage gates) and the PostgreSQL/pgvector integration group.
+#
+# Path-filtered to backend inputs: a frontend-only change already runs Console CI
+# (frontend.yml) and would otherwise pay for a multi-GB torch/docling install that
+# cannot be affected by it. agentic_rag has no branch-protection ruleset, so a
+# filtered-out run never leaves a required check pending; if one is added later,
+# make these jobs required only together with a filter-aware gate.
+# (The path list is repeated for push and pull_request: keep the two in step.)
+on:
+  push:
+    branches: [dev, main]
+    paths:
+      - 'src/**'
+      - 'db/**'
+      - 'versions/**'
+      - 'tests/**'
+      - 'scripts/**'
+      - 'evals/**'
+      - 'vendor/**'
+      - 'config/**'
+      - 'main.py'
+      - 'app.py'
+      - 'pyproject.toml'
+      - 'uv.lock'
+      - '.github/workflows/backend.yml'
+  pull_request:
+    branches: [dev, main]
+    paths:
+      - 'src/**'
+      - 'db/**'
+      - 'versions/**'
+      - 'tests/**'
+      - 'scripts/**'
+      - 'evals/**'
+      - 'vendor/**'
+      - 'config/**'
+      - 'main.py'
+      - 'app.py'
+      - 'pyproject.toml'
+      - 'uv.lock'
+      - '.github/workflows/backend.yml'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: backend-${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+env:
+  UV_VERSION: '0.9.24'
+  PYTHON_VERSION: '3.12'
+  # First-time downloads include ~1 GB of CPU torch wheels.
+  UV_HTTP_TIMEOUT: '300'
+  HF_HOME: ${{ github.workspace }}/.hf-cache
+
+jobs:
+  unit:
+    name: Unit tests + coverage
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v6
+        with:
+          version: ${{ env.UV_VERSION }}
+          python-version: ${{ env.PYTHON_VERSION }}
+          enable-cache: true
+          cache-dependency-glob: uv.lock
+      - name: Cache Hugging Face models
+        uses: actions/cache@v4
+        with:
+          path: .hf-cache
+          key: hf-${{ runner.os }}-${{ hashFiles('pyproject.toml') }}
+          restore-keys: hf-${{ runner.os }}-
+      - name: Install (CPU torch group, locked)
+        run: uv sync --frozen --group cpu
+      - name: Unit tests (fails below [tool.coverage.report] fail_under)
+        # Integration tests skip themselves unless RAG_RUN_DB_ITESTS=1.
+        run: uv run --no-sync pytest --cov --cov-report=term --cov-report=json:reports/coverage.json
+      - name: Per-file coverage floor
+        run: uv run --no-sync python scripts/check_coverage_floor.py reports/coverage.json
+
+  integration:
+    name: Integration tests (PostgreSQL + pgvector)
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    services:
+      postgres:
+        image: pgvector/pgvector:pg16
+        env:
+          POSTGRES_PASSWORD: postgres
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      # config/config.yaml reads ${DATABASE_URL}; the harness creates and drops its
+      # own throwaway database ($RAG_ITEST_DB) on this server.
+      DATABASE_URL: postgresql://postgres:postgres@localhost:5432/postgres
+      RAG_RUN_DB_ITESTS: '1'
+      RAG_ITEST_DB: agentic_rag_itest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v6
+        with:
+          version: ${{ env.UV_VERSION }}
+          python-version: ${{ env.PYTHON_VERSION }}
+          enable-cache: true
+          cache-dependency-glob: uv.lock
+      - name: Cache Hugging Face models
+        uses: actions/cache@v4
+        with:
+          path: .hf-cache
+          key: hf-${{ runner.os }}-${{ hashFiles('pyproject.toml') }}
+          restore-keys: hf-${{ runner.os }}-
+      - name: Install (CPU torch group, locked)
+        run: uv sync --frozen --group cpu
+      - name: Integration tests
+        run: uv run --no-sync pytest tests/integration -p no:cacheprovider
