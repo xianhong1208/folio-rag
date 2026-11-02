@@ -243,6 +243,9 @@ class RerankConfig(BaseModel):
     # when the rerank server already applies a chat template (vLLM --chat-template), or the
     # prompt is wrapped twice.
     auto_template: bool = True
+    # Knowledge-gap analytics: a question whose latest search's best rerank score is below this
+    # (or that returned nothing) is listed as a gap. Model-specific like score_threshold.
+    gap_threshold: float = 0.5
 
 
 class DoclingConfig(BaseModel):

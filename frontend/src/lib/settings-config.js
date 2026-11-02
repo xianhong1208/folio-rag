@@ -36,6 +36,7 @@ export const FIELDS = {
   'rag.rerank.score_threshold': { label: 'Score Threshold', type: 'number', step: 0.05, range: [0, 1], hint: 'Results scoring below this are dropped. 0.5 suits mxbai-rerank-v2 with its chat template (its relevant / not-relevant boundary); other models need their own calibration.' },
   'rag.rerank.query_template': { label: 'Query Template', type: 'textarea' },
   'rag.rerank.document_template': { label: 'Document Template', type: 'textarea' },
+  'rag.rerank.gap_threshold': { label: 'Knowledge Gap Threshold', type: 'number', step: 0.05, range: [0, 1], hint: 'Analytics lists a question as a knowledge gap when its latest search returned nothing or its best rerank score is below this.' },
   'rag.rerank.auto_template': { label: 'Auto Chat Template', type: 'bool', hint: 'Apply the official Qwen chat prompt for mxbai-rerank-v2 when the templates above are default. Turn off if the rerank server already applies a chat template.' },
   'rag.asr.enabled': { label: 'Enable Audio Transcription', type: 'bool' },
   'rag.asr.provider': { label: 'Provider', type: 'select', options: ['fireredasr', 'docling-whisper', 'openai-compatible'], hint: 'fireredasr = local Traditional Chinese (requires weights); openai-compatible = cloud / self-hosted' },

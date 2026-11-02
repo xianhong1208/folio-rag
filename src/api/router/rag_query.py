@@ -190,7 +190,8 @@ async def query_rag(
             QueryLogDB.record(
                 query=query_request.query, folder_id=folder.id,
                 result_count=result.total_results, latency_ms=_latency_ms,
-                token_prefix=mask_token(token) if token else None)
+                token_prefix=mask_token(token) if token else None,
+                top_score=result.top_score)
         except Exception as _e:  # noqa: BLE001
             logger.debug(f"query log skipped: {_e}")
 
