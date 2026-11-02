@@ -49,7 +49,9 @@ async def _run_eval_bg(folder_ref: str, n: int, k: int, regenerate: bool, judge:
         _EVAL["result"] = await mod.run_eval_async(
             folder_ref, n=n, k=k, regenerate=regenerate, judge=judge,
             progress=lambda d, t: _EVAL.update(done=d, total=t))
-    except Exception as e:  # noqa: BLE001 — background run; store the error for status to report
+    except (Exception, SystemExit) as e:  # noqa: BLE001 — background run; store the error for status to report
+        # SystemExit too: the eval module is a script loaded in-process, and an exit
+        # escaping this task would stop the whole server.
         _EVAL["error"] = str(e)
         logger.warning(f"[EVAL] run failed: {e}")
     finally:
@@ -85,6 +87,19 @@ async def eval_run(body: dict = Body(default={}, example={"folder_id": 1, "n": 1
         raise HTTPException(422, "k must be between 1 and 50")
     regen = bool(body.get("regenerate", False))
     judge = bool(body.get("judge", False))
+    # Check the folder before scheduling, so a bad request gets an HTTP error rather
+    # than a background run that fails. 404: no such folder. 409: the folder exists
+    # and the request is well-formed, but its current state (nothing indexed yet)
+    # prevents the run; the same request succeeds once files are indexed.
+    mod = _load_eval_mod()
+    try:
+        await asyncio.to_thread(mod.check_ready, folder_ref)
+    except mod.FolderNotFound as e:
+        raise HTTPException(404, str(e))
+    except mod.NoIndexedChunks as e:
+        raise HTTPException(409, str(e))
+    if _EVAL["running"]:  # another request started a run while we were checking
+        raise HTTPException(409, "An evaluation is already running")
     _EVAL.update(running=True, folder=folder_ref, done=0, total=n,
                  result=None, error=None, started_at=time.time())
     # Run on the main loop (no new thread/loop) so the shared asyncpg connection pool stays on one loop

@@ -12,9 +12,11 @@ from src.auth.owner_key import owner_key_from_bearer
 from src.domain.exceptions import (
     InvalidTokenError,
     FolderNotFoundError,
-    UnauthorizedAccessError,
     RAGFileNotFoundError
 )
+
+# Not owning a resource is reported exactly like it not existing (404, same
+# message): a distinct 403 would tell any token which folder / file ids exist.
 
 
 async def extract_token(request: Request) -> str:
@@ -49,7 +51,7 @@ async def get_folder_by_id(
 ) -> Folder:
     """Get a folder by ID and verify the token owns it.
 
-    Raises FolderNotFoundError if missing, UnauthorizedAccessError if not owned.
+    Raises FolderNotFoundError if it is missing or not owned by the token.
     """
     folder = CachedFolderDB.get_by_id(folder_id)
 
@@ -59,11 +61,7 @@ async def get_folder_by_id(
     # Fail-closed: an ownerless folder (user_token NULL/empty) is always denied —
     # "no owner" means "nobody", not "anyone".
     if folder.user_token != token:
-        raise UnauthorizedAccessError(
-            resource_type="folder",
-            resource_id=folder_id,
-            reason="This folder belongs to another user"
-        )
+        raise FolderNotFoundError(folder_id=folder_id)
 
     return folder
 
@@ -92,8 +90,8 @@ async def get_file_by_id(
 ) -> File:
     """Get a file by ID and verify the token owns its folder.
 
-    Raises RAGFileNotFoundError if the file is missing, FolderNotFoundError if its
-    folder is missing, UnauthorizedAccessError if the folder is not owned.
+    Raises RAGFileNotFoundError if the file is missing or its folder is not owned
+    by the token, FolderNotFoundError if its folder is missing.
     """
     files = FileDB.get(id=file_id)
 
@@ -109,10 +107,6 @@ async def get_file_by_id(
 
     # Fail-closed: as in get_folder_by_id, an ownerless folder is always denied.
     if folder.user_token != token:
-        raise UnauthorizedAccessError(
-            resource_type="file",
-            resource_id=file_id,
-            reason="This file belongs to a folder owned by another user"
-        )
+        raise RAGFileNotFoundError(file_id=file_id)
     
     return file

@@ -9,6 +9,7 @@ from typing import Dict, Optional
 from llama_index.vector_stores.postgres import PGVectorStore
 from sqlalchemy import make_url, text
 from db.db import get_engine
+from src.utils.db_url import resolve_db_url
 from src.log import get_api_logger
 from src.config.config_manager import Config
 
@@ -113,8 +114,8 @@ class VectorStoreManager:
         if config is None or config.database is None:
             raise RuntimeError("Database configuration is not loaded")
 
-        self._db_url = config.database.url
-        self._db_port = config.database.port
+        # Resolved once (database.port applied), same as every other connection path.
+        self._db_url = resolve_db_url(config.database)
 
         logger.info(f"VectorStoreManager initialized (embed_dim={embed_dim}, text_search_config={text_search_config}, hybrid_search={hybrid_search})")
 
@@ -150,7 +151,7 @@ class VectorStoreManager:
     def _create_vector_store(self, table_name: str) -> PGVectorStore:
         """Create a new PGVector store with hybrid search enabled."""
         url = make_url(self._db_url)
-        port = url.port or self._db_port or 5432
+        port = url.port or 5432
 
         # Do not build the HNSW index through LlamaIndex — its internal SQL does not
         # quote identifiers containing UUID hyphens and breaks:
