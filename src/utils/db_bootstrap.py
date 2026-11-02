@@ -142,10 +142,12 @@ def _enable_extensions(db_url: str, logger) -> None:
 
 
 def ensure_hnsw_for_table(engine, table_name: str, logger=None) -> bool:
-    """Ensure a single PGVector table has an HNSW index (idempotent; microsecond-level if already present).
+    """Ensure a single PGVector table has its HNSW index and lookup indexes (idempotent).
 
-    Purpose: add the HNSW index right after a new folder's first chunk write,
-    without waiting for the next restart.
+    Purpose: index a new folder's table right after its first chunk write, without
+    waiting for the next restart. Near-instant when everything already exists.
+    The lookup indexes (see ensure_lookup_indexes_for_table) are checked on every
+    call so tables created before they existed pick them up too.
 
     Args:
         engine: SQLAlchemy engine connected to the target DB (avoids rebuilding the engine each time)
@@ -153,8 +155,14 @@ def ensure_hnsw_for_table(engine, table_name: str, logger=None) -> bool:
         logger: optional
 
     Returns:
-        True if a new index was created, False if it already existed.
+        True if a new HNSW index was created, False if it already existed.
     """
+    created = _ensure_hnsw_index(engine, table_name, logger)
+    ensure_lookup_indexes_for_table(engine, table_name, logger)
+    return created
+
+
+def _ensure_hnsw_index(engine, table_name: str, logger=None) -> bool:
     idx_name = table_name + "_hnsw_idx"
     sql = text(f'''
         CREATE INDEX IF NOT EXISTS "{idx_name}"
@@ -178,6 +186,44 @@ def ensure_hnsw_for_table(engine, table_name: str, logger=None) -> bool:
         if logger:
             logger.warning(f"⚠️ HNSW index create failed for {table_name}: {e}")
         return False
+
+
+# B-tree lookup indexes on every vector table. Neighbour expansion, read mode, chunk
+# listing and per-file deletes filter by node_id or by (file_id, chunk_index); with only
+# the HNSW index those were sequential scans (at 50k leaves: ~1.3 s → ~13 ms for
+# neighbour expansion). The expressions must match chunk_lookup's WHERE clauses exactly.
+# Short suffixes keep "data_<folder>_<uuid>" + suffix under Postgres' 63-char limit.
+LOOKUP_INDEX_DDL = (
+    ("_nid_idx", "(node_id)"),
+    ("_fid_idx", "((metadata_->>'file_id'), ((metadata_->>'chunk_index')::int))"),
+)
+
+
+def ensure_lookup_indexes_for_table(engine, table_name: str, logger=None) -> int:
+    """Create the node_id and (file_id, chunk_index) lookup indexes if missing (idempotent).
+
+    Non-fatal: a failure (e.g. a non-integer chunk_index in legacy rows) is logged and
+    lookups simply stay sequential scans. Returns how many indexes were created.
+    """
+    created = 0
+    for suffix, cols in LOOKUP_INDEX_DDL:
+        idx_name = table_name + suffix
+        try:
+            with engine.begin() as conn:
+                exists = conn.execute(text(
+                    "SELECT 1 FROM pg_indexes WHERE indexname = :idx LIMIT 1"
+                ), {"idx": idx_name}).first()
+                if exists:
+                    continue
+                conn.execute(text(
+                    f'CREATE INDEX IF NOT EXISTS "{idx_name}" ON "{table_name}" {cols}'))
+            created += 1
+            if logger:
+                logger.debug(f"Lookup index {idx_name} created")
+        except Exception as e:
+            if logger:
+                logger.warning(f"⚠️ Lookup index {idx_name} create failed (not fatal): {e}")
+    return created
 
 
 def _ensure_hnsw_indexes(db_url: str, logger) -> None:
