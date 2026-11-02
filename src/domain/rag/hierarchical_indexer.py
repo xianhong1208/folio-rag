@@ -37,6 +37,8 @@ from src.domain.rag.chunk_identity import (
     retrieval_text,
 )
 from src.domain.rag.chunk_store import fetch_reusable, replace_file_chunks
+from src.domain.rag.context_scope import SECTION_WINDOW_CHARS, document_outline, section_texts
+from src.domain.rag.han_script import document_language
 
 if TYPE_CHECKING:
     from src.domain.rag.context_generator import ContextGenerator
@@ -306,6 +308,13 @@ class HierarchicalIndexer:
         if need_llm:
             _raise_if_aborted(should_abort, file_name, "contextualizing")
             _report_chunk_progress(progress_cb, "contextualizing", 0, len(need_llm))
+            # The model reads the document outline + the chunk's own section (windowed
+            # around it), not the first max_doc_chars of the whole document.
+            all_headings = [ld.metadata.get("headings") for ld in leaf_docs]
+            sections = section_texts(
+                [ld.text for ld in leaf_docs], all_headings,
+                width=min(self._context_generator.max_doc_chars, SECTION_WINDOW_CHARS),
+            )
             generated = await self._context_generator.generate_prefixes(
                 chunks=[leaf_docs[i].text for i in need_llm],
                 full_document=document.text,
@@ -314,6 +323,9 @@ class HierarchicalIndexer:
                     progress_cb, "contextualizing", done, total
                 ),
                 should_abort=should_abort,
+                contexts=[sections[i] for i in need_llm],
+                outline=document_outline(all_headings),
+                language=document_language(document.text),
             )
             # generate_prefixes no-ops through the rest on abort; this is the real
             # stopping point — the result is discarded and never reaches embedding.

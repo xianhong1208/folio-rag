@@ -44,3 +44,8 @@ def test_same_sentence_in_two_sections_is_not_a_duplicate():
     ]})
     leaves = splitter.split_into_leaf_documents(doc)
     assert [d.metadata["headings"] for d in leaves] == [["Product A"], ["Product B"]]
+
+
+def test_clean_text_removes_zero_width_and_odd_spaces():
+    from src.domain.rag.document_loader import clean_text
+    assert clean_text("ROC\u200bm\u00a0driver\x00\x07") == "ROCm driver"

@@ -11,12 +11,15 @@ from src.domain.rag.chunk_identity import chunk_hash, embedding_key, leaf_node_i
 
 class _Gen:
     cache_key = "llm|prompt=1"
+    max_doc_chars = 60000
 
     def __init__(self):
         self.calls = []
+        self.kwargs = {}
 
-    async def generate_prefixes(self, chunks, full_document, file_name, on_progress=None, should_abort=None):
+    async def generate_prefixes(self, chunks, full_document, file_name, **kw):
         self.calls.extend(chunks)
+        self.kwargs = kw
         return [f"ctx:{c[:12]}" for c in chunks]
 
 
@@ -153,3 +156,11 @@ def test_embedding_key_includes_passage_prefix():
                               _passage_prefix="passage: ")
     assert embedding_key(plain) != embedding_key(wrapped)
     assert "passage=passage: " in embedding_key(wrapped)
+
+
+async def test_prefix_scope_is_outline_plus_own_section(env):
+    await _index(env, _doc())
+    kw = env.gen.kwargs
+    assert kw["outline"] == "- Aurora › 1. Overview\n- Aurora › 5. Warranty\n- Aurora › 6. Power"
+    assert kw["contexts"][1] == "The hardware warranty is 36 months."  # its section only
+    assert kw["language"] is None  # English: the prompt asks for the chunk's own language

@@ -31,6 +31,7 @@ from src.domain.rag.docling_loader import (
 )
 from src.domain.rag.asr_provider import AsrProvider, create_asr_provider
 from src.domain.rag.chunk_identity import token_budgets
+from src.domain.rag.han_script import strip_invisible
 from src.domain.rag.audio_defense import (
     _AUDIO_TRIM_EXTENSIONS,
     _filter_whisper_hallucinations,
@@ -45,10 +46,12 @@ _OCR_EXTENSIONS = {".pdf", ".png", ".jpg", ".jpeg", ".tiff", ".tif", ".bmp", ".w
 
 
 def clean_text(text: str) -> str:
-    """Strip NUL and control characters (rejected by PostgreSQL; commonly sourced from PDF font tables / ICC profiles)."""
+    """Strip NUL and control characters (rejected by PostgreSQL; commonly sourced from PDF
+    font tables / ICC profiles), zero-width characters (they split keyword tokens), and
+    turn no-break / thin spaces into plain spaces."""
     if not text:
         return text
-    cleaned = text.replace('\x00', '')
+    cleaned = strip_invisible(text).replace('\x00', '')
     cleaned = ''.join(
         char for char in cleaned
         if char in ('\n', '\t', '\r') or ord(char) >= 32
