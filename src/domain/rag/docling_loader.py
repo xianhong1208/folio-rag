@@ -261,6 +261,20 @@ def asr_wants_local_whisper() -> bool:
     return True
 
 
+def _local_pdf_models_wanted() -> bool:
+    """Whether rag.parsing keeps PDF or image parsing on the in-process docling models
+    (config unreadable → the old behaviour: yes)."""
+    try:
+        from src.config.config_manager import Config as _Cfg
+        from src.config.roles import needs_local_docling_models
+        rag = getattr(_Cfg.get_config_model(), "rag", None)
+        if rag is not None:
+            return needs_local_docling_models(rag)
+    except Exception:
+        pass
+    return True
+
+
 def get_hf_tokenizer(tokenizer_name: Optional[str]):
     """Token counter for chunk sizing (kept under its old name for callers).
 
@@ -506,10 +520,14 @@ def _build_converter():
     if _converter is None:
         _apply_docling_env()  # must run first: hf_offline=true sets HF_HUB_OFFLINE=1
 
-        artifacts_path = _resolve_artifacts_path()
+        # PDF/image layout + OCR models are only configured when rag.parsing keeps them
+        # local; under cloud parsing this converter serves Office/Markdown/HTML only and
+        # must not touch the model stack (or torch, via the CUDA check below).
+        local_models = _local_pdf_models_wanted()
+        artifacts_path = _resolve_artifacts_path() if local_models else None
         offline = os.environ.get("HF_HUB_OFFLINE") == "1"
 
-        if not artifacts_path and offline:
+        if local_models and not artifacts_path and offline:
             raise RuntimeError(
                 "[DOCLING] hf_offline=true but assets/docling_models not found. "
                 "Prepare via: `uv run docling-tools models download -o assets/docling_models`"
@@ -527,9 +545,13 @@ def _build_converter():
 
         format_options: dict = {}
 
+        # Audio pipeline: installed only when the Whisper model exists AND config permits.
+        whisper_path = _resolve_whisper_path() if asr_wants_local_whisper() else None
+
         # Compute the GPU/CPU choice from config — passed to all pipeline options so Docling's
         # Layout / TableFormer / OCR / Whisper all run on the configured device
-        accelerator_options = _get_accelerator_options()
+        accelerator_options = (
+            _get_accelerator_options() if (local_models or whisper_path) else None)
 
         ocr_on = ocr_enabled()
         pdf_kwargs = {
@@ -544,25 +566,29 @@ def _build_converter():
             ocr_options = _get_rapidocr_options(artifacts_path, accelerator_options) if ocr_on else None
             if ocr_options is not None:
                 pdf_kwargs["ocr_options"] = ocr_options
-        else:
+        elif local_models:
             logger.warning(
                 "[DOCLING] No local artifacts_path; models will be fetched from HuggingFace Hub "
                 "on first use (online machines only)"
             )
-        if not ocr_on:
-            logger.info("[DOCLING] OCR off (rag.docling.ocr_enabled=false): scanned pages yield no text")
-        pdf_pipeline_options = PdfPipelineOptions(**pdf_kwargs)
-        # PDF and Image share the same pipeline_options (IMAGE internally goes through StandardPdfPipeline)
-        format_options[InputFormat.PDF] = PdfFormatOption(pipeline_options=pdf_pipeline_options)
-        format_options[InputFormat.IMAGE] = ImageFormatOption(pipeline_options=pdf_pipeline_options)
+        if local_models:
+            if not ocr_on:
+                logger.info("[DOCLING] OCR off (rag.docling.ocr_enabled=false): scanned pages yield no text")
+            pdf_pipeline_options = PdfPipelineOptions(**pdf_kwargs)
+            # PDF and Image share the same pipeline_options (IMAGE internally goes through StandardPdfPipeline)
+            format_options[InputFormat.PDF] = PdfFormatOption(pipeline_options=pdf_pipeline_options)
+            format_options[InputFormat.IMAGE] = ImageFormatOption(pipeline_options=pdf_pipeline_options)
+        else:
+            logger.info("[DOCLING] PDF/image models not configured: rag.parsing sends them to the cloud")
 
-        # Audio pipeline: installed only when the Whisper model exists AND config permits.
         # Not installed when rag.asr.enabled=false or the provider isn't docling-whisper (e.g. cloud),
         # saving local whisper's VRAM/warmup; a missing config keeps the old auto-discover semantics.
-        whisper_path = _resolve_whisper_path() if asr_wants_local_whisper() else None
         if whisper_path is None and not asr_wants_local_whisper():
             logger.info("[DOCLING] Audio pipeline skipped by rag.asr config (disabled or non-local provider)")
         if whisper_path:
+            # Patch whisper.load_model before docling's audio pipeline can load the model.
+            from src.domain.rag.audio_defense import _enable_whisper_anti_hallucination_defaults
+            _enable_whisper_anti_hallucination_defaults()
             logger.info(f"[DOCLING] Audio pipeline enabled, whisper_models at: {whisper_path}")
             # word_timestamps=False: avoids whisper/timing.py's hard dependency on Triton
             # (`triton_ops.dtw_kernel` / `median_filter_cuda`) — that API is unstable across Triton/ROCm
@@ -1148,6 +1174,41 @@ def _declare_html_utf8(data: bytes) -> bytes:
     return _UTF8_BOM + data
 
 
+def chunk_docling_document(
+    doc: Any,
+    file_name: str,
+    max_tokens: int = 512,
+    tokenizer: Optional[str] = None,
+    table_max_tokens: Optional[int] = None,
+) -> tuple[str, List[dict]]:
+    """Export a DoclingDocument to Markdown and chunk it into records.
+
+    The single chunking entry point for every parse path: docling_convert_once (local
+    models) and cloud_parser (vision-model Markdown re-assembled into one document, with
+    page provenance attached) both end here, so they produce the same record shape
+    ``[{"text", "headings", "page_no", "content_type"}, ...]``.
+    """
+    from docling.chunking import HierarchicalChunker
+
+    # Export full text as Markdown
+    full_text = doc.export_to_markdown()
+    logger.debug(f"Docling loaded {file_name}: {len(full_text)} chars")
+
+    # Chunk via HierarchicalChunker + per-chunk tokenizer refinement
+    # (see helpers above; we bypass HybridChunker for the large-table case).
+    hf_tok = get_hf_tokenizer(tokenizer)
+
+    raw_chunks = list(HierarchicalChunker().chunk(dl_doc=doc))
+    texts = _refine_chunks_for_token_budget(
+        raw_chunks, hf_tok, max_tokens, doc=doc, table_max_tokens=table_max_tokens)
+
+    logger.info(
+        f"Docling processed {file_name}: {len(texts)} chunks "
+        f"(max_tokens={max_tokens})"
+    )
+    return full_text, texts
+
+
 def docling_convert_once(
     file_path: str,
     file_name: str,
@@ -1178,8 +1239,6 @@ def docling_convert_once(
         (full_text, chunk_records) — full Markdown text + chunk records
             ``[{"text", "headings", "page_no"}, ...]`` (citation provenance)
     """
-    from docling.chunking import HierarchicalChunker
-
     try:
         # 1. Convert once (using the singleton converter; models already preloaded)
         converter = get_converter()
@@ -1230,23 +1289,9 @@ def docling_convert_once(
             report["missing_pages"] = missing_pages(result) if parse_warning else []
         doc = result.document
 
-        # 2. Export full text as Markdown
-        full_text = doc.export_to_markdown()
-        logger.debug(f"Docling loaded {file_name}: {len(full_text)} chars")
-
-        # 3. Chunk via HierarchicalChunker + per-chunk tokenizer refinement
-        #    (see helpers above; we bypass HybridChunker for the large-table case).
-        hf_tok = get_hf_tokenizer(tokenizer)
-
-        raw_chunks = list(HierarchicalChunker().chunk(dl_doc=doc))
-        texts = _refine_chunks_for_token_budget(
-            raw_chunks, hf_tok, max_tokens, doc=doc, table_max_tokens=table_max_tokens)
-
-        logger.info(
-            f"Docling processed {file_name}: {len(texts)} chunks "
-            f"(max_tokens={max_tokens})"
-        )
-        return full_text, texts
+        # 2-3. Markdown export + chunking (shared with the cloud parser's documents)
+        return chunk_docling_document(doc, file_name, max_tokens=max_tokens, tokenizer=tokenizer,
+                                      table_max_tokens=table_max_tokens)
 
     except Exception as e:
         # Detect common "the document itself is the problem" errors and give the user a clearer message.

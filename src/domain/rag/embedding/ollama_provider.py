@@ -30,7 +30,8 @@ class OllamaEmbeddingProvider(IEmbeddingProvider):
         model_name: str,
         base_url: str = "http://localhost:11434/v1",
         api_key: Optional[str] = None,  # Ollama doesn't validate API key
-        dimension: int = 768
+        dimension: int = 768,
+        tuning: Optional[dict] = None,
     ):
         """Initialize Ollama provider
 
@@ -50,7 +51,8 @@ class OllamaEmbeddingProvider(IEmbeddingProvider):
             self._embed_model = OpenAILikeEmbedding(
                 model_name=model_name,
                 api_key=api_key,
-                api_base=base_url
+                api_base=base_url,
+                **(tuning or {}),  # timeout / max_retries / dimensions
             )
             logger.info(
                 f"Ollama embedding provider initialized: {model_name} at {base_url} (dim={dimension})"

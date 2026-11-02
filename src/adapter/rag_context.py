@@ -184,11 +184,11 @@ class RAGContext:
                         f"Embedding prefixes enabled: query='{q_pre}' passage='{p_pre}'")
                 Settings.embed_model = embed_model
                 # Chunker tokenizer is the embedding model's HF tokenizer (used to
-                # count chunk tokens). vllm / ollama also serve HF model names
+                # count chunk tokens). vllm / ollama / openai-compatible also serve HF model names
                 # (e.g. BAAI/bge-m3); only openai / azure names are not HF repos.
                 chunker_tok = (
                     provider.get_model_name()
-                    if provider.get_provider_name() in ("huggingface", "vllm", "ollama")
+                    if provider.get_provider_name() in ("huggingface", "vllm", "ollama", "openai-compatible")
                     else None
                 )
                 logger.info(
@@ -316,7 +316,8 @@ class RAGContext:
             self._rebind_reranker(rag_config)
         # llm / contextual / asr are frozen into the indexer's construction chain,
         # so rebuild it (cheap: embed_model is injected, no model reload).
-        if any(g in groups for g in ("rag.llm", "rag.contextual_retrieval", "rag.asr")) \
+        if any(g in groups for g in ("rag.llm", "rag.contextual_llm",
+                                     "rag.contextual_retrieval", "rag.asr")) \
                 and "rag.embedding" not in groups:
             # Reuse the injected embed_model; reading Settings would build the
             # OpenAI default when unset.

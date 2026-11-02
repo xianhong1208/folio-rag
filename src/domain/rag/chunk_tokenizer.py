@@ -20,11 +20,14 @@ Resolution order (first hit wins, nothing is ever fetched from the network):
 
 Loading uses the ``tokenizers`` package (Rust, no torch, no transformers).
 ``transformers`` is imported lazily, and only for an ``assets`` directory that
-carries no ``tokenizer.json``.
+carries no ``tokenizer.json`` — never under ``rag.profile: cloud`` (where
+importing it would pull in torch) or when it is not installed; such a
+directory is then skipped for the bundled tokenizer.
 """
 
 from __future__ import annotations
 
+import importlib.util
 import lzma
 import threading
 from pathlib import Path
@@ -119,6 +122,24 @@ def _pick_assets_dir(model_name: Optional[str]) -> Optional[Path]:
     return fallback
 
 
+def transformers_allowed() -> bool:
+    """Whether a slow-tokenizer directory may be loaded through ``transformers``.
+
+    Not under ``rag.profile: cloud`` (transformers imports torch when it is installed,
+    and the cloud profile must not load the local model stack), nor when
+    transformers is not installed (``uv sync`` without ``--extra local``).
+    """
+    try:
+        from src.config.config_manager import Config
+
+        rag = getattr(Config.get_config_model(), "rag", None)
+        if getattr(rag, "profile", "local") == "cloud":
+            return False
+    except Exception:
+        pass
+    return importlib.util.find_spec("transformers") is not None
+
+
 def _load_dir(path: Path) -> Any:
     tj = path / "tokenizer.json"
     if tj.is_file():
@@ -126,6 +147,8 @@ def _load_dir(path: Path) -> Any:
 
         return FastTokenizerCounter(Tokenizer.from_file(str(tj)), path.name)
     # Slow-tokenizer-only directory (sentencepiece files without tokenizer.json).
+    if not transformers_allowed():
+        raise RuntimeError("no tokenizer.json, and transformers is unavailable here")
     from transformers import AutoTokenizer  # lazy: heavy import
 
     return AutoTokenizer.from_pretrained(str(path), local_files_only=True)

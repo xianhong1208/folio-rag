@@ -24,7 +24,6 @@ Performance:
 
 from __future__ import annotations
 
-import os
 import asyncio
 from typing import Callable, Optional, List
 
@@ -140,6 +139,9 @@ class ContextGenerator:
         max_doc_chars: int = 60000,
         max_tokens: int = 1024,
         reasoning_effort: Optional[str] = None,
+        max_calls_per_file: int = 0,
+        max_tokens_per_day: int = 0,
+        budget=None,
     ):
         self._llm_config = llm_config
         self._model = model
@@ -148,6 +150,12 @@ class ContextGenerator:
         self._max_doc_chars = max_doc_chars
         self._max_tokens = max_tokens
         self._reasoning_effort = reasoning_effort
+        # Cost guards (0 = unlimited): chunks past a cap get the fallback prefix, no LLM call.
+        self._max_calls_per_file = max_calls_per_file
+        self._max_tokens_per_day = max_tokens_per_day
+        if budget is None:
+            from src.domain.rag.usage_budget import BUDGET as budget
+        self._budget = budget
         logger.info(
             f"ContextGenerator initialized (model={model}, max_length={max_context_length}, "
             f"max_concurrent={max_concurrent}, max_doc_chars={max_doc_chars}, "
@@ -177,7 +185,8 @@ class ContextGenerator:
             logger.info("Contextual Retrieval is disabled")
             return None
 
-        llm_config = getattr(rag_config, 'llm', None)
+        from src.config.roles import resolve_llm
+        llm_config = resolve_llm(rag_config, "contextual_llm")  # rag.contextual_llm over rag.llm
         if not llm_config:
             logger.warning("Contextual Retrieval enabled but no LLM config found")
             return None
@@ -193,6 +202,8 @@ class ContextGenerator:
                 max_doc_chars=getattr(cr_config, 'max_doc_chars', 60000),
                 max_tokens=getattr(cr_config, 'max_tokens', 1024),
                 reasoning_effort=getattr(cr_config, 'reasoning_effort', None),
+                max_calls_per_file=int(getattr(cr_config, 'max_calls_per_file', 0) or 0),
+                max_tokens_per_day=int(getattr(cr_config, 'max_tokens_per_day', 0) or 0),
             )
         except Exception as e:
             logger.error(f"Failed to create ContextGenerator: {e}")
@@ -200,47 +211,10 @@ class ContextGenerator:
 
     @staticmethod
     def _create_sync_client(llm_config):
-        """Build a sync OpenAI client (supports Azure / OpenAI / vLLM / Ollama)."""
-        from openai import OpenAI
-
-        provider = llm_config.provider.lower()
-
-        if provider == "azure":
-            from openai import AzureOpenAI
-
-            api_key = llm_config.api_key or os.environ.get("AZURE_OPENAI_API_KEY")
-            if not api_key:
-                raise ValueError("Azure LLM api_key is required")
-
-            azure_endpoint = llm_config.base_url or os.environ.get("AZURE_OPENAI_ENDPOINT")
-            if not azure_endpoint:
-                raise ValueError("Azure endpoint (base_url) is required")
-
-            return AzureOpenAI(
-                api_key=api_key,
-                api_version=llm_config.api_version or "2024-12-01-preview",
-                azure_endpoint=azure_endpoint,
-            )
-
-        elif provider in ("vllm", "ollama"):
-            base_url = llm_config.base_url
-            if not base_url:
-                raise ValueError(f"{provider} requires base_url (e.g., http://localhost:8000/v1)")
-            api_key = llm_config.api_key or "not-needed"
-
-            return OpenAI(api_key=api_key, base_url=base_url)
-
-        elif provider == "openai":
-            api_key = llm_config.api_key or os.environ.get("OPENAI_API_KEY")
-            if not api_key:
-                raise ValueError("OpenAI api_key is required")
-            return OpenAI(api_key=api_key)
-
-        else:
-            raise ValueError(
-                f"Unsupported LLM provider: '{provider}'. "
-                f"Supported: azure, openai, vllm, ollama"
-            )
+        """Build a sync OpenAI client for the contextual-prefix role (see llm_client:
+        every OpenAI-compatible provider honours base_url, timeout and max_retries)."""
+        from src.domain.rag.llm_client import create_openai_client
+        return create_openai_client(llm_config)
 
     def _call_llm_sync(self, prompt: str, client) -> str:
         """Call the LLM synchronously (run in a thread pool via asyncio.to_thread)."""
@@ -260,6 +234,21 @@ class ContextGenerator:
         if not raw_content:
             raw_content = getattr(msg, 'reasoning_content', None)
         return raw_content
+
+    def _admit_tokens(self, prompt: str) -> bool:
+        """Charge an estimated cost (prompt chars / 4 + max_tokens) to today's prefix budget."""
+        limit = getattr(self, "_max_tokens_per_day", 0)
+        if not limit:
+            return True
+        estimate = len(prompt) // 4 + self._max_tokens
+        if self._budget.try_consume("prefix_tokens", estimate, limit):
+            return True
+        if not getattr(self, "_budget_warned", False):
+            self._budget_warned = True
+            logger.warning(
+                f"Contextual-prefix daily token budget ({limit}) exhausted — "
+                "remaining chunks get no prefix until UTC midnight (a later re-index fills them in)")
+        return False
 
     async def _generate_one(
         self,
@@ -304,6 +293,8 @@ class ContextGenerator:
                 section=section,
                 chunk_text=chunk_text,
             )
+            if not self._admit_tokens(prompt):
+                return None  # daily budget spent: no prefix now, a later re-index retries
 
             async with semaphore:
                 # A chunk queued behind the semaphore may have waited a while; re-check once it acquires the slot
@@ -431,9 +422,25 @@ class ContextGenerator:
             language = document_language(full_document or "\n".join(contexts))
         script_reference = (full_document or "")[:20000]
 
+        # Cost guard: past max_calls_per_file a chunk gets no prefix (None, like a failed
+        # call), so the next incremental re-index fills it in instead of keeping a stub.
+        cap = getattr(self, "_max_calls_per_file", 0)  # instances built via __new__ in tests lack it
+        if cap and total > cap:
+            logger.warning(
+                f"Context generation for '{file_name}': {total} chunks exceed "
+                f"max_calls_per_file={cap}; chunks after the first {cap} get no prefix "
+                "this time (a later re-index fills them in)")
+
+        async def _capped() -> None:
+            _on_one_done()
+            return None
+
         try:
             tasks = []
-            for chunk_text, context_text in zip(chunks, contexts):
+            for i, (chunk_text, context_text) in enumerate(zip(chunks, contexts)):
+                if cap and i >= cap:
+                    tasks.append(_capped())
+                    continue
                 tasks.append(self._generate_with_progress(
                     chunk_text, context_text, file_name,
                     client, semaphore, _on_one_done, should_abort,

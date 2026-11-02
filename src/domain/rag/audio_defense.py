@@ -5,14 +5,17 @@ These are read-file-layer audio pre/post-processing steps, independent of indexi
 both the indexing path (hierarchical_indexer) and REST STT (media router).
 
 The whisper anti-hallucination monkey-patch (_enable_whisper_anti_hallucination_defaults, idempotent)
-is applied at module import time — it must run before the Docling AudioPipeline first loads the
-whisper model.
+must run before the Docling AudioPipeline first loads the whisper model. It is applied by
+docling_loader._build_converter right before the local Whisper pipeline is installed (and at
+import time only if whisper is already loaded), so a deployment without local Whisper never
+imports whisper/torch.
 """
 
 from __future__ import annotations
 
 import re
 import subprocess
+import sys
 import tempfile
 from pathlib import Path
 from typing import Optional
@@ -70,7 +73,11 @@ def _enable_whisper_anti_hallucination_defaults() -> None:
     )
 
 
-_enable_whisper_anti_hallucination_defaults()
+# Applied lazily: importing whisper loads torch, which profile: cloud must never do. The
+# docling converter calls this right before it installs the local Whisper pipeline
+# (docling_loader._build_converter); here we only patch a whisper that is already loaded.
+if "whisper" in sys.modules:
+    _enable_whisper_anti_hallucination_defaults()
 
 
 # Trim leading silence before Whisper. Whisper auto-detects language on the first

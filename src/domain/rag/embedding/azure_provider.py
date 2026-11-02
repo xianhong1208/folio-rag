@@ -30,6 +30,7 @@ class AzureOpenAIEmbeddingProvider(IEmbeddingProvider):
         api_version: str = "2024-02-01",
         azure_deployment: Optional[str] = None,
         dimension: int = 1536,
+        tuning: Optional[dict] = None,
     ):
         """Initialize Azure OpenAI provider
 
@@ -72,6 +73,7 @@ class AzureOpenAIEmbeddingProvider(IEmbeddingProvider):
                 api_key=api_key,
                 azure_endpoint=azure_endpoint,
                 api_version=api_version,
+                **(tuning or {}),  # timeout / max_retries / dimensions
             )
             logger.info(
                 f"Azure OpenAI embedding provider initialized: "

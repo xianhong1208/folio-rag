@@ -12,8 +12,17 @@ Model inference (_transcribe_segments) is mocked — real-model acceptance runs
 in the evals.
 """
 
+import importlib.util
 import wave
 from unittest.mock import patch
+
+import pytest
+
+# These exercise the real OpenCC / FireRedASR / torch packages, which only the `local`
+# extra installs (`uv sync --extra local`); a core (cloud) install skips them.
+_needs_local = pytest.mark.skipif(
+    any(importlib.util.find_spec(m) is None for m in ("opencc", "fireredasr", "torch")),
+    reason="local extra not installed")
 
 from src.domain.rag.fireredasr_provider import (
     MAX_SEGMENT_SECONDS,
@@ -77,6 +86,7 @@ class TestFireRedAsrProvider:
         with patch(f"{_FP}._resolve_model_dir", return_value=None):
             assert FireRedAsrProvider().available() is False
 
+    @_needs_local
     def test_transcribe_joins_segments_and_converts_to_traditional(self, tmp_path):
         # A real wav (2s silence, 16k mono) goes through real ffmpeg preprocessing; only model inference is mocked.
         # Segment text is Simplified — assert the output has been converted to Traditional via s2twp (with Taiwan wording).
@@ -96,6 +106,7 @@ class TestFireRedAsrProvider:
         assert r.text == "這是軟體測試\n記憶體很大"
         assert r.chunks is None  # AED has no punctuation or structure → leaf_splitter plain-text path
 
+    @_needs_local
     def test_transcribe_reports_progress(self, tmp_path):
         src = tmp_path / "in.wav"
         with wave.open(str(src), "wb") as w:
@@ -131,6 +142,7 @@ class TestModelPlumbing:
                    return_value=None):
             assert fp._resolve_model_dir() is None  # assets missing entirely
 
+    @_needs_local
     def test_load_model_singleton(self, tmp_path, monkeypatch):
         # fireredasr is a uv path dependency (vendor/fireredasr_src) — a normal import
         import src.domain.rag.fireredasr_provider as fp

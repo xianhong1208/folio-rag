@@ -137,8 +137,8 @@ except Exception:
     pass
 
 
-# Whisper audio defenses. Importing audio_defense applies the whisper patch, and
-# this module is always imported before get_converter() — keep that ordering.
+# Whisper audio defenses (the anti-hallucination patch itself is applied lazily by
+# docling_loader._build_converter before the local Whisper pipeline is installed).
 from src.domain.rag.audio_defense import (  # noqa: F401
     _AUDIO_TRIM_EXTENSIONS,
     _filter_whisper_hallucinations,
