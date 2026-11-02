@@ -1,16 +1,15 @@
 import { useEffect, useState, useCallback, useRef } from 'react'
-import { Folder, Play, Pencil, Trash2, Download, Eye, X, RefreshCw } from 'lucide-react'
+import { Folder, Play, Pencil, Trash2, Download, Eye, X, RefreshCw, RotateCcw, XCircle } from 'lucide-react'
 import { get, post, api, upload as uploadFile } from '../services/api'
 import { fmtNum, fmtBytes, fmtTime, shortModel } from '../lib/format'
+import { pillClass, statusLabel, needsRetry, canRetry, canCancel, isJobActive } from '../lib/jobs'
 import EmptyState from '../components/ui/EmptyState'
 import ChunkText, { ContentBadge } from '../components/ui/ChunkText'
 import { useModal } from '../contexts/ModalContext'
 import { useToast } from '../contexts/ToastContext'
 
 function statusPill(s) {
-  const map = { indexed: 'ok', failed: 'bad', running: 'run', pending: 'warn', queued: 'warn', unindexed: 'mute' }
-  const cls = map[s] || 'run'
-  return <span className={'pill ' + cls}>{s.charAt(0).toUpperCase() + s.slice(1)}</span>
+  return <span className={'pill ' + pillClass(s)}>{statusLabel(s)}</span>
 }
 
 export default function FoldersPage() {
@@ -67,7 +66,7 @@ export default function FoldersPage() {
     const tick = async () => {
       try {
         const fs = await loadFiles(cur.id)
-        const pending = fs.some((f) => f._stage || ['unindexed', 'running', 'pending'].includes(f.status))
+        const pending = fs.some((f) => f._stage || ['unindexed', 'running', 'pending', 'queued'].includes(f.status))
         if (alive && pending) timer = setTimeout(tick, 1500)
       } catch {
         // Transient failure — retry instead of freezing the view on "loading…".
@@ -90,10 +89,24 @@ export default function FoldersPage() {
   const back = () => { curIdRef.current = null; setCur(null); setFiles(null); setSel(new Set()); loadFolders() }
 
   const toggleSel = (id) => setSel((s) => { const n = new Set(s); n.has(id) ? n.delete(id) : n.add(id); return n })
+  // One background job for the whole selection (it queues behind a running job).
   const bulkReindex = async () => {
     const ids = [...sel]
-    try { await Promise.all(ids.map((id) => post(`/api/admin/manage/folders/${cur.id}/files/${id}/retry`, {}))); toast(`Reindexing ${ids.length} file(s)`, 'ok'); setSel(new Set()); kickPoll() }
+    try { const r = await post(`/api/admin/manage/folders/${cur.id}/retry`, { file_ids: ids }); toast(r.message || `Reindexing ${ids.length} file(s)`, 'ok'); setSel(new Set()); kickPoll() }
     catch (e) { toast('Reindex failed: ' + e.message, 'bad') }
+  }
+  const retryFile = async (f) => {
+    try { const r = await post(`/api/admin/manage/folders/${cur.id}/files/${f.id}/retry`, {}); toast(r.message || 'Reindex started', 'ok'); kickPoll() }
+    catch (e) { toast('Retry failed: ' + e.message, 'bad') }
+  }
+  const cancelFile = async (f) => {
+    const ok = await confirm({
+      title: 'Cancel indexing this file?', action: 'Cancel file', danger: true,
+      note: 'A queued file is removed from the queue. A file being indexed stops at its next checkpoint and is marked Cancelled. Other files in the job keep going.',
+    })
+    if (!ok) return
+    try { const r = await post(`/api/admin/manage/folders/${cur.id}/files/${f.id}/cancel`, {}); toast(r.message || 'Cancelled', 'ok'); kickPoll() }
+    catch (e) { toast('Cancel failed: ' + e.message, 'bad') }
   }
   const bulkDelete = async () => {
     const ids = [...sel]
@@ -124,18 +137,40 @@ export default function FoldersPage() {
     try { const r = await post(`/api/admin/manage/folders/${fid}/index`, { skip_existing: skip }); toast(r.message || 'Indexing started', 'ok'); kickPoll() }
     catch (e) { toast('Reindex failed: ' + e.message, 'bad') }
   }
-  const [rebuilding, setRebuilding] = useState(false)
+  // Rebuild FTS runs as a background job; poll it for "files done / total".
+  const [ftsJob, setFtsJob] = useState(null) // { folderId, job } while a rebuild is tracked
+  useEffect(() => {
+    if (!ftsJob || !isJobActive(ftsJob.job)) return
+    let alive = true
+    const t = setTimeout(async () => {
+      try {
+        const r = await get(`/api/admin/manage/folders/${ftsJob.folderId}/jobs/${ftsJob.job.job_id}`)
+        if (!alive) return
+        const job = r.data
+        setFtsJob({ ...ftsJob, job })
+        if (!isJobActive(job)) {
+          if (job.status === 'succeeded') toast(job.message || 'Full-text search rebuilt', 'ok')
+          else toast(`Rebuild ${job.status}: ${job.error || job.message || ''}`, job.status === 'cancelled' ? 'warn' : 'bad')
+        }
+      } catch { if (alive) setFtsJob({ ...ftsJob }) } // transient: poll again
+    }, 1500)
+    return () => { alive = false; clearTimeout(t) }
+  }, [ftsJob, toast])
+  const rebuilding = !!ftsJob && isJobActive(ftsJob.job) && cur && ftsJob.folderId === cur.id
   const rebuildFts = async () => {
     const ok = await confirm({
       title: 'Rebuild full-text search?', action: 'Rebuild',
-      note: 'Re-segments every indexed chunk with CKIP and rewrites the search vector — no re-embedding, so it is safe and usually quick. Improves Chinese keyword recall for folders indexed before the CKIP upgrade.',
+      note: 'Re-segments every indexed chunk with CKIP and rewrites the search vector — no re-embedding. Runs in the background file by file; follow or cancel it here or on the Jobs page. Improves Chinese keyword recall for folders indexed before the CKIP upgrade.',
     })
     if (!ok) return
-    setRebuilding(true)
-    try { const r = await post(`/api/admin/manage/folders/${cur.id}/rebuild-fts`, {}); toast(r.message || 'Full-text search rebuilt', 'ok') }
+    try { const r = await post(`/api/admin/manage/folders/${cur.id}/rebuild-fts`, {}); setFtsJob({ folderId: cur.id, job: r.data }); toast(r.message || 'Rebuild started', 'ok') }
     catch (e) { toast('Rebuild failed: ' + e.message, 'bad') }
-    setRebuilding(false)
   }
+  const cancelFts = async () => {
+    try { await post(`/api/admin/manage/folders/${ftsJob.folderId}/jobs/${ftsJob.job.job_id}/cancel`); setFtsJob({ ...ftsJob }) }
+    catch (e) { toast('Cancel failed: ' + e.message, 'bad') }
+  }
+  const ftsProgress = rebuilding && ftsJob.job.total_files ? ` ${ftsJob.job.processed_files}/${ftsJob.job.total_files}` : ''
   const editFolder = async (f) => {
     const r = await form({ title: 'Rename Folder', action: 'Save', fields: [{ id: 'name', label: 'Name', defaultValue: f.name, required: true }] })
     if (!r) return
@@ -185,7 +220,7 @@ export default function FoldersPage() {
     const shown = fq ? list.filter((f) => f.name.toLowerCase().includes(fq.toLowerCase())) : list
     const totalChunks = list.reduce((a, f) => a + (f.chunks || 0), 0)
     const indexed = list.filter((f) => f.status === 'indexed').length
-    const failed = list.filter((f) => f.status === 'failed').length
+    const failed = list.filter((f) => needsRetry(f)).length
     const models = [...new Set(list.map((f) => f.embedding_model).filter(Boolean))]
     const pct = list.length ? Math.round(indexed / list.length * 100) : 0
     const mdl = models.length === 1 ? shortModel(models[0]) : (models.length > 1 ? models.length + ' models' : '—')
@@ -201,8 +236,9 @@ export default function FoldersPage() {
             <div className="search-box"><input placeholder="Search files…" value={fq} onChange={(e) => setFq(e.target.value)} /></div>
             <button className="btn-ghost tip" onClick={rebuildFts} disabled={rebuilding}
               data-tip="Re-segments existing chunks with CKIP and rebuilds only the keyword-search (BM25) vector — no re-embedding and no re-parsing, unlike Reindex Folder. Use it for folders indexed before the CKIP upgrade to fix Chinese keyword recall.">
-              <RefreshCw size={13} style={{ animation: rebuilding ? 'spin 1s linear infinite' : 'none' }} />{rebuilding ? 'Rebuilding…' : 'Rebuild FTS'}
+              <RefreshCw size={13} style={{ animation: rebuilding ? 'spin 1s linear infinite' : 'none' }} />{rebuilding ? `Rebuilding…${ftsProgress}` : 'Rebuild FTS'}
             </button>
+            {rebuilding && <button className="act-btn danger" title="Cancel rebuild" aria-label="Cancel rebuild" onClick={cancelFts}><XCircle size={14} /></button>}
             <button className="btn-ghost" onClick={() => reindexFolder(cur.id, false)}>Reindex Folder</button>
             <button className="btn-cyber" onClick={() => fileInput.current?.click()}>Upload Files</button>
             <input type="file" ref={fileInput} multiple hidden onChange={upload} />
@@ -244,6 +280,8 @@ export default function FoldersPage() {
                       <td className="num">{fmtTime(f.indexed_at)}</td>
                       <td><div className="actions">
                         {f.status === 'indexed' && <button className="act-btn" title="View chunks" onClick={() => viewChunks(f)}><Eye size={14} /></button>}
+                        {canCancel(f) && <button className="act-btn danger" title="Cancel indexing" aria-label="Cancel indexing" onClick={() => cancelFile(f)}><XCircle size={14} /></button>}
+                        {canRetry(f) && <button className={'act-btn' + (needsRetry(f) ? ' warn' : '')} title={needsRetry(f) ? 'Retry' : 'Reindex'} aria-label={needsRetry(f) ? 'Retry' : 'Reindex'} onClick={() => retryFile(f)}><RotateCcw size={14} /></button>}
                         <button className="act-btn" title="Download" onClick={() => window.open(`/api/admin/manage/folders/${cur.id}/files/${f.id}/download`, '_blank')}><Download size={14} /></button>
                         <button className="act-btn danger" title="Delete file" onClick={() => deleteFile(f.id)}><Trash2 size={14} /></button>
                       </div></td>

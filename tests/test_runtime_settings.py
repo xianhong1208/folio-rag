@@ -53,13 +53,13 @@ def _mk_config() -> ConfigModel:
 class TestValidateAndApply:
     def test_whitelist_rejects_unknown_path(self):
         cfg = _mk_config()
-        with pytest.raises(ValueError, match="不可熱改"):
+        with pytest.raises(ValueError, match="cannot be changed at runtime"):
             ro.validate_and_apply(cfg, {"database.url": "postgresql://evil"})
 
     def test_type_error_is_all_or_nothing(self):
         cfg = _mk_config()
         before = cfg.rag.retrieval.default_top_k
-        with pytest.raises(ValueError, match="驗證失敗"):
+        with pytest.raises(ValueError, match="Settings validation failed"):
             ro.validate_and_apply(cfg, {
                 "rag.retrieval.default_top_k": 99,          # valid
                 "rag.rerank.score_threshold": "not-a-num",  # invalid
@@ -78,7 +78,7 @@ class TestValidateAndApply:
         applied, warnings = ro.validate_and_apply(
             cfg, {"rag.embedding.model": "BAAI/bge-m3"})
         assert applied == {"rag.embedding.model": "BAAI/bge-m3"}
-        assert warnings and "重建索引" in warnings[0]
+        assert warnings and "reindexed" in warnings[0]
 
     def test_live_level_no_warning(self):
         cfg = _mk_config()
@@ -178,9 +178,12 @@ class TestService:
 
     def test_reset_without_override_returns_false(self):
         from src.adapter import runtime_settings_service as svc
-        with patch(f"{_SVC}.RuntimeSettingsDB") as db:
+        cfg = _mk_config()
+        with self._with_cfg(cfg), patch(f"{_SVC}.RuntimeSettingsDB") as db, \
+             patch(f"{_SVC}._rebind") as rb:
             db.delete.return_value = False
             assert svc.reset_setting("rag.rerank.score_threshold") is False
+        rb.assert_not_called()
 
 
 class TestCtxRebind:
@@ -313,7 +316,7 @@ class TestServiceViewAndReset:
 
     def test_reset_unknown_path_rejected(self):
         from src.adapter import runtime_settings_service as svc
-        with pytest.raises(ValueError, match="不可操作"):
+        with pytest.raises(ValueError, match="not editable"):
             svc.reset_setting("database.url")
 
     def test_yaml_value_falls_back_to_field_default(self):
@@ -325,3 +328,118 @@ class TestServiceViewAndReset:
             v = svc._yaml_value("rag.contextual_retrieval.reasoning_effort")
         from src.config.model import ContextualRetrievalConfig
         assert v == ContextualRetrievalConfig.model_fields["reasoning_effort"].get_default()
+
+
+class TestValueConstraints:
+    """ref: the settings API rejects values that would hang or empty the service."""
+
+    @pytest.mark.parametrize("path, value", [
+        ("rag.contextual_retrieval.max_concurrent", 0),      # Semaphore(0) hangs indexing
+        ("rag.contextual_retrieval.max_concurrent", -3),
+        ("rag.rerank.score_threshold", 5),                   # empties every result
+        ("rag.rerank.score_threshold", -0.1),
+        ("rag.retrieval.default_top_k", 0),
+        ("rag.retrieval.default_top_k", 500),
+        ("rag.retrieval.default_similarity_cutoff", 1.5),
+        ("rag.retrieval.default_hybrid_alpha", -1),
+        ("rag.retrieval.auto_merging.merge_threshold", 2),
+        ("rag.retrieval.expand_context_neighbors", -1),
+        ("rag.retrieval.default_sparse_top_k", 0),
+        ("rag.rerank.top_n", 0),
+        ("rag.embedding.dimension", 0),
+        ("rag.retrieval.hybrid_fusion", "foo"),
+        ("rag.embedding.provider", "nope"),
+        ("rag.llm.provider", "nope"),
+        ("rag.asr.provider", "nope"),
+        ("rag.contextual_retrieval.reasoning_effort", "max"),
+        ("rag.rerank.base_url", "localhost:8787"),            # scheme missing
+        ("rag.rerank.query_template", "no placeholder"),
+        ("rag.embedding.model", "   "),
+    ])
+    def test_out_of_range_or_unknown_rejected(self, path, value):
+        cfg = _mk_config()
+        before = ro.get_effective(cfg, mask_secrets=False)[path]
+        with pytest.raises(ValueError, match="Settings validation failed"):
+            ro.validate_and_apply(cfg, {path: value})
+        assert ro.get_effective(cfg, mask_secrets=False)[path] == before
+
+    @pytest.mark.parametrize("path, value", [
+        ("rag.contextual_retrieval.max_concurrent", 1),
+        ("rag.rerank.score_threshold", 0.0),
+        ("rag.rerank.score_threshold", 1),
+        ("rag.rerank.top_n", None),
+        ("rag.retrieval.default_top_k", 20),
+        ("rag.retrieval.hybrid_fusion", "concat"),
+        ("rag.contextual_retrieval.reasoning_effort", None),
+        ("rag.rerank.base_url", "https://rerank.example.com"),
+        ("rag.asr.base_url", None),
+        ("rag.asr.base_url", ""),
+    ])
+    def test_valid_values_accepted(self, path, value):
+        cfg = _mk_config()
+        applied, _ = ro.validate_and_apply(cfg, {path: value})
+        assert path in applied
+
+    def test_provider_is_normalised(self):
+        cfg = _mk_config()
+        applied, _ = ro.validate_and_apply(cfg, {"rag.llm.provider": "  OpenAI "})
+        assert applied["rag.llm.provider"] == "openai" and cfg.rag.llm.provider == "openai"
+
+    def test_embedding_providers_follow_the_factory(self):
+        from src.domain.rag.embedding.factory import EmbeddingProviderFactory
+        for p in EmbeddingProviderFactory.list_supported_providers():
+            ro.validate_and_apply(_mk_config(), {"rag.embedding.provider": p})
+
+
+class TestResetMissingSection:
+    """ref: resetting a key whose whole section is absent must not 500 / half-apply."""
+
+    def test_yaml_value_walks_schema_when_section_is_none(self):
+        cfg = _mk_config()
+        cfg.rag.asr = None  # optional section absent from config.yaml
+        from src.adapter import runtime_settings_service as svc
+        from src.config.config_manager import Config
+        from src.config.model import AsrConfig
+        with patch(f"{_SVC}.Config.get_config_model", return_value=cfg), \
+             patch.object(Config, "_config_path", None):
+            assert svc._yaml_value("rag.asr.provider") == AsrConfig.model_fields["provider"].get_default()
+
+    def test_reset_with_missing_section_succeeds(self, tmp_path):
+        cfg = _mk_config()
+        cfg.rag.asr = None
+        yaml_file = tmp_path / "c.yaml"
+        yaml_file.write_text("rag:\n  rerank:\n    enabled: false\n", encoding="utf-8")
+        from src.adapter import runtime_settings_service as svc
+        from src.config.config_manager import Config
+        with patch(f"{_SVC}.Config.get_config_model", return_value=cfg), \
+             patch(f"{_SVC}.RuntimeSettingsDB") as db, patch(f"{_SVC}._rebind"), \
+             patch(f"{_SVC}._audit"), patch.object(Config, "_config_path", str(yaml_file)):
+            db.delete.return_value = True
+            assert svc.reset_setting("rag.asr.provider") is True
+        assert cfg.rag.asr.provider == "docling-whisper"
+
+    def test_reset_resolves_value_before_deleting_override(self, tmp_path):
+        """If the factory value cannot be applied, the override row must survive."""
+        cfg = _mk_config()
+        yaml_file = tmp_path / "c.yaml"
+        yaml_file.write_text("rag:\n  rerank:\n    score_threshold: 9\n", encoding="utf-8")
+        from src.adapter import runtime_settings_service as svc
+        from src.config.config_manager import Config
+        with patch(f"{_SVC}.Config.get_config_model", return_value=cfg), \
+             patch(f"{_SVC}.RuntimeSettingsDB") as db, patch(f"{_SVC}._rebind"), \
+             patch.object(Config, "_config_path", str(yaml_file)):
+            with pytest.raises(ValueError):
+                svc.reset_setting("rag.rerank.score_threshold")
+            db.delete.assert_not_called()
+
+    def test_reset_expands_env_placeholders(self, tmp_path, monkeypatch):
+        cfg = _mk_config()
+        monkeypatch.setenv("RERANK_URL_T", "http://rr:1")
+        yaml_file = tmp_path / "c.yaml"
+        yaml_file.write_text('rag:\n  rerank:\n    base_url: "${RERANK_URL_T:-http://x}"\n',
+                             encoding="utf-8")
+        from src.adapter import runtime_settings_service as svc
+        from src.config.config_manager import Config
+        with patch(f"{_SVC}.Config.get_config_model", return_value=cfg), \
+             patch.object(Config, "_config_path", str(yaml_file)):
+            assert svc._yaml_value("rag.rerank.base_url") == "http://rr:1"

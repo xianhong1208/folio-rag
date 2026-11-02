@@ -89,9 +89,9 @@ def create_app(config: BaseModel, transport: str) -> FastAPI:
         async with mcp_app.lifespan(app):
             manager = IndexingJobManager.get_instance()
             try:
-                flipped = manager.mark_all_running_as_restart_failed()
+                flipped = manager.mark_interrupted_on_startup()
                 if flipped:
-                    api_logger.info(f"Startup: marked {flipped} stale jobs as failed (server_restart)")
+                    api_logger.info(f"Startup: marked {flipped} stale job(s) as interrupted (server_restart)")
             except Exception as e:
                 api_logger.warning(f"Startup restart-cleanup hook failed (continuing): {e}")
             try:

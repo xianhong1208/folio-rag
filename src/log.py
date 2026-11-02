@@ -76,13 +76,20 @@ def setup_logger(
     file_level: str = "DEBUG",
     log_base_dir: str = "logs",
     rotation: str = "5 MB",
-    encoding: str = "utf-8"
+    encoding: str = "utf-8",
+    retention: Optional[int] = None,
 ) -> None:
     """Configure the loguru logging system.
 
     Creates a separate log directory per module, split into info/error files.
     Every log automatically carries a request_id for correlating request chains.
+
+    ``rotation`` (logging.max_size) starts a new file at that size; ``retention``
+    (logging.backup_count) keeps that many rotated files per module/level and
+    deletes older ones. Without a retention the files were never cleaned up.
     """
+    if retention is not None and retention < 1:
+        retention = None
     logger.remove()
 
     LOG_LEVELS = {
@@ -98,6 +105,7 @@ def setup_logger(
             logger.add(
                 f"{module_log_dir}/{level_name}_{{time:YYYY-MM-DD}}.log",
                 rotation=rotation,
+                retention=retention,
                 level=file_level,
                 encoding=encoding,
                 format=_format_file_log,

@@ -165,6 +165,8 @@ class IndexJob(Base):
     result_summary = Column(JSONB, nullable=True)
     scope_file_ids = Column(JSONB, nullable=False, default=list, server_default='[]')
     file_timings = Column(JSONB, nullable=False, default=list, server_default='[]')
+    # "index" (parse + embed files) or a maintenance kind such as "rebuild_fts"
+    kind = Column(String(32), nullable=False, default="index", server_default="index")
 
     __table_args__ = (
         Index('idx_indexjobs_folder_id', 'folder_id'),

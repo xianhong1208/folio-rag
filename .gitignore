@@ -57,9 +57,8 @@ coverage.xml
 .dmypy.json
 dmypy.json
 
-# uv
+# uv (uv.lock is committed: CI installs with `uv sync --frozen`)
 .uv/
-uv.lock
 
 # Logs
 *.log

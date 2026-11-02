@@ -27,10 +27,10 @@ License: MIT&nbsp;·&nbsp;Python 3.12&nbsp;·&nbsp;PostgreSQL + pgvector&nbsp;·
 - **Hybrid search, tuned for Chinese.** Dense vector retrieval (pgvector) is fused with sparse **BM25** using Reciprocal Rank Fusion, so keyword signal genuinely affects ranking. Chinese text is word-segmented with **CKIP** (Academia Sinica) before Postgres full-text indexing — space-less Chinese actually gets tokenized instead of collapsing into one term.
 - **Cross-encoder reranking.** A `bge-reranker-v2-m3` / `mxbai-rerank-base-v2` model re-scores the fused candidates for fine-grained Top-K precision.
 - **Contextual retrieval.** At index time an LLM prepends a short, document-aware context to each chunk (Anthropic's recommended technique), improving retrievability of otherwise ambiguous fragments.
-- **Per-folder MCP tools, scoped per token.** Every folder is registered as an `Agentic_<folder>` tool; the tool list a caller sees is filtered by their token — you only see folders you own. Ownership is keyed on the token's stable `jti`.
+- **Per-folder MCP tools, scoped per token.** Every folder is registered as an `Agentic_<folder>` tool; the tool list a caller sees is filtered by their token — you only see folders you own. Ownership is keyed on the token's stable `jti`. Tool names stay within what every MCP client accepts (`[A-Za-z0-9_-]`, 64 chars): a folder name with spaces, CJK or other symbols becomes `Agentic_<ascii part>_<8-char hash>`, the same name every time.
 - **OAuth 2.1 resource server.** One `RemoteAuthProvider` + `JWTVerifier` protects `/mcp`; tokens are verified locally against MCP Gate's JWKS (RS256, offline), and are bound to this server's audience so a token for another server never works here.
 - **Document + audio ingestion.** [Docling](https://github.com/DS4SD/docling) parses PDF / DOCX / PPTX / XLSX / images (with OCR); **FireRedASR** transcribes audio locally in Traditional Chinese (or any OpenAI-compatible `/v1/transcriptions` endpoint).
-- **Built-in evaluation harness.** Auto-generates questions from your own chunks and scores `vector` / `hybrid` / `rerank` on **Recall@k · MRR · nDCG@k**, so you can tune retrieval against your real corpus.
+- **Built-in evaluation harness.** Auto-generates questions from your own chunks and scores the production pipeline (the same call as `/api/rag/query`) against `vector`-only and `bm25`-only retrieval on **Recall@k · MRR · nDCG@k**, so you can tune retrieval against your real corpus.
 - **Retrieval Terminal console.** A React single-page console at `/admin`: pipeline overview, folders & files, a **Search Playground** that shows the per-signal retrieval trace, live index-job stream, query analytics, the evaluation harness, live settings, health and an audit timeline.
 - **Runs on your GPU.** PyTorch is selected per platform with PEP 735 dependency groups (`rocm-r714` / `rocm-r713` / `cuda` / `cpu`) — AMD ROCm, NVIDIA CUDA or pure CPU.
 
@@ -159,6 +159,8 @@ Paste the token on the login screen. Folders created earlier through the old *Ow
 
 **Dev mode.** With `auth.enabled: false` there is no login: the console is open to anyone who can reach the port, with full admin rights and every folder visible (folders created there are owned by `console`). The server logs a warning at startup. Use it only on a trusted machine.
 
+**Network exposure.** Even with login on, keep the console (`/admin`, `/api/admin/*`) reachable only from trusted networks — a VPN, an internal network, or a reverse proxy that restricts it — and serve it over HTTPS. Login protects folders and settings from people without a valid token, but the console can upload and delete documents, run queries against your model endpoints and (with `rag:admin`) change them, so it should not face the open internet. `/mcp` and `/api/rag/*` are designed to be reachable by MCP clients and need only a valid token.
+
 | Page | What you do there |
 |------|-------------------|
 | **Overview** | The live retrieval pipeline, corpus readouts, index health, and model-service status. |
@@ -166,7 +168,7 @@ Paste the token on the login screen. Folders created earlier through the old *Ow
 | **Search Playground** | Run a live query against a folder and see the **per-signal retrieval trace** — Vector · BM25 · Hybrid · Rerank ranks side by side — plus an optional RAG answer. |
 | **Index Jobs** | Live stream of indexing jobs with progress; cancel a running job. |
 | **Query Analytics** | Volume, latency, zero-result rate, top queries and knowledge gaps. |
-| **Evaluation** | Auto-generate a question set and score `vector` / `hybrid` / `rerank` on Recall@k · MRR · nDCG@k. |
+| **Evaluation** | Auto-generate a question set and score `production` (same call as `/api/rag/query`), `vector`-only and `bm25`-only on Recall@k · MRR · nDCG@k; baseline deltas only against runs on the same question set. |
 | **Settings** | Live, persisted configuration for Embedding / LLM / Contextual Retrieval / Reranker / Speech-to-Text / Retrieval, with retrieval presets and connection tests. Changing anything needs `rag:admin`. |
 | **System Health** | Live connectivity to every external dependency. |
 | **Audit Log** | A timeline of every runtime settings change and who made it (`rag:admin`). |

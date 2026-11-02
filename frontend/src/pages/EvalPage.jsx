@@ -6,15 +6,25 @@ import EmptyState from '../components/ui/EmptyState'
 
 const pct = (x) => (x == null ? '—' : (x * 100).toFixed(1) + '%')
 
-// Best available mode for a summary (rerank > rrf > hybrid > vector) and its nDCG@k.
-// Used only for the multi-run trend line ("best available" per run).
-const bestNdcg = (summary, k) => {
+// nDCG@k of what users actually get, per run, for the trend line: the "production"
+// mode (same call as /api/rag/query). Runs from before that mode existed fall back to
+// their closest equivalent (rerank, then rrf).
+export const headlineNdcg = (summary, k) => {
   if (!summary) return null
-  for (const m of ['rerank', 'rrf', 'hybrid', 'vector']) {
+  for (const m of ['production', 'rerank', 'rrf']) {
     if (summary[m] && summary[m]['ndcg@' + k] != null) return summary[m]['ndcg@' + k]
   }
   return null
 }
+
+// Display names for the scored modes (the report carries them; older reports don't).
+const MODE_LABELS = {
+  vector: 'Vector only (dense embeddings)',
+  bm25: 'Keyword only (BM25)',
+  production: 'Production (/api/rag/query)',
+}
+export const modeLabel = (report, m) =>
+  (report && report.mode_labels && report.mode_labels[m]) || MODE_LABELS[m] || m
 
 // nDCG@k for one *specific* mode (null if absent). Baseline deltas must compare the
 // same mode across runs — comparing the current best mode against a different mode
@@ -108,7 +118,7 @@ export default function EvalPage() {
   const prev = report && report.previous
   const trend = history.map((h, i) => ({
     i: i + 1,
-    ndcg: bestNdcg(h.summary, h.k),
+    ndcg: headlineNdcg(h.summary, h.k),
     faith: h.answer_quality ? h.answer_quality.faithfulness : null,
   }))
 
@@ -117,7 +127,7 @@ export default function EvalPage() {
       <div className="card">
         <div className="card-head">
           <div className="icon"><FlaskConical size={16} /></div>
-          <div><h2>Retrieval Evaluation</h2><div className="desc">Auto-generates questions from your chunks, then scores vector / hybrid / rerank — Recall@k · MRR · nDCG@k</div></div>
+          <div><h2>Retrieval Evaluation</h2><div className="desc">Auto-generates questions from your chunks, then scores the production pipeline against vector-only and keyword-only retrieval — Recall@k · MRR · nDCG@k</div></div>
           <div className="grow" />
           <select value={fid} onChange={(e) => setFid(e.target.value)} style={selStyle}>
             {folders.length ? folders.map((f) => <option key={f.id} value={f.id}>{f.name} ({f.indexed_files} files)</option>) : <option value="">No indexed folders</option>}
@@ -144,6 +154,9 @@ export default function EvalPage() {
             <div className="sec" style={{ marginBottom: 12, color: 'var(--signal-hi)' }}>⚠ {report.stale_dropped} question(s) skipped — their source chunk no longer exists (file reindexed). Regenerate the set for a full run.</div>
           )}
 
+          {report?.previous_note && (
+            <div className="sec" style={{ marginBottom: 12 }}>Baseline: {report.previous_note}</div>
+          )}
           {report && rows.length ? (
             <>
               <div className="tablewrap">
@@ -152,7 +165,7 @@ export default function EvalPage() {
                   <tbody>
                     {rows.map((r) => (
                       <tr key={r.m} style={r.m === bestMode ? { background: 'var(--matrix-soft)' } : undefined}>
-                        <td className="cell-main">{r.m}{r.m === bestMode ? ' · best' : ''}</td>
+                        <td className="cell-main">{modeLabel(report, r.m)}{r.m === bestMode ? ' · best' : ''}</td>
                         <td className="num">{pct(r.rec)}</td>
                         <td className="num">{r.mrr != null ? r.mrr.toFixed(3) : '—'}</td>
                         <td className="num">{pct(r.ndcg)}
@@ -174,7 +187,7 @@ export default function EvalPage() {
 
               {trend.length > 1 && (
                 <div style={{ marginTop: 20 }}>
-                  <div className="nav-group" style={{ paddingLeft: 0 }}>Baseline trend · nDCG (best mode){trend.some((t) => t.faith != null) ? ' + faithfulness' : ''} across {trend.length} runs</div>
+                  <div className="nav-group" style={{ paddingLeft: 0 }}>Baseline trend · nDCG (production){trend.some((t) => t.faith != null) ? ' + faithfulness' : ''} across {trend.length} runs</div>
                   <div style={{ height: 180, marginTop: 8 }}>
                     <ResponsiveContainer width="100%" height="100%">
                       <LineChart data={trend} margin={{ top: 6, right: 12, bottom: 0, left: -18 }}>

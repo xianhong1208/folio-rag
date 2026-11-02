@@ -493,6 +493,7 @@
   .act-btn svg { width: 14px; height: 14px; }
   .act-btn:hover { color: var(--cyber-hi); border-color: var(--cyber-line); background: var(--cyber-soft); }
   .act-btn.danger:hover { color: var(--alert-hi); border-color: var(--alert-line); background: var(--alert-soft); }
+  .act-btn.warn { color: var(--signal-hi); border-color: var(--signal-line); }
   .actions { display: flex; gap: 6px; }
   /* Match the primary button's height/size to the selects & search boxes it sits
      beside in a card header (12px / 7px), so it doesn't tower over the row. */
@@ -848,6 +849,9 @@
     .menu-btn { display: block; }
     .scrim.show { display: block; position: fixed; inset: 0; z-index: 25; background: rgba(0,0,0,.45); }
     .content { padding: 20px 16px 100px; }
+    header.top { padding: 0 16px; gap: 10px; }
+    header.top .title { min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    .user-badge .theme-btn { white-space: nowrap; }
   }
 
 /* ── Toast notifications (React) ── */
@@ -924,7 +928,10 @@ html.light .toastx { box-shadow: 0 8px 30px rgba(16,24,40,.16); }
 .user-badge .ub-name { color: var(--ink); font-weight: 600; max-width: 22ch; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .user-badge .ub-meta { color: var(--ink-subtle); font-size: 11px; }
 .user-badge .theme-btn { padding: 4px 10px; }
-@media (max-width: 700px) { .user-badge .ub-meta { display: none; } }
+@media (max-width: 700px) {
+  .user-badge .ub-meta { display: none; }
+  .user-badge .btn-label { display: none; } /* icon-only Sign out on phones */
+}
 
 /* Read-only notice for Settings / System pages without rag:admin */
 .ro-note { display: flex; gap: 8px; align-items: baseline; margin: 0 0 18px; padding: 9px 14px;

@@ -58,6 +58,7 @@ def test_utf32_le_bom_not_mistaken_for_utf16(tmp_path):
 
 def test_big5_detected(tmp_path):
     """Big5/CP950 (legacy Taiwan txt/csv) is read via charset detection (TC-text-io-06)."""
+    text = "品名,單價,數量\n無線滑鼠,450,12\n機械鍵盤,2300,5\n螢幕支架,890,8"
     p = _write(tmp_path, "big5.csv", text.encode("cp950"))
     assert read_text_robust(p) == text
 
@@ -65,7 +66,7 @@ def test_big5_detected(tmp_path):
 def test_undecodable_binary_raises_actionable_error(tmp_path):
     """Unrecognizable random binary → ValueError with actionable guidance, never garbled text (TC-text-io-07)."""
     p = _write(tmp_path, "junk.txt", bytes(range(256)) * 8)
-    with pytest.raises(ValueError, match="另存為 UTF-8"):
+    with pytest.raises(ValueError, match="Save the file as UTF-8"):
         read_text_robust(p)
 
 

@@ -51,3 +51,24 @@ def test_validate_rejects_over_63_bytes():
         _validate_dbname("x" * (_MAX_IDENTIFIER_BYTES + 1))
     # Exactly 63 bytes must pass (boundary)
     assert _validate_dbname("x" * _MAX_IDENTIFIER_BYTES) == "x" * _MAX_IDENTIFIER_BYTES
+
+
+def test_hnsw_hook_also_ensures_lookup_indexes():
+    """The post-write hook covers lookup indexes too, so new folders get them at once."""
+    from unittest.mock import patch
+    from src.utils import db_bootstrap as b
+    with patch.object(b, "_ensure_hnsw_index", return_value=False) as h, \
+         patch.object(b, "ensure_lookup_indexes_for_table", return_value=2) as lk:
+        assert b.ensure_hnsw_for_table("E", "data_1_x") is False
+    h.assert_called_once_with("E", "data_1_x", None)
+    lk.assert_called_once_with("E", "data_1_x", None)
+
+
+def test_lookup_index_failure_is_not_fatal():
+    from unittest.mock import MagicMock
+    from src.utils.db_bootstrap import ensure_lookup_indexes_for_table
+    engine = MagicMock()
+    engine.begin.side_effect = RuntimeError("db down")
+    log = MagicMock()
+    assert ensure_lookup_indexes_for_table(engine, "data_1_x", log) == 0
+    assert log.warning.call_count == 2
