@@ -136,7 +136,8 @@ class RAGContext:
                 rerank_config = getattr(rag_config, "rerank", None)
                 if rerank_config and rerank_config.enabled:
                     from src.domain.rag.reranker import Reranker
-                    reranker = Reranker.from_config(rerank_config)
+                    from src.domain.rag.rerank_policy import resolve_rerank_config
+                    reranker = Reranker.from_config(resolve_rerank_config(rerank_config))
                     if reranker:
                         logger.info("[INIT] Reranker initialized")
         except Exception as e:
@@ -344,7 +345,8 @@ class RAGContext:
         new_reranker = None
         if rerank_config and rerank_config.enabled:
             from src.domain.rag.reranker import Reranker
-            new_reranker = Reranker.from_config(rerank_config)
+            from src.domain.rag.rerank_policy import resolve_rerank_config
+            new_reranker = Reranker.from_config(resolve_rerank_config(rerank_config))
         self.reranker = new_reranker
         self.invalidate_all_query_engines()
         logger.info(f"[RUNTIME] reranker rebound: {'on' if new_reranker else 'off'}")

@@ -131,6 +131,8 @@ Agentic_product-docs  mode="search"  query="要怎麼輪替簽章金鑰?"
 
 每個資料夾的資料表會記錄它的關鍵字索引是哪個斷詞器建的。改了 `segmenter`（可在 Settings 即時改）之後,主控台會把用其他斷詞器建索引的資料夾標成 **FTS rebuild needed**;*Rebuild FTS* 會用目前設定的斷詞器重新斷詞 —— 不需重新 embedding。
 
+**重排。** reranker 對最多 3 × `top_k` 個融合候選評分,保留分數不低於 `rag.rerank.score_threshold` 的前 `top_k` 個。`mxbai-rerank-*-v2` 是以對話格式 prompt 訓練的 Qwen 模型;`rag.rerank.auto_template: true`（預設）時,若設定的模板是預設值或舊的無對話格式版本,會自動套上官方格式（若 rerank 服務已自行套用 chat template,請關掉)。套上後分數是校準過的機率,對這個模型而言 **`score_threshold: 0.5`** 才有意義;沒套的話無關段落也有 0.8 以上,任何門檻都濾不掉東西。reranker 失敗時,查詢會依檢索順序回傳前 `top_k` 個候選（而不是全部 3 × `top_k` 個）,且這個降級結果不會被快取。
+
 **驗證。** Agentic RAG 是 *resource server*。FastMCP 會發佈 `/.well-known/oauth-protected-resource/mcp`,把用戶端導向 MCP Gate;伺服器抓一次 MCP Gate 的 JWKS,之後每個 bearer token 都離線驗證（RS256 —— 簽章、issuer、audience、效期、scope）。MCP Gate 從不在請求路徑上。
 
 ## 設定
@@ -149,6 +151,7 @@ Agentic_product-docs  mode="search"  query="要怎麼輪替簽章金鑰?"
 | `rag.embedding.{model,dimension,base_url}` | `intfloat/multilingual-e5-large`、`1024`、`:7075/v1` | embedding 模型;`dimension` **必須**等於模型實際輸出維度。 |
 | `rag.llm.{model,base_url}` | `openai/gpt-oss-120b`、`:5052/v1` | Contextual Retrieval 與 `answer` 路徑用的 LLM。 |
 | `rag.rerank.{model,base_url}` | `mixedbread-ai/mxbai-rerank-base-v2`、`:8787` | cross-encoder 重排器。 |
+| `rag.rerank.score_threshold` / `auto_template` | `0.0` / `true` | 濾掉分數低於門檻的結果（mxbai-rerank-v2 適合 0.5）;自動套用 mxbai-v2 的對話格式 prompt。 |
 | `rag.asr.provider` | `fireredasr` | 音訊轉錄:`fireredasr`（本地繁中）· `docling-whisper` · `openai-compatible`。 |
 | `rag.retrieval.segmenter` | `ckip` | 關鍵字檢索的中文斷詞器:`ckip` · `jieba` · `bigram`（見「中文斷詞」）。 |
 | `rag.retrieval.*` | — | Top-K、相似度門檻、BM25 候選數、`hybrid_fusion`（`rrf`/`concat`）、auto-merging。可從主控台即時調,或用 **High Precision / Balanced / High Recall** 預設。 |

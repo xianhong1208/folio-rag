@@ -52,6 +52,7 @@ EDITABLE: Dict[str, str] = {
     "rag.rerank.score_threshold": "live",
     "rag.rerank.query_template": "live",
     "rag.rerank.document_template": "live",
+    "rag.rerank.auto_template": "live",
     # Model services — ASR
     "rag.asr.enabled": "live",
     "rag.asr.provider": "live",

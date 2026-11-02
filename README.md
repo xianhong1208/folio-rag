@@ -131,6 +131,8 @@ Your folder is indexed once, then every query runs through the pipeline:
 
 Each folder's table records which segmenter built its keyword index. After changing `segmenter` (live, from Settings), the console marks folders whose index was built with another one (**FTS rebuild needed**); *Rebuild FTS* re-segments them with the configured segmenter — no re-embedding.
 
+**Reranking.** The reranker scores up to 3 × `top_k` fused candidates and keeps the best `top_k` above `rag.rerank.score_threshold`. `mxbai-rerank-*-v2` is a Qwen model trained on a chat-formatted prompt; with `rag.rerank.auto_template: true` (default) that format is applied automatically when the configured templates are the default or the old chat-less form (turn it off if your rerank server already applies a chat template). With it, scores are calibrated probabilities and **`score_threshold: 0.5`** is meaningful for that model; without it unrelated chunks score 0.8+ and no threshold filters anything. If the reranker fails, the query returns the top `top_k` candidates in retrieval order (not all 3 × `top_k`), and that degraded result is not cached.
+
 **Auth.** Agentic RAG is a *resource server*. FastMCP publishes `/.well-known/oauth-protected-resource/mcp`, which points clients at MCP Gate; the server fetches MCP Gate's JWKS once and verifies every bearer token offline (RS256 — signature, issuer, audience, expiry, scopes). MCP Gate is never on the request path.
 
 ## Configuration
@@ -149,6 +151,7 @@ Settings live in `config/config.yaml`; secrets come from environment variables (
 | `rag.embedding.{model,dimension,base_url}` | `intfloat/multilingual-e5-large`, `1024`, `:7075/v1` | Embedding model; `dimension` **must** equal the model's real output dim. |
 | `rag.llm.{model,base_url}` | `openai/gpt-oss-120b`, `:5052/v1` | LLM for Contextual Retrieval and the `answer` path. |
 | `rag.rerank.{model,base_url}` | `mixedbread-ai/mxbai-rerank-base-v2`, `:8787` | Cross-encoder reranker. |
+| `rag.rerank.score_threshold` / `auto_template` | `0.0` / `true` | Drop results scoring below the threshold (0.5 suits mxbai-rerank-v2); apply mxbai-v2's chat prompt automatically. |
 | `rag.asr.provider` | `fireredasr` | Audio transcription: `fireredasr` (local zh-TW) · `docling-whisper` · `openai-compatible`. |
 | `rag.retrieval.segmenter` | `ckip` | Chinese segmenter for keyword search: `ckip` · `jieba` · `bigram` (see *Chinese segmentation*). |
 | `rag.retrieval.*` | — | Top-K, similarity cutoff, BM25 candidates, `hybrid_fusion` (`rrf`/`concat`), auto-merging. Tunable live from the console, or via the **High Precision / Balanced / High Recall** presets. |

@@ -88,6 +88,7 @@ class SearchOutcome:
     candidates: int = 0                  # fused candidates handed to rerank / cutoff
     reranked: bool = False               # the reranker scored these nodes
     rerank_failed: bool = False          # a reranker was configured but its call failed
+    top_score: Optional[float] = None    # best rerank score before score_threshold
     dense: List[Any] = field(default_factory=list)
     sparse: List[Any] = field(default_factory=list)
     fused: List[Any] = field(default_factory=list)
@@ -334,9 +335,13 @@ class HybridSearcher:
         outcome = SearchOutcome(nodes=[], candidates=len(fused), dense=dense, sparse=sparse,
                                 fused=_with_scores(fused, _snapshot(fused)))
         if self._reranker and fused:
-            nodes = await self._reranker.arerank(query_text, list(fused), top_n=settings.top_k)
-            outcome.nodes = list(nodes)[: settings.top_k]
-            outcome.reranked = True
+            from src.domain.rag.rerank_policy import rerank
+
+            rr = await rerank(self._reranker, query_text, list(fused), settings.top_k)
+            outcome.nodes = rr.nodes
+            outcome.top_score = rr.top_score
+            outcome.reranked = not rr.failed
+            outcome.rerank_failed = rr.failed
             return outcome
         # No reranker: RRF scores are rank-based (≈0.03), so the similarity cutoff
         # does not apply; concat already applied it to its dense half.

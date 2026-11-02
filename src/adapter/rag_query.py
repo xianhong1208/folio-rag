@@ -144,7 +144,7 @@ class RAGQueryService:
 
             query_engine = self._engine_for(folder_id, vector_store)
             async with _get_query_semaphore():
-                search_results = await query_engine.aquery(
+                search_results, outcome = await query_engine.asearch(
                     query, settings, merge_threshold=merge_threshold)
 
             # Backfill folder_name if missing (backward compat)
@@ -164,7 +164,9 @@ class RAGQueryService:
                 total_results=len(search_results),
             )
 
-            if use_cache and cache_key:
+            # A degraded result (reranker down) must not be served from cache once
+            # the reranker is back.
+            if use_cache and cache_key and not outcome.rerank_failed:
                 cache.set(cache_key, result, ttl=CacheTTL.QUERY_RESULT)
                 logger.debug(f"Cached query result: {cache_key}")
 
