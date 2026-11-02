@@ -235,7 +235,7 @@ class HierarchicalIndexer:
         contextualizing -> embedding -> writing stages (None for silent).
         should_abort returns True to abort this file (checked per chunk while
         contextualizing, per batch while embedding, and before writing), raising
-        IndexingAbortedError. Returns {"leaves": N, "parents": M}.
+        IndexingAbortedError. Returns {"leaves": N, "parents": M, "warning": str|None}.
         """
         file_name = document.metadata.get("file_name", "unknown")
 
@@ -414,4 +414,9 @@ class HierarchicalIndexer:
         logger.info(
             f"Indexed {file_name}: {len(leaf_nodes)} leaves + {len(parent_nodes)} parents"
         )
-        return {"leaves": len(leaf_nodes), "parents": len(parent_nodes)}
+        return {
+            "leaves": len(leaf_nodes),
+            "parents": len(parent_nodes),
+            # Parse caveat from the loader (pages docling could not parse), for the file record.
+            "warning": document.metadata.get("_parse_warning"),
+        }

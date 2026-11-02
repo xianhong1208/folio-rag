@@ -256,6 +256,7 @@ class RAGMaintenanceService:
                     "embedding_model": record.embedding_model,
                     "chunk_size": record.chunk_size,
                     "chunk_overlap": record.chunk_overlap,
+                    "warning": getattr(record, "index_warning", None),
                 })
 
             cache.set(cache_key, results, ttl=CacheTTL.FILE_LIST)

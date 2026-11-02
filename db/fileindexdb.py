@@ -116,6 +116,7 @@ class FileIndexDB(BaseDB):
         embedding_model: str,
         num_chunks: int,
         content_hash: Optional[str] = None,
+        index_warning: Optional[str] = None,
     ):
         """Idempotent version of `create(... status="indexed")`, for reindex.
 
@@ -143,6 +144,7 @@ class FileIndexDB(BaseDB):
                     existing.status = "indexed"
                     existing.error_message = None
                     existing.content_hash = content_hash
+                    existing.index_warning = index_warning
                     existing.indexed_at = datetime.now(timezone.utc)
                     session.commit()
                     session.refresh(existing)
@@ -164,6 +166,7 @@ class FileIndexDB(BaseDB):
                 num_chunks=num_chunks,
                 status="indexed",
                 content_hash=content_hash,
+                index_warning=index_warning,
             )
         except Exception as e:
             cls.get_log().error(f"upsert_indexed failed for file_id={file_id}: {e}")

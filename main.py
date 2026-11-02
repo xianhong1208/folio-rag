@@ -31,6 +31,12 @@ def _load_dotenv() -> None:
 
 _load_dotenv()
 
+# Let the PyTorch CUDA allocator grow segments instead of fragmenting them: on a
+# card shared with vLLM, fragmentation alone causes out-of-memory errors in the
+# docling stages. Must be set before torch is imported; a user value wins.
+import os as _os
+_os.environ.setdefault("PYTORCH_CUDA_ALLOC_CONF", "expandable_segments:True")
+
 
 # Disable core dumps for this process by default. At interpreter shutdown a native
 # library aborts (SIGABRT with si_code=SI_TKILL, i.e. abort() from inside the

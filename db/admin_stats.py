@@ -136,6 +136,8 @@ def files_with_index_status(folder_id: int) -> List[Dict[str, Any]]:
                 "indexed_at": _iso(ix.indexed_at) if ix else None,
                 # Truncate the error message to 300 chars (full message stays in the DB; keep the list view lean)
                 "error": (err[:300] + ("…" if len(err) > 300 else "")) or None,
+                # Indexed with a caveat (e.g. pages that could not be parsed)
+                "warning": (getattr(ix, "index_warning", None) or None) if ix else None,
             })
         return out
 
