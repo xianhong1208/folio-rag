@@ -278,3 +278,40 @@ async def test_reindex_same_file_purges_stale_chunks(vsm, indexer, folder, file_
     n2 = len(_table_rows(vsm, folder))
     assert n2 == r2["leaves"] + r2["parents"], f"重跑後應等於單份({n2} vs {r2})"
     assert n2 == n1  # no doubling
+
+
+async def test_reindex_reuses_unchanged_chunks_and_writes_tsv(vsm, indexer, folder, file_row):
+    """Incremental re-index on the real table: identical content embeds nothing; leaves
+    get a search vector in the same INSERT, parents none."""
+    store = vsm.get_or_create(folder_id=folder.id, vector_table_uuid=str(folder.vector_table_uuid))
+    fid = str(file_row.id)
+    first = await indexer.index_document(_doc(fid), store)
+    assert first["embedded"] == first["leaves"]
+    again = await indexer.index_document(_doc(fid), store)
+    assert again["embedded"] == 0 and again["leaves"] == first["leaves"]
+
+    from sqlalchemy import text
+    from db.db import get_engine
+    table = vsm.physical_table_name(folder.id, folder.vector_table_uuid)
+    with get_engine().connect() as conn:
+        rows = conn.execute(text(
+            f"SELECT metadata_->>'node_role', text_search_tsv IS NULL FROM \"{table}\" "
+            "WHERE metadata_->>'file_id' = :f"), {"f": fid}).fetchall()
+    assert rows and all(is_null == (role == "parent") for role, is_null in rows)
+
+
+async def test_failed_replace_keeps_the_previous_version(vsm, indexer, folder, file_row):
+    """The delete and the insert share one transaction: if the insert fails, the old
+    rows are still there (no window where the file has no chunks)."""
+    from llama_index.core.schema import TextNode
+    from src.domain.rag.chunk_store import replace_file_chunks
+
+    store = vsm.get_or_create(folder_id=folder.id, vector_table_uuid=str(folder.vector_table_uuid))
+    fid = str(file_row.id)
+    await indexer.index_document(_doc(fid), store)
+    before = len(_table_rows(vsm, folder))
+    bad = TextNode(id_="bad", text="x", metadata={"file_id": fid, "node_role": "leaf"})
+    bad.embedding = [0.1, 0.2]  # wrong dimension -> INSERT fails
+    with pytest.raises(Exception):
+        replace_file_chunks(store, fid, [bad], {"bad": "x"}, "simple")
+    assert len(_table_rows(vsm, folder)) == before

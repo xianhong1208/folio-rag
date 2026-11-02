@@ -53,6 +53,27 @@ def _write_tsv_segmenter(conn, table_name: str, name: str) -> None:
         f'COMMENT ON COLUMN "{table_name}".{_TSV_COLUMN} IS \'{_STAMP_PREFIX}{safe}\''))
 
 
+def stamp_new_table(conn, table_name: str, name: Optional[str], file_id) -> bool:
+    """Stamp ``name`` on a table whose only keyword-indexed rows are ``file_id``'s.
+
+    Called after one file's search vectors were written (by the indexer or a per-file
+    rebuild). A brand-new folder gets its segmenter recorded; a folder that already
+    holds rows from other files keeps its stamp (or lack of one = legacy CKIP), so a
+    folder with rows from another segmenter stays flagged for Rebuild FTS. The caller
+    commits. Returns True when it stamped.
+    """
+    if not name or read_tsv_segmenter(conn, table_name) is not None:
+        return False
+    others = conn.execute(text(
+        f'SELECT EXISTS (SELECT 1 FROM "{table_name}" '
+        f"WHERE metadata_->>'file_id' IS DISTINCT FROM :fid "
+        f"AND {_TSV_COLUMN} IS NOT NULL)"), {"fid": str(file_id)}).scalar()
+    if others:
+        return False
+    _write_tsv_segmenter(conn, table_name, name)
+    return True
+
+
 def stamp_tsv_segmenter(engine, table_name: str, name: str) -> None:
     """Record ``name`` as the segmenter that built the whole table's tsvector.
 
@@ -105,20 +126,20 @@ def rebuild_text_search_tsv(
     flagged for Rebuild FTS.
 
     llama-index's native `to_tsvector('simple', text)` cannot segment space-less
-    Chinese, so we overwrite the column with CKIP-segmented tokens. The displayed
-    `text` column is left untouched — only the search vector is CKIP-derived.
+    Chinese, so we overwrite the column with segmented tokens. The displayed
+    `text` column is left untouched — only the search vector changes.
 
     llama-index creates `text_search_tsv` as a STORED GENERATED column
     (`GENERATED ALWAYS AS to_tsvector(config, text)`), which Postgres forbids
-    UPDATEing. CKIP runs in Python (Postgres cannot call it, unlike the old pg_jieba
+    UPDATEing. Segmentation runs in Python (Postgres cannot call CKIP, unlike the old pg_jieba
     text-search config), so we first detach the generated expression, turning it into
     a plain tsvector column we own. `DROP EXPRESSION IF EXISTS` is idempotent and a
     no-op once detached; existing values are kept until this UPDATE overwrites them.
-    (Rows llama-index inserts afterwards land with NULL tsv until the next rebuild,
-    which runs after every add — see hierarchical_indexer.)
+    (The indexer writes the tsv itself in the same transaction as the rows — see
+    chunk_store.replace_file_chunks.)
 
-    Blocking (sync SQLAlchemy + CKIP inference); callers must run it off the event
-    loop. Returns the number of rows updated.
+    Blocking (sync SQLAlchemy + segmentation); callers must run it off the event
+    loop. Returns the number of leaf rows updated.
     """
     updated = 0
     # table_name is server-generated (int + UUID), not user input — no injection surface.
@@ -126,12 +147,23 @@ def rebuild_text_search_tsv(
         f'ALTER TABLE "{table_name}" '
         f"ALTER COLUMN {_TSV_COLUMN} DROP EXPRESSION IF EXISTS"
     )
-    # file_id scopes the rebuild to one file's rows (the per-file indexing hook);
-    # None re-segments the whole table (the admin Rebuild-FTS backfill). Without
-    # the scope, every single-file add re-ran CKIP over the entire folder.
+    # file_id scopes the rebuild to one file's rows (a per-file rebuild); None
+    # re-segments the whole table. Without the scope, every single-file pass re-ran
+    # segmentation over the entire folder.
+    # Exactly what the indexer writes (chunk_store.replace_file_chunks): leaves are
+    # searched by their retrieval text (prefix + breadcrumb + original text, see
+    # chunk_identity; SEARCH_TEXT_SQL is plain `text` for rows indexed before that),
+    # segmented by the configured segmenter; parents get no search vector.
+    from src.domain.rag.chunk_identity import LEAF_ONLY_SQL, SEARCH_TEXT_SQL
+
+    scope = " AND metadata_->>'file_id' = :fid" if file_id else ""
+    params = {"fid": str(file_id)} if file_id else {}
     select_sql = text(
-        f'SELECT id, text FROM "{table_name}"'
-        + (" WHERE metadata_->>'file_id' = :fid" if file_id else "")
+        f'SELECT id, {SEARCH_TEXT_SQL} FROM "{table_name}" WHERE {LEAF_ONLY_SQL}{scope}'
+    )
+    clear_parents_sql = text(
+        f'UPDATE "{table_name}" SET {_TSV_COLUMN} = NULL '
+        f"WHERE NOT {LEAF_ONLY_SQL} AND {_TSV_COLUMN} IS NOT NULL{scope}"
     )
     update_sql = text(
         f'UPDATE "{table_name}" '
@@ -142,17 +174,11 @@ def rebuild_text_search_tsv(
         # Detach the generated expression once so the column becomes UPDATEable.
         conn.execute(detach_sql)
         conn.commit()
-        if name and file_id and read_tsv_segmenter(conn, table_name) is None:
-            others = conn.execute(text(
-                f'SELECT EXISTS (SELECT 1 FROM "{table_name}" '
-                f"WHERE metadata_->>'file_id' IS DISTINCT FROM :fid "
-                f"AND {_TSV_COLUMN} IS NOT NULL)"), {"fid": str(file_id)}).scalar()
-            if not others:
-                _write_tsv_segmenter(conn, table_name, name)
-                conn.commit()
-        rows = conn.execute(
-            select_sql, {"fid": str(file_id)} if file_id else {}
-        ).fetchall()
+        if file_id and stamp_new_table(conn, table_name, name, file_id):
+            conn.commit()
+        conn.execute(clear_parents_sql, params)
+        conn.commit()
+        rows = conn.execute(select_sql, params).fetchall()
         if name and not file_id:
             _write_tsv_segmenter(conn, table_name, name)
             conn.commit()
@@ -162,13 +188,13 @@ def rebuild_text_search_tsv(
             batch = rows[start:start + _TSV_REBUILD_BATCH]
             texts = [(r[1] or "") for r in batch]
             segmented = segmenter.segment_batch(texts)
-            params = [
+            batch_params = [
                 {"id": r[0], "seg": seg}
                 for r, seg in zip(batch, segmented)
             ]
-            conn.execute(update_sql, params)
+            conn.execute(update_sql, batch_params)
             conn.commit()
-            updated += len(params)
+            updated += len(batch_params)
     logger.info(
         f"Rebuilt {_TSV_COLUMN} from {name or 'segmented'} tokens for {updated} row(s) "
         f"in {table_name}"

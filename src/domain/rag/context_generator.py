@@ -7,11 +7,14 @@ Reference: Anthropic "Introducing Contextual Retrieval" (2024-09)
 
 Usage:
     generator = ContextGenerator.from_config(rag_config)
-    contextualized_texts = await generator.generate_batch(
-        chunks=["The circumstances described in the preceding paragraph are not subject to this article.", ...],
+    prefixes = await generator.generate_prefixes(
+        chunks=["The provisions above do not apply in this case.", ...],
         full_document="Full text of the travel policy...",
         file_name="travel_policy.docx",
     )
+
+Each prefix is stored next to the chunk (metadata.context_prefix), never inside the
+chunk's displayed text; see chunk_identity for how it joins the retrieval text.
 
 Performance:
     Uses a sync OpenAI client + asyncio.to_thread to call the LLM concurrently, throttled by an
@@ -26,59 +29,55 @@ import asyncio
 from typing import Callable, Optional, List
 
 from src.log import get_api_logger
+from src.domain.rag.context_scope import SECTION_WINDOW_CHARS, locate_window, window
+from src.domain.rag.han_script import document_language, fix_simplified, strip_invisible
 
 logger = get_api_logger()
 
-# The LLM must output in the SAME language as the source document, keeping the
-# context prefix embedding-aligned with the chunk it precedes; a hard-coded English
-# prefix would drift in bge-m3 vector space and break cross-language retrieval.
-# Few-shot examples and a hard language rule are needed because gemma-3-27b otherwise
-# slips into English on Chinese transcripts.
+# The prefix must be in the chunk's own language and script, so that it lands in the
+# same region of the embedding space as the chunk (an English prefix on a Chinese chunk
+# drifts and loses same-language queries). The instructions are written in English and
+# carry no examples in any particular language: a detected document language is named
+# explicitly instead ({language_rule}), which also stops models from slipping into
+# English on CJK text. Document context comes first and the chunk last, so chunks of
+# one section share a prompt prefix (vLLM prefix cache).
 _CONTEXT_PROMPT = """\
-You are a document analysis assistant. Generate a short context line (1-2 sentences) \
-describing where the given chunk sits in the document, so a downstream retriever can \
-understand it in isolation.
+You write one short context line that situates a chunk of a document, so that a \
+search engine can understand the chunk on its own.
 
-═══ ABSOLUTE LANGUAGE RULE (NON-NEGOTIABLE) ═══
-The output MUST be in the EXACT SAME language/script as the chunk text.
-- Write the context in the chunk's own language (Chinese chunk → Chinese context).
-- Japanese chunk → Japanese context.
-- If chunk is in English, output in English.
-Mixed-language output is FORBIDDEN. Output language is NOT optional.
+Rules:
+- Write in the same language and script as the chunk.{language_rule}
+- One or two sentences, at most {max_length} characters.
+- Say which part of the document the chunk belongs to and what it is about. Name the \
+document, product, organisation, person or topic when the context makes it clear.
+- Identify the speaker when the chunk is a transcript and the speaker is obvious.
+- Do not restate the chunk. No quotation marks, no preamble such as "This chunk".
 
-═══ FEW-SHOT EXAMPLES (match the output language) ═══
-Example 1 (Chinese chunk → Chinese output):
-  Chunk: "This article requires the applicant for a building permit to attach the building plan..."
-  Output: An extension of Article 3 of the construction act; this passage lists the documents a building-permit applicant must attach
+Document: {file_name}
 
-Example 2 (English chunk → English output):
-  Chunk: "Article 3 defines terms used in this Act, including 'construction work'..."
-  Output: Article 3 of the Act, listing core terminology definitions
+<outline>
+{outline}
+</outline>
 
-Example 3 (Chinese transcript chunk → Chinese output):
-  Chunk: "Deputy director: this is our current SOP; we did not create a new procedure for this item"
-  Output: The deputy director answers the chair, saying the case follows the current SOP with no new procedure
-
-═══ OUTPUT CONSTRAINTS ═══
-- Identify the speaker if obvious (transcripts) — e.g., chair / deputy director / representative
-- Include the document name or topic title if relevant
-- State WHAT the chunk discusses (do not paraphrase the chunk itself)
-- Maximum {max_length} characters
-- No quotation marks, no English "This chunk..." preamble
-- If you cannot determine context, output a short topic in the same language as chunk
-
-═══ NOW PROCESS ═══
-Document name: {file_name}
-
-<full_document>
-{document_text}
-</full_document>
+<section>
+{section}
+</section>
 
 <chunk>
 {chunk_text}
 </chunk>
 
-Output the context line directly (remember: SAME LANGUAGE AS CHUNK):"""
+Context line:"""
+
+
+def _language_rule(language: Optional[str]) -> str:
+    if not language:
+        return ""
+    rule = (f" The document is written in {language}: when the chunk has little prose "
+            f"of its own (numbers, code, a table), write in {language}.")
+    if language == "Traditional Chinese":
+        rule += " Use Traditional characters only, never Simplified ones."
+    return rule
 
 
 def _detect_scripts(text: str) -> set:
@@ -120,12 +119,9 @@ def _is_script_mismatch(chunk_text: str, candidate_prefix: str) -> bool:
     return bool(chunk_main) and not prefix_main
 
 
-def _safe_fallback_prefix(chunk_text: str, file_name: str) -> str:
-    """Fallback prefix when the LLM fails: use file_name directly, adding no natural-
-    language wrapper, so the prefix stays language-neutral (bge-m3 is fairly
-    insensitive to naming-like noise). Returns "{file_name}\n\n{chunk_text}".
-    """
-    return f"{file_name}\n\n{chunk_text}"
+# Part of every prefix's cache key: bump it whenever the prompt changes so that an
+# incremental re-index regenerates prefixes written by an older prompt.
+PROMPT_VERSION = "2"  # 2: outline + own section, language-neutral prompt, script repair
 
 
 class ContextGenerator:
@@ -157,6 +153,17 @@ class ContextGenerator:
             f"max_concurrent={max_concurrent}, max_doc_chars={max_doc_chars}, "
             f"max_tokens={max_tokens}, reasoning_effort={reasoning_effort})"
         )
+
+    @property
+    def max_doc_chars(self) -> int:
+        """Upper bound on the document text given to the model per chunk."""
+        return self._max_doc_chars
+
+    @property
+    def cache_key(self) -> str:
+        """Identity of what produces a prefix (model + prompt + length limit). A stored
+        prefix is reused on re-index only when its key matches."""
+        return f"{self._model}|prompt={PROMPT_VERSION}|max={self._max_context_length}"
 
     @classmethod
     def from_config(cls, rag_config) -> Optional["ContextGenerator"]:
@@ -257,47 +264,63 @@ class ContextGenerator:
     async def _generate_one(
         self,
         chunk_text: str,
-        full_document: str,
+        context_text: str,
         file_name: str,
         client,
         semaphore: asyncio.Semaphore,
         should_abort: Optional[Callable[[], bool]] = None,
-    ) -> str:
-        """Generate the context-prefixed text for a single chunk.
+        outline: str = "",
+        language: Optional[str] = None,
+        script_reference: str = "",
+    ) -> Optional[str]:
+        """Generate the context prefix for a single chunk.
 
-        When should_abort holds, return the original chunk_text and skip the LLM — after an abort
-        the whole batch's results are discarded by the indexer (raises IndexingAbortedError), so
-        the goal here is only to let gather finish quickly without wasting LLM calls.
+        ``context_text`` is the part of the document the model reads for this chunk
+        (its section, see context_scope); ``outline`` the document's heading paths;
+        ``script_reference`` the document text used to repair Simplified drift.
+
+        Returns the prefix, "" when the model's answer was unusable (wrong script), or
+        None when no answer was obtained (empty response, error, abort) so a later
+        re-index can try again. There is no file-name fallback any more: the chunk's
+        breadcrumb already carries the file name.
+
+        When should_abort holds, skip the LLM — after an abort the whole batch's results
+        are discarded by the indexer (raises IndexingAbortedError), so the goal here is
+        only to let gather finish quickly without wasting LLM calls.
         """
         try:
             if should_abort and should_abort():
-                return chunk_text
+                return None
 
-            doc_text = full_document[:self._max_doc_chars]
-            if len(full_document) > self._max_doc_chars:
-                doc_text += "\n...(document too long, truncated)"
+            section = context_text or ""
+            if len(section) > self._max_doc_chars:  # safety net; callers pre-window
+                section = window(section, 0, 0, self._max_doc_chars)
 
             prompt = _CONTEXT_PROMPT.format(
                 max_length=self._max_context_length,
+                language_rule=_language_rule(language),
                 file_name=file_name,
-                document_text=doc_text,
+                outline=outline or "(no headings)",
+                section=section,
                 chunk_text=chunk_text,
             )
 
             async with semaphore:
                 # A chunk queued behind the semaphore may have waited a while; re-check once it acquires the slot
                 if should_abort and should_abort():
-                    return chunk_text
+                    return None
                 raw_content = await asyncio.to_thread(self._call_llm_sync, prompt, client)
 
             if not raw_content:
                 logger.warning(
-                    f"LLM returned empty content for chunk in '{file_name}',"
-                    f" using safe fallback prefix"
+                    f"LLM returned empty content for chunk in '{file_name}'; no prefix"
                 )
-                return _safe_fallback_prefix(chunk_text, file_name)
+                return None
 
-            context = raw_content.strip()
+            # Zero-width characters split keyword tokens ("ROC\u200bm"); Simplified
+            # characters in a Traditional document never match Traditional queries.
+            context = " ".join(strip_invisible(raw_content).split())
+            context = fix_simplified(context, script_reference or section)
 
             # A script-mismatched prefix+chunk drifts in bge-m3 space and tanks the
             # chunk's hit rate on same-language queries; prefer the fallback instead.
@@ -306,32 +329,37 @@ class ContextGenerator:
                     f"LLM produced script-mismatched prefix for chunk in '{file_name}',"
                     f" discarding. context_preview={context[:60]!r}"
                 )
-                return _safe_fallback_prefix(chunk_text, file_name)
+                return ""
 
             if len(context) > self._max_context_length:
                 context = context[:self._max_context_length]
 
-            return f"{context}\n\n{chunk_text}"
+            return context
 
         except Exception as e:
             logger.warning(f"Context generation failed for chunk in '{file_name}': {e}")
-            return _safe_fallback_prefix(chunk_text, file_name)
+            return None
 
-    async def generate_batch(
+    async def generate_prefixes(
         self,
         chunks: List[str],
         full_document: str,
         file_name: str,
         on_progress: Optional[Callable[[int, int], None]] = None,
         should_abort: Optional[Callable[[], bool]] = None,
-    ) -> List[str]:
+        contexts: Optional[List[str]] = None,
+        outline: str = "",
+        language: Optional[str] = None,
+    ) -> List[Optional[str]]:
         """Generate contextual prefixes for a batch of chunks (concurrent LLM calls).
 
         Sync OpenAI client + asyncio.to_thread for concurrency; asyncio.Semaphore for throttling.
 
         Args:
             chunks: List of chunk texts to prefix.
-            full_document: Full document content (the LLM needs it to reason about chunk context).
+            full_document: Full document content. Used for the script repair, for the
+                language when ``language`` is None, and — only when ``contexts`` is not
+                given — as a window centred on each chunk.
             file_name: File-name tag (for logging + fallback).
             on_progress: ``(done, total)`` progress callback; invoked every 10 completed chunks or
                 on the last one (throttled, so job status can show progress). None = silent.
@@ -339,9 +367,14 @@ class ContextGenerator:
                 (cooperative cancellation for a file deleted mid-run). The caller guarantees this
                 callable won't raise; abort adjudication and result discarding are the indexer's
                 job, and this method returns normally.
+            contexts: per chunk, the document text the model reads (its section, see
+                context_scope.section_texts).
+            outline: the document's heading paths (context_scope.document_outline).
+            language: the document's language name, e.g. "Traditional Chinese".
 
         Returns:
-            A list the same length as chunks; each element is the assembled `prefix\n\nchunk_text` string.
+            A list the same length as chunks: each chunk's prefix, "" when the answer was
+            discarded, None when no answer was obtained (see _generate_one).
         """
         total = len(chunks)
 
@@ -391,12 +424,20 @@ class ContextGenerator:
 
         watcher = asyncio.create_task(_abort_watcher()) if should_abort else None
 
+        width = min(self._max_doc_chars, SECTION_WINDOW_CHARS)
+        if contexts is None:
+            contexts = [locate_window(full_document or "", c, width) for c in chunks]
+        if language is None:
+            language = document_language(full_document or "\n".join(contexts))
+        script_reference = (full_document or "")[:20000]
+
         try:
             tasks = []
-            for chunk_text in chunks:
+            for chunk_text, context_text in zip(chunks, contexts):
                 tasks.append(self._generate_with_progress(
-                    chunk_text, full_document, file_name,
+                    chunk_text, context_text, file_name,
                     client, semaphore, _on_one_done, should_abort,
+                    outline, language, script_reference,
                 ))
 
             results = await asyncio.gather(*tasks)
@@ -418,16 +459,20 @@ class ContextGenerator:
     async def _generate_with_progress(
         self,
         chunk_text: str,
-        full_document: str,
+        context_text: str,
         file_name: str,
         client,
         semaphore: asyncio.Semaphore,
         on_done: Callable[[], None],
         should_abort: Optional[Callable[[], bool]] = None,
-    ) -> str:
+        outline: str = "",
+        language: Optional[str] = None,
+        script_reference: str = "",
+    ) -> Optional[str]:
         """Generate one chunk's context and report completion."""
         result = await self._generate_one(
-            chunk_text, full_document, file_name, client, semaphore, should_abort
+            chunk_text, context_text, file_name, client, semaphore, should_abort,
+            outline=outline, language=language, script_reference=script_reference,
         )
         on_done()
         return result

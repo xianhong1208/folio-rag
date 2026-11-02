@@ -106,20 +106,15 @@ _LEGACY_EXTS = ["doc", "dot", "xls", "xlt", "ppt", "pot", "pps",
                 "pptx", "ppsx", "pptm", "potm", "ppsm"]
 
 
-# Known bug, tracked separately: the installed docling decodes an HTML file that has no
-# <meta charset> as a legacy codepage, so UTF-8 CJK text comes back garbled. Non-strict,
-# so the cases simply XPASS once HTML decoding is fixed (then drop this marker).
-_HTML_CHARSET_BUG = pytest.mark.xfail(
-    reason="docling mis-decodes UTF-8 HTML without <meta charset> (CJK mojibake)", strict=False)
+@pytest.mark.parametrize("ext", _PURE_PARSER_EXTS)
+def test_pure_parser_format(samples, converter, ext, monkeypatch):
+    # Through the production entry point (docling_convert_once), which prepares the
+    # input (e.g. marks undeclared UTF-8 HTML) before docling sees it.
+    from src.domain.rag import docling_loader as dl
 
-
-@pytest.mark.parametrize("ext", [
-    pytest.param(e, marks=_HTML_CHARSET_BUG) if e in ("html", "htm", "xhtml") else e
-    for e in _PURE_PARSER_EXTS
-])
-def test_pure_parser_format(samples, converter, ext):
-    text = converter.convert(str(samples / f"t.{ext}")).document.export_to_markdown()
-    assert SENT in text, f".{ext} 解析結果不含哨兵內容"
+    monkeypatch.setattr(dl, "get_converter", lambda: converter)
+    text, _ = dl.docling_convert_once(str(samples / f"t.{ext}"), f"t.{ext}", max_tokens=512)
+    assert SENT in text, f".{ext}: sentinel text missing from the parse"
 
 
 @pytest.mark.skipif(not _SOFFICE, reason="LibreOffice(soffice)未安裝")

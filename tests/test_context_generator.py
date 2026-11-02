@@ -14,7 +14,6 @@ from src.domain.rag.context_generator import (
     ContextGenerator,
     _detect_scripts,
     _is_script_mismatch,
-    _safe_fallback_prefix,
 )
 
 
@@ -106,13 +105,6 @@ def test_mismatch_mixed_chunk_uses_non_latin_main_script():
 def test_mismatch_hangul_chunk_latin_prefix():
     """A non-Chinese non-Latin script (Korean) is protected the same way -> True (TC-ctxgen-12)"""
     assert _is_script_mismatch("안녕하세요 문서입니다", "English prefix") is True
-
-
-# _safe_fallback_prefix
-
-def test_safe_fallback_prefix_format():
-    """Returns the '{file_name}\\n\\n{chunk_text}' format (TC-ctxgen-13)"""
-    assert _safe_fallback_prefix("chunk 內容", "報告.docx") == "報告.docx\n\nchunk 內容"
 
 
 # ContextGenerator construction / from_config
@@ -254,10 +246,10 @@ def test_call_llm_sync_reasoning_content_fallback_and_effort_param():
     assert stub.captured_kwargs["reasoning_effort"] == "low"
 
 
-# _generate_one / generate_batch (LLM replaced by a mock)
+# _generate_one / generate_prefixes (LLM replaced by a mock)
 
 async def test_generate_one_success(mocker: MockerFixture):
-    """A normal LLM response -> '{context}\\n\\n{chunk}' (TC-ctxgen-25)"""
+    """A normal LLM response -> the prefix alone; the chunk text is stored separately (TC-ctxgen-25)"""
     gen = _make_generator()
     mocker.patch.object(gen, "_call_llm_sync", return_value="本段說明差旅費核銷規定")
 
@@ -266,7 +258,7 @@ async def test_generate_one_success(mocker: MockerFixture):
         client=None, semaphore=asyncio.Semaphore(1),
     )
 
-    assert result == "本段說明差旅費核銷規定\n\n前項所述之情形,不適用本條規定。"
+    assert result == "本段說明差旅費核銷規定"
 
 
 async def test_generate_one_truncates_long_context(mocker: MockerFixture):
@@ -278,11 +270,11 @@ async def test_generate_one_truncates_long_context(mocker: MockerFixture):
         "english chunk", "doc", "f.txt", client=None, semaphore=asyncio.Semaphore(1),
     )
 
-    assert result == "AAAAA\n\nenglish chunk"
+    assert result == "AAAAA"
 
 
 async def test_generate_one_empty_llm_response_falls_back(mocker: MockerFixture):
-    """LLM returns an empty string -> safe fallback prefix (TC-ctxgen-27)"""
+    """LLM returns an empty string -> None (no prefix; retried on the next re-index) (TC-ctxgen-27)"""
     gen = _make_generator()
     mocker.patch.object(gen, "_call_llm_sync", return_value="")
 
@@ -290,11 +282,11 @@ async def test_generate_one_empty_llm_response_falls_back(mocker: MockerFixture)
         "chunk 內容", "doc", "報告.docx", client=None, semaphore=asyncio.Semaphore(1),
     )
 
-    assert result == "報告.docx\n\nchunk 內容"
+    assert result is None
 
 
 async def test_generate_one_script_mismatch_falls_back(mocker: MockerFixture):
-    """A Chinese chunk that gets a pure-English prefix -> discard it and use the fallback (TC-ctxgen-28)"""
+    """A Chinese chunk that gets a pure-English prefix -> discarded: empty prefix (TC-ctxgen-28)"""
     gen = _make_generator()
     mocker.patch.object(gen, "_call_llm_sync", return_value="This chunk is about travel policy")
 
@@ -302,11 +294,11 @@ async def test_generate_one_script_mismatch_falls_back(mocker: MockerFixture):
         "中文段落內容", "doc", "辦法.docx", client=None, semaphore=asyncio.Semaphore(1),
     )
 
-    assert result == "辦法.docx\n\n中文段落內容"
+    assert result == ""
 
 
 async def test_generate_one_llm_exception_falls_back(mocker: MockerFixture):
-    """LLM raises an exception -> not leaked, returns the fallback (TC-ctxgen-29)"""
+    """LLM raises an exception -> not leaked, returns None (TC-ctxgen-29)"""
     gen = _make_generator()
     mocker.patch.object(gen, "_call_llm_sync", side_effect=RuntimeError("connection refused"))
 
@@ -314,11 +306,11 @@ async def test_generate_one_llm_exception_falls_back(mocker: MockerFixture):
         "chunk text", "doc", "f.txt", client=None, semaphore=asyncio.Semaphore(1),
     )
 
-    assert result == "f.txt\n\nchunk text"
+    assert result is None
 
 
 async def test_generate_one_truncates_long_document_in_prompt(mocker: MockerFixture):
-    """When full_document exceeds max_doc_chars, the document inside the prompt is truncated with a note appended (TC-ctxgen-30)"""
+    """Document context longer than max_doc_chars is cut to a window, marked with an ellipsis (TC-ctxgen-30)"""
     gen = _make_generator(max_doc_chars=10)
     mock_call = mocker.patch.object(gen, "_call_llm_sync", return_value="ctx")
 
@@ -327,17 +319,17 @@ async def test_generate_one_truncates_long_document_in_prompt(mocker: MockerFixt
     )
 
     prompt = mock_call.call_args[0][0]
-    assert "D" * 10 + "\n...(文件過長，已截斷)" in prompt
+    assert "D" * 10 + "…" in prompt
     assert "D" * 11 not in prompt
 
 
 async def test_generate_batch_order_and_length(mocker: MockerFixture):
-    """generate_batch returns a list the same length as chunks, matching order one-to-one (TC-ctxgen-31)"""
+    """generate_prefixes returns a list the same length as chunks, matching order one-to-one (TC-ctxgen-31)"""
     gen = _make_generator()
     mocker.patch.object(ContextGenerator, "_create_sync_client", return_value=None)
     mocker.patch.object(gen, "_call_llm_sync", return_value="CTX")
 
     chunks = ["chunk one", "chunk two", "chunk three"]
-    results = await gen.generate_batch(chunks, "full document", "file.txt")
+    results = await gen.generate_prefixes(chunks, "full document", "file.txt")
 
-    assert results == [f"CTX\n\n{c}" for c in chunks]
+    assert results == ["CTX"] * len(chunks)

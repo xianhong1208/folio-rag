@@ -77,6 +77,8 @@ dependencies = [
     # Postgres tokenizes with `simple`; replaces the old pg_jieba/jiebacfg path.
     "ckip-transformers>=0.3.4",
     "pygments>=2.20.0",
+    # Chunk token counting (Rust, no torch): loads the bundled resources/tokenizers/ file.
+    "tokenizers>=0.20.0",
 ]
 
 [project.optional-dependencies]

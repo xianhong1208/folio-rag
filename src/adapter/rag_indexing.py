@@ -544,6 +544,7 @@ class RAGIndexingService:
                 _timings_out["index_ms"] = round((time.perf_counter() - idx_t0) * 1000, 1)
             num_leaves = index_stats.get("leaves", 0)
             num_parents = index_stats.get("parents", 0)
+            index_warning = index_stats.get("warning")
 
             log_op(
                 logger, "INDEX_DONE",
@@ -592,6 +593,8 @@ class RAGIndexingService:
                 embedding_model=ctx.model_name,
                 num_chunks=num_leaves,
                 content_hash=getattr(file_record, "content_hash", None),
+                index_warning=index_warning,
+                pipeline_version=index_stats.get("pipeline_version"),
             )
 
             await _run_db(ctx.indexing_service.invalidate_folder_caches, folder_id)
@@ -603,7 +606,10 @@ class RAGIndexingService:
                 num_chunks=num_leaves,
                 status="indexed",
                 indexed_at=index_record.indexed_at.isoformat(),
-                message=f"Indexed hierarchically: {num_leaves} leaves + {num_parents} parents",
+                message=(
+                    f"Indexed hierarchically: {num_leaves} leaves + {num_parents} parents"
+                    + (f". Warning: {index_warning}" if index_warning else "")
+                ),
             )
 
         except DomainException:

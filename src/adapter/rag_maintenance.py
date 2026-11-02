@@ -8,6 +8,7 @@ from __future__ import annotations
 
 from typing import Any, Dict, List, TYPE_CHECKING
 
+from src.domain.rag.chunk_identity import reindex_recommended
 from src.domain.rag.vector_store_manager import VectorStoreManager  # physical-table deletion is centralized here
 from src.api.router.response import DeleteFolderIndexResponse, FileIndexResult
 from src.domain.exceptions import (
@@ -256,6 +257,10 @@ class RAGMaintenanceService:
                     "embedding_model": record.embedding_model,
                     "chunk_size": record.chunk_size,
                     "chunk_overlap": record.chunk_overlap,
+                    "warning": getattr(record, "index_warning", None),
+                    "pipeline_version": getattr(record, "pipeline_version", None),
+                    "reindex_recommended": reindex_recommended(
+                        record.status, getattr(record, "pipeline_version", None)),
                 })
 
             cache.set(cache_key, results, ttl=CacheTTL.FILE_LIST)

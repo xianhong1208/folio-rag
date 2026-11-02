@@ -1,0 +1,15 @@
+Bundled chunk-counting tokenizer
+================================
+
+tokenizer.json.xz is the XLM-RoBERTa SentencePiece tokenizer as published with
+intfloat/multilingual-e5-large (https://huggingface.co/intfloat/multilingual-e5-large),
+re-serialized as compact JSON and compressed with xz. Nothing else was changed:
+it yields the same token ids as the multilingual-e5-large and BAAI/bge-m3
+tokenizers.
+
+The model card publishes it under the MIT License. The underlying XLM-R
+SentencePiece model comes from fairseq (MIT License, Copyright (c) Facebook,
+Inc. and its affiliates).
+
+agentic_rag uses it only to count tokens when sizing chunks
+(src/domain/rag/chunk_tokenizer.py). It is never used for embedding.

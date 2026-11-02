@@ -27,8 +27,11 @@ from src.log import get_api_logger
 from src.domain.rag.docling_loader import (
     is_docling_supported,
     docling_convert_once,
+    ocr_enabled,
 )
 from src.domain.rag.asr_provider import AsrProvider, create_asr_provider
+from src.domain.rag.chunk_identity import token_budgets
+from src.domain.rag.han_script import strip_invisible
 from src.domain.rag.audio_defense import (
     _AUDIO_TRIM_EXTENSIONS,
     _filter_whisper_hallucinations,
@@ -38,12 +41,17 @@ from src.storage.file_storage import FileStorage
 
 logger = get_api_logger()
 
+# Formats whose text can come only from OCR when the file has no text layer.
+_OCR_EXTENSIONS = {".pdf", ".png", ".jpg", ".jpeg", ".tiff", ".tif", ".bmp", ".webp"}
+
 
 def clean_text(text: str) -> str:
-    """Strip NUL and control characters (rejected by PostgreSQL; commonly sourced from PDF font tables / ICC profiles)."""
+    """Strip NUL and control characters (rejected by PostgreSQL; commonly sourced from PDF
+    font tables / ICC profiles), zero-width characters (they split keyword tokens), and
+    turn no-break / thin spaces into plain spaces."""
     if not text:
         return text
-    cleaned = text.replace('\x00', '')
+    cleaned = strip_invisible(text).replace('\x00', '')
     cleaned = ''.join(
         char for char in cleaned
         if char in ('\n', '\t', '\r') or ord(char) >= 32
@@ -119,11 +127,18 @@ class DocumentLoader:
         # The config-selected provider is the ONLY speech source: if it can't serve, raise
         # an explicit error (file marked failed) rather than silently switching models or
         # skipping. Only rag.asr.enabled=false means "explicitly do not transcribe".
-        if file_extension in _AUDIO_TRIM_EXTENSIONS and self._asr_enabled:
+        if file_extension in _AUDIO_TRIM_EXTENSIONS and not self._asr_enabled:
+            # Off means off: never fall through to docling's whisper or SimpleDirectoryReader.
+            raise ValueError(
+                f"Speech-to-text is disabled (rag.asr.enabled=false), so '{file_name}' was "
+                "not transcribed. Enable it and re-index the file to include it."
+            )
+        if file_extension in _AUDIO_TRIM_EXTENSIONS:
             if not self._asr_provider.available():
                 raise RuntimeError(
-                    f"rag.asr provider unavailable (weights/endpoint not ready), cannot transcribe {file_name} — "
-                    "Check the weights under assets/ or the rag.asr settings; to skip audio transcription set rag.asr.enabled=false"
+                    f"The configured rag.asr provider is not available (weights or endpoint "
+                    f"not ready), so '{file_name}' cannot be transcribed. Check assets/ or "
+                    "the rag.asr settings; set rag.asr.enabled=false to skip audio on purpose."
                 )
             return self._load_audio(
                 resolved_path=resolved_path,
@@ -134,22 +149,32 @@ class DocumentLoader:
             )
 
         if is_docling_supported(file_name):
-            docling_max_tokens = min(
-                self._leaf_chunk_size, 380 if self._has_context_generator else 450
-            )
+            docling_max_tokens, table_max_tokens = token_budgets(
+                self._leaf_chunk_size, self._has_context_generator)
+            report: Dict[str, Any] = {}
             full_text, chunk_texts = docling_convert_once(
                 file_path=resolved_path,
                 file_name=file_name,
                 max_tokens=docling_max_tokens,
                 tokenizer=self._embedding_model_name,
                 progress_cb=progress_cb,
+                report=report,
+                table_max_tokens=table_max_tokens,
             )
             content = clean_text(full_text)
             if not content.strip():
+                if file_extension in _OCR_EXTENSIONS and not ocr_enabled():
+                    raise ValueError(
+                        f"No text found in '{file_name}' and OCR is disabled "
+                        "(rag.docling.ocr_enabled=false). Enable OCR to index scanned pages."
+                    )
                 raise ValueError(f"Empty content extracted from {file_name}")
 
             doc = Document(text=content, metadata=base_metadata, doc_id=doc_id)
             doc.metadata["_docling_chunks"] = chunk_texts
+            if report.get("warning"):
+                # Underscore keys never reach chunk metadata; the indexer hands it to the file record.
+                doc.metadata["_parse_warning"] = report["warning"]
             return doc
 
         with tempfile.TemporaryDirectory() as temp_dir:
@@ -182,9 +207,7 @@ class DocumentLoader:
         Trimming/filtering are model-agnostic pre/post-processing (audio_defense), deliberately kept
         outside the provider so both defenses survive swapping in any provider.
         """
-        docling_max_tokens = min(
-            self._leaf_chunk_size, 380 if self._has_context_generator else 450
-        )
+        docling_max_tokens, _ = token_budgets(self._leaf_chunk_size, self._has_context_generator)
 
         # 1. Trim leading silence (on failure, fall back to the original file; don't block transcription)
         effective_path = resolved_path

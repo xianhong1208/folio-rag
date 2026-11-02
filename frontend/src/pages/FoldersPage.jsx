@@ -6,6 +6,7 @@ import { pillClass, statusLabel, needsRetry, canRetry, canCancel, isJobActive } 
 import { ftsNotice } from '../lib/fts'
 import EmptyState from '../components/ui/EmptyState'
 import ChunkText, { ContentBadge } from '../components/ui/ChunkText'
+import { isPartial, needsReindex, countNeedsReindex } from '../lib/fileStatus'
 import { useModal } from '../contexts/ModalContext'
 import { useToast } from '../contexts/ToastContext'
 
@@ -98,7 +99,9 @@ export default function FoldersPage() {
   const back = () => { curIdRef.current = null; setCur(null); setFiles(null); setSel(new Set()); loadFolders() }
 
   const toggleSel = (id) => setSel((s) => { const n = new Set(s); n.has(id) ? n.delete(id) : n.add(id); return n })
-  // One background job for the whole selection (it queues behind a running job).
+  // One background job for the whole selection (it queues behind a running job). Re-indexing
+  // is incremental: unchanged chunks keep their prefix and embedding.
+  const selectStale = () => setSel(new Set((files || []).filter(needsReindex).map((f) => f.id)))
   const bulkReindex = async () => {
     const ids = [...sel]
     try { const r = await post(`/api/admin/manage/folders/${cur.id}/retry`, { file_ids: ids }); toast(r.message || `Reindexing ${ids.length} file(s)`, 'ok'); setSel(new Set()); kickPoll() }
@@ -231,6 +234,7 @@ export default function FoldersPage() {
     const totalChunks = list.reduce((a, f) => a + (f.chunks || 0), 0)
     const indexed = list.filter((f) => f.status === 'indexed').length
     const failed = list.filter((f) => needsRetry(f)).length
+    const stale = countNeedsReindex(list)
     const models = [...new Set(list.map((f) => f.embedding_model).filter(Boolean))]
     const pct = list.length ? Math.round(indexed / list.length * 100) : 0
     const mdl = models.length === 1 ? shortModel(models[0]) : (models.length > 1 ? models.length + ' models' : '—')
@@ -241,7 +245,10 @@ export default function FoldersPage() {
         <div className="ff-head">
           <div className="ff-title-wrap"><h2>{cur.name}</h2>
             <div className="desc">{list.length} file(s) · {failed ? failed + ' failed' : 'all healthy'}{models.length === 1 ? ' · ' + models[0] : ''}
-              {ftsNotice(fts) && <> · <span className="pill warn tip" data-tip={ftsNotice(fts)}>FTS rebuild needed</span></>}</div>
+              {ftsNotice(fts) && <> · <span className="pill warn tip" data-tip={ftsNotice(fts)}>FTS rebuild needed</span></>}
+              {stale > 0 && <> · <a role="button" tabIndex={0} className="stale-link" onClick={selectStale}
+                onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); selectStale() } }}
+                title="Indexed by an older chunking pipeline. They still work; re-index to get section-aligned chunks.">{stale} indexed by an older pipeline — select to re-index</a></>}</div>
           </div>
           <div className="ff-actions">
             <div className="search-box"><input placeholder="Search files…" value={fq} onChange={(e) => setFq(e.target.value)} /></div>
@@ -284,15 +291,17 @@ export default function FoldersPage() {
                   : shown.map((f) => (
                     <tr key={f.id} title={f.error || f.embedding_model || ''}>
                       <td className="selcol"><input type="checkbox" className="selcheck" checked={sel.has(f.id)} onChange={() => toggleSel(f.id)} /></td>
-                      <td className="cell-main file-cell">{f.name}{f.error && <div className="sub" style={{ color: 'var(--alert-hi)', whiteSpace: 'normal' }}>{f.error}</div>}</td>
-                      <td className="statuscol">{f._stage ? <>{statusPill(f._stage)}{f._stagePct != null && <span className="stage-bar"><div style={{ width: f._stagePct + '%' }} /></span>}</> : statusPill(f.status)}</td>
+                      <td className="cell-main file-cell">{f.name}{f.error && <div className="sub" style={{ color: 'var(--alert-hi)', whiteSpace: 'normal' }}>{f.error}</div>}
+                        {isPartial(f) && <div className="sub" style={{ color: 'var(--signal-hi)', whiteSpace: 'normal' }}>{f.warning}</div>}
+                        {needsReindex(f) && <div className="sub"><span className="reindex-badge" title="Indexed by an older chunking pipeline. Still searchable; re-index for section-aligned chunks.">Re-index recommended</span></div>}</td>
+                      <td className="statuscol">{f._stage ? <>{statusPill(f._stage)}{f._stagePct != null && <span className="stage-bar"><div style={{ width: f._stagePct + '%' }} /></span>}</> : isPartial(f) ? <span className="pill warn" title={f.warning}>Partial</span> : statusPill(f.status)}</td>
                       <td className="num">{fmtNum(f.chunks)}</td>
                       <td className="num">{fmtBytes(f.size_bytes)}</td>
                       <td className="num">{fmtTime(f.indexed_at)}</td>
                       <td><div className="actions">
                         {f.status === 'indexed' && <button className="act-btn" title="View chunks" onClick={() => viewChunks(f)}><Eye size={14} /></button>}
                         {canCancel(f) && <button className="act-btn danger" title="Cancel indexing" aria-label="Cancel indexing" onClick={() => cancelFile(f)}><XCircle size={14} /></button>}
-                        {canRetry(f) && <button className={'act-btn' + (needsRetry(f) ? ' warn' : '')} title={needsRetry(f) ? 'Retry' : 'Reindex'} aria-label={needsRetry(f) ? 'Retry' : 'Reindex'} onClick={() => retryFile(f)}><RotateCcw size={14} /></button>}
+                        {canRetry(f) && <button className={'act-btn' + (needsRetry(f) ? ' warn' : '')} title={needsRetry(f) ? 'Retry' : (needsReindex(f) ? 'Re-index (indexed by an older pipeline)' : 'Reindex')} aria-label={needsRetry(f) ? 'Retry' : 'Reindex'} onClick={() => retryFile(f)}><RotateCcw size={14} /></button>}
                         <button className="act-btn" title="Download" onClick={() => window.open(`/api/admin/manage/folders/${cur.id}/files/${f.id}/download`, '_blank')}><Download size={14} /></button>
                         <button className="act-btn danger" title="Delete file" onClick={() => deleteFile(f.id)}><Trash2 size={14} /></button>
                       </div></td>
@@ -320,6 +329,7 @@ export default function FoldersPage() {
                             {c.headings?.length ? <span className="c-meta">{c.headings.join(' › ')}</span> : null}
                             <ContentBadge type={c.content_type} />
                           </div>
+                          {c.context && <div className="c-context" title="Generated by the LLM at index time to help retrieval — not part of the document">AI context · {c.context}</div>}
                           <ChunkText text={c.text} contentType={c.content_type} className="c-text" />
                         </div>
                       ))}

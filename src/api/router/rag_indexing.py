@@ -26,6 +26,7 @@ from fastapi.responses import StreamingResponse
 
 from db.cached_folderdb import CachedFolderDB
 from db.db import File, Folder
+from src.domain.rag.chunk_identity import reindex_recommended
 from src.adapter.folder import FolderAdapter
 from src.adapter.rag import get_rag_adapter
 from src.api.dependencies.auth import (
@@ -580,6 +581,10 @@ async def get_file_index_status(
                 job_id=None,
                 progress=None,
                 error=None,
+                warning=getattr(record, "index_warning", None),
+                pipeline_version=getattr(record, "pipeline_version", None),
+                reindex_recommended=reindex_recommended(
+                    "indexed", getattr(record, "pipeline_version", None)),
             )
             return {"data": payload.model_dump(), "message": "File is indexed"}
         rec_status = getattr(record, "status", None) if record else None

@@ -64,7 +64,7 @@ async def test_abort_closes_client_and_cuts_inflight_calls(mocker):
 
     t0 = time.monotonic()
     results, _ = await asyncio.gather(
-        gen.generate_batch(
+        gen.generate_prefixes(
             chunks=["段落一", "段落二", "段落三", "段落四"],
             full_document="測試文件全文",
             file_name="deleted.docx",
@@ -75,6 +75,6 @@ async def test_abort_closes_client_and_cuts_inflight_calls(mocker):
     elapsed = time.monotonic() - t0
 
     assert fake.closed.is_set(), "abort 後 client 必須被 close"
-    # Without a disconnect it would hang at least 30s; after disconnect everything wraps up fast (fallback prefix)
+    # Without a disconnect it would hang at least 30s; after disconnect everything wraps up fast (no prefix)
     assert elapsed < 5.0, f"abort 斷線失效,耗時 {elapsed:.1f}s"
     assert len(results) == 4, "每個 chunk 都要有結果(fallback),不能缺"

@@ -96,3 +96,24 @@ class TestOwnerScope:
         folder, file_row = seeded
         out = admin_stats.chunks_for_file(folder.id + 100000, str(file_row.id))
         assert out["file_name"] is None and out["chunks"] == []
+
+
+class TestPipelineVersionAndWarning:
+    def test_file_list_reports_stale_pipeline_and_parse_warning(self, itest_db, folder, file_row):
+        from db import admin_stats
+        from db.fileindexdb import FileIndexDB
+        from src.domain.rag.chunk_identity import CHUNK_PIPELINE_VERSION
+        FileIndexDB.upsert_indexed(
+            file_id=file_row.id, folder_id=folder.id, index_id="x", vector_store_table="t",
+            num_chunks=1, embedding_model="m", chunk_size=256, chunk_overlap=0,
+            index_warning="Partial parse: page 3 could not be parsed",
+        )
+        me = next(r for r in admin_stats.files_with_index_status(folder.id) if r["id"] == str(file_row.id))
+        assert me["warning"].startswith("Partial parse") and me["reindex_recommended"] is True
+        FileIndexDB.upsert_indexed(
+            file_id=file_row.id, folder_id=folder.id, index_id="x", vector_store_table="t",
+            num_chunks=1, embedding_model="m", chunk_size=256, chunk_overlap=0,
+            pipeline_version=CHUNK_PIPELINE_VERSION,
+        )
+        me = next(r for r in admin_stats.files_with_index_status(folder.id) if r["id"] == str(file_row.id))
+        assert me["warning"] is None and me["reindex_recommended"] is False
