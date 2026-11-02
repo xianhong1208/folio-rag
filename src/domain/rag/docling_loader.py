@@ -27,6 +27,11 @@ from typing import Any, List, Optional
 
 from src.log import get_api_logger
 from src.utils.runtime_paths import resolve_external_dir
+from src.domain.rag.docling_guard import (
+    convert_checked,
+    missing_pages,
+    release_accelerator_cache,
+)
 
 logger = get_api_logger()
 
@@ -73,9 +78,6 @@ _converter_lock = threading.Lock()
 # errors, CUDA illegal memory, OOM. Every converter.convert() must hold this lock.
 # media.py imports this same lock — do not create separate ones.
 DOCLING_INFER_LOCK = threading.Lock()
-
-# HuggingFace tokenizer cache (keyed by local path) to avoid reloading
-_tokenizer_cache: dict[str, Any] = {}
 
 # Page-level parse progress (OCR progress bar). docling has no progress callback,
 # so we observe pages as they complete and report ("loading", done, total).
@@ -230,6 +232,16 @@ def _resolve_whisper_path() -> Optional[Path]:
     return None
 
 
+def ocr_enabled() -> bool:
+    """config ``rag.docling.ocr_enabled`` (restart-level: the converter is a singleton).
+    Unreadable config keeps the default (on)."""
+    try:
+        from src.config.config_manager import Config as _Cfg
+        return bool(_Cfg.get_config_model().rag.docling.ocr_enabled)
+    except Exception:
+        return True
+
+
 def asr_wants_local_whisper() -> bool:
     """Whether config `rag.asr` requires local docling-whisper.
 
@@ -249,83 +261,17 @@ def asr_wants_local_whisper() -> bool:
     return True
 
 
-def _resolve_tokenizer_path(embedding_model_name: Optional[str]) -> Optional[Path]:
-    """Resolve the local HF tokenizer path used by HybridChunker (with fallback).
-
-    Path: `assets/hf_tokenizers/<mangled>` (BAAI/bge-m3 → BAAI--bge-m3). The chunker tokenizer only
-    counts tokens to decide split points and need not match the embedding model, so on an exact-match
-    miss it falls back to any existing tokenizer.
-
-    Args:
-        embedding_model_name: The model name to align with (e.g. `BAAI/bge-m3`).
-
-    Returns:
-        An absolute path string; returns None when nothing is found.
-    """
-    assets = resolve_assets_dir()
-    if not assets:
-        return None
-    tokenizers_dir = assets / "hf_tokenizers"
-    if not tokenizers_dir.is_dir():
-        return None
-
-    if embedding_model_name:
-        mangled = embedding_model_name.replace("/", "--")
-        exact = tokenizers_dir / mangled
-        if exact.is_dir():
-            return exact
-
-    fallback = next(
-        (p for p in sorted(tokenizers_dir.iterdir()) if p.is_dir()),
-        None,
-    )
-    if fallback:
-        logger.info(
-            f"[DOCLING] No exact tokenizer match for '{embedding_model_name}'; "
-            f"falling back to local tokenizer '{fallback.name}' for chunk token counting"
-        )
-    return fallback
-
-
-def _load_local_tokenizer(path: Path):
-    """Load an AutoTokenizer from a local directory and cache it."""
-    key = str(path)
-    if key not in _tokenizer_cache:
-        from transformers import AutoTokenizer
-        logger.info(f"[DOCLING] Loading local tokenizer from {path}")
-        _tokenizer_cache[key] = AutoTokenizer.from_pretrained(str(path))
-    return _tokenizer_cache[key]
-
-
 def get_hf_tokenizer(tokenizer_name: Optional[str]):
-    """Resolve and load the HF tokenizer (local assets preferred; fail loudly on missing files when offline).
+    """Token counter for chunk sizing (kept under its old name for callers).
 
-    The docling path and the fallback (non-docling file types) splitting share the same tokenizer,
-    guaranteeing both paths measure the token budget with the same ruler (bge-m3).
-
-    Args:
-        tokenizer_name: HF model name (e.g. "BAAI/bge-m3"); None uses the online fallback.
-
-    Returns:
-        An AutoTokenizer instance (local loads are cached via _load_local_tokenizer).
-
-    Raises:
-        RuntimeError: HF_HUB_OFFLINE=1 and no matching directory found under assets/hf_tokenizers.
+    Delegates to ``chunk_tokenizer.get_chunk_tokenizer``: local assets first,
+    then the bundled tokenizer, never a download. ``tokenizer_name`` is the
+    embedding model name, or None for providers without a HuggingFace name
+    (OpenAI / Azure), which used to crash every docling-parsed file.
     """
-    local_tok_path = _resolve_tokenizer_path(tokenizer_name)
-    if local_tok_path:
-        return _load_local_tokenizer(local_tok_path)
-    offline = os.environ.get("HF_HUB_OFFLINE") == "1"
-    if offline:
-        mangled = (tokenizer_name or "").replace("/", "--")
-        raise RuntimeError(
-            f"[DOCLING] hf_offline=true but no local tokenizer found for "
-            f"'{tokenizer_name}'. Expected at assets/hf_tokenizers/{mangled}"
-        )
-    # Legacy fallback — first use will hit HF Hub. Acceptable since
-    # production sets HF_HUB_OFFLINE=1 + local tokenizer assets.
-    from transformers import AutoTokenizer
-    return AutoTokenizer.from_pretrained(tokenizer_name)
+    from src.domain.rag.chunk_tokenizer import get_chunk_tokenizer
+
+    return get_chunk_tokenizer(tokenizer_name)
 
 
 def _apply_docling_env():
@@ -381,9 +327,9 @@ def _apply_docling_env():
                     os.environ["DOCLING_INFERENCE"] = '{"compile_torch_models": false}'
                     logger.info("[DOCLING_INIT] torch.compile disabled (faster startup)")
 
-                # OCR toggle
+                # OCR toggle: applied as PdfPipelineOptions(do_ocr=...) in _build_converter
+                # (docling reads no environment variable for it).
                 if not docling_config.ocr_enabled:
-                    os.environ["DOCLING_OCR_ENABLED"] = "false"
                     logger.info("[DOCLING_INIT] OCR disabled")
 
                 return
@@ -585,25 +531,30 @@ def _build_converter():
         # Layout / TableFormer / OCR / Whisper all run on the configured device
         accelerator_options = _get_accelerator_options()
 
+        ocr_on = ocr_enabled()
+        pdf_kwargs = {
+            "accelerator_options": accelerator_options,
+            # rag.docling.ocr_enabled=false must really skip OCR (the model is not even loaded).
+            "do_ocr": ocr_on,
+        }
         if artifacts_path:
             logger.info(f"[DOCLING] Using local artifacts_path: {artifacts_path}")
-            pdf_kwargs = {
-                "artifacts_path": str(artifacts_path),
-                "accelerator_options": accelerator_options,
-            }
+            pdf_kwargs["artifacts_path"] = str(artifacts_path)
             # OCR uses the rapidocr torch backend (PP-OCRv6, file selected per ocr_model_scale)
-            ocr_options = _get_rapidocr_options(artifacts_path, accelerator_options)
+            ocr_options = _get_rapidocr_options(artifacts_path, accelerator_options) if ocr_on else None
             if ocr_options is not None:
                 pdf_kwargs["ocr_options"] = ocr_options
-            pdf_pipeline_options = PdfPipelineOptions(**pdf_kwargs)
-            # PDF and Image share the same pipeline_options (IMAGE internally goes through StandardPdfPipeline)
-            format_options[InputFormat.PDF] = PdfFormatOption(pipeline_options=pdf_pipeline_options)
-            format_options[InputFormat.IMAGE] = ImageFormatOption(pipeline_options=pdf_pipeline_options)
         else:
             logger.warning(
                 "[DOCLING] No local artifacts_path; models will be fetched from HuggingFace Hub "
                 "on first use (online machines only)"
             )
+        if not ocr_on:
+            logger.info("[DOCLING] OCR off (rag.docling.ocr_enabled=false): scanned pages yield no text")
+        pdf_pipeline_options = PdfPipelineOptions(**pdf_kwargs)
+        # PDF and Image share the same pipeline_options (IMAGE internally goes through StandardPdfPipeline)
+        format_options[InputFormat.PDF] = PdfFormatOption(pipeline_options=pdf_pipeline_options)
+        format_options[InputFormat.IMAGE] = ImageFormatOption(pipeline_options=pdf_pipeline_options)
 
         # Audio pipeline: installed only when the Whisper model exists AND config permits.
         # Not installed when rag.asr.enabled=false or the provider isn't docling-whisper (e.g. cloud),
@@ -628,8 +579,8 @@ def _build_converter():
             format_options[InputFormat.AUDIO] = AudioFormatOption(
                 pipeline_options=asr_pipeline_options,
             )
-        else:
-            logger.info("[DOCLING] assets/whisper_models/turbo.pt not found — audio uploads will fallback to SimpleDirectoryReader")
+        elif asr_wants_local_whisper():
+            logger.info("[DOCLING] assets/whisper_models/*.pt not found: local whisper transcription unavailable")
 
         converter_kwargs = {"format_options": format_options} if format_options else {}
 
@@ -967,10 +918,37 @@ def _doc_item_kind(item: Any) -> Optional[str]:
     return None
 
 
-def _chunk_provenance(chunk: Any) -> dict:
+def _container_headings(item: Any, doc: Any) -> List[str]:
+    """Names of the named containers a doc_item sits in, outermost first.
+
+    Only xlsx sheets for now: docling puts each sheet's tables in a GroupItem
+    labelled ``sheet`` named after the sheet, but no heading — so a table on the
+    "Borealis plan" sheet never says "Borealis". Defensive: any resolution failure
+    yields no extra heading.
+    """
+    names: List[str] = []
+    ref = getattr(item, "parent", None)
+    hops = 0
+    while ref is not None and doc is not None and hops < 32:
+        hops += 1
+        try:
+            node = ref.resolve(doc)
+        except Exception:
+            break
+        label = getattr(node, "label", None)
+        label = str(getattr(label, "value", label) or "").lower()
+        name = getattr(node, "name", None)
+        if label == "sheet" and name:
+            names.append(str(name))
+        ref = getattr(node, "parent", None)
+    return list(reversed(names))
+
+
+def _chunk_provenance(chunk: Any, doc: Any = None) -> dict:
     """Extract headings / page_no / content_type from a docling chunk object (bare strings return empty meta).
 
-    - headings: HierarchicalChunker's meta.headings (the section path, list[str])
+    - headings: HierarchicalChunker's meta.headings (the section path, list[str]),
+      prefixed with the xlsx sheet name when ``doc`` is given (see _container_headings)
     - page_no: the page_no of the first prov of the first doc_item (present for PDF; usually absent for docx etc.)
     - content_type: "table" when the chunk carries a table doc_item (Docling keeps the
       table as Markdown in the chunk text; this flag lets the UI badge / render it).
@@ -985,7 +963,12 @@ def _chunk_provenance(chunk: Any) -> dict:
         h = getattr(meta, "headings", None)
         if h:
             headings = list(h)
-        for item in (getattr(meta, "doc_items", None) or []):
+        items = list(getattr(meta, "doc_items", None) or [])
+        if items and doc is not None:
+            containers = _container_headings(items[0], doc)
+            if containers:
+                headings = containers + [x for x in (headings or []) if x not in containers]
+        for item in items:
             kind = _doc_item_kind(item)
             if kind == "table":  # a table anywhere in the chunk wins
                 content_type = "table"
@@ -1002,55 +985,131 @@ def _chunk_provenance(chunk: Any) -> dict:
     return {"headings": headings, "page_no": page_no, "content_type": content_type}
 
 
+def _is_triplet_table(text: str) -> bool:
+    """Docling's table serialization: one line of ``row, col = value`` cells joined by ". "."""
+    return "\n" not in text.strip() and " = " in text and ", " in text
+
+
+def _split_triplet_table(text: str, tokenizer, max_tokens: int) -> List[str]:
+    """Split an oversized triplet table at row boundaries (a row = consecutive cells
+    with the same row label), so every piece is itself a valid table. A single row
+    larger than the budget falls back to cell boundaries."""
+    cells = [c.strip() for c in text.strip().rstrip(".").split(". ") if c.strip()]
+    rows: List[List[str]] = []
+    last_label = None
+    for cell in cells:
+        label = cell.split(", ", 1)[0] if ", " in cell else None
+        if rows and label == last_label:
+            rows[-1].append(cell)
+        else:
+            rows.append([cell])
+        last_label = label
+    units: List[str] = []
+    for row in rows:
+        joined = ". ".join(row)
+        if _count_tokens(tokenizer, joined) <= max_tokens:
+            units.append(joined)
+        else:
+            units.extend(row)
+    out: List[str] = []
+    buf: List[str] = []
+    for unit in units:
+        candidate = ". ".join(buf + [unit])
+        if buf and _count_tokens(tokenizer, candidate) > max_tokens:
+            out.append(". ".join(buf))
+            buf = [unit]
+        else:
+            buf.append(unit)
+    if buf:
+        out.append(". ".join(buf))
+    # A cell longer than the budget on its own still has to be cut.
+    final: List[str] = []
+    for piece in out:
+        if _count_tokens(tokenizer, piece) > max_tokens:
+            final.extend(_split_by_chars(piece, tokenizer, max_tokens))
+        else:
+            final.append(piece)
+    return final
+
+
 def _refine_chunks_for_token_budget(
     raw_chunks: List[Any],
     tokenizer,
     max_tokens: int,
+    doc: Any = None,
+    table_max_tokens: Optional[int] = None,
 ) -> List[dict]:
-    """Refine HierarchicalChunker output into ≤ max_tokens chunk records.
+    """Refine HierarchicalChunker output into token-bounded chunk records.
 
     Same contract as HybridChunker (token-bounded, merge_peers, repeat_table_header)
-    but with per-chunk tokenize calls. Returns records
-    ``{"text", "headings", "page_no"}``: split pieces inherit the source chunk's meta,
-    merged chunks take the buffer's first-chunk meta, bare-string input has meta None.
+    but with per-chunk tokenize calls, and section-aligned: small chunks merge only
+    with neighbours of the same section (chunk_identity.section_key), and a merged
+    chunk is labelled with the headings all its pieces share. Returns records
+    ``{"text", "headings", "page_no", "content_type"}``; split pieces inherit the
+    source chunk's meta, bare-string input has meta None.
+
+    ``table_max_tokens`` (default ``max_tokens``) lets a table stay whole up to a
+    larger budget than prose; an oversized docling table is split at row
+    boundaries so each piece remains a readable table.
     """
+    from src.domain.rag.chunk_identity import (
+        common_headings,
+        merge_content_type,
+        section_key,
+    )
+
+    table_budget = max(max_tokens, table_max_tokens or max_tokens)
     # merge_peers heuristic — flush the buffer when the token budget reaches
     # half of max_tokens. Matches HybridChunker default behavior:
     # produce chunks at roughly 50-100% of max_tokens for retrieval.
     merge_flush_threshold = max(max_tokens // 2, 1)
 
     output: List[dict] = []
-    pending_buf: List[str] = []
-    pending_meta: Optional[dict] = None  # first-chunk meta
+    pending: List[tuple] = []  # (text, meta)
     pending_tokens = 0
 
     def _flush_pending():
-        nonlocal pending_buf, pending_meta, pending_tokens
-        if pending_buf:
-            output.append({"text": "\n".join(pending_buf), **(pending_meta or {"headings": None, "page_no": None, "content_type": None})})
-            pending_buf = []
-            pending_meta = None
-            pending_tokens = 0
+        nonlocal pending, pending_tokens
+        if not pending:
+            return
+        metas = [m for _, m in pending]
+        page = next((m.get("page_no") for m in metas if m.get("page_no") is not None), None)
+        output.append({
+            "text": "\n".join(t for t, _ in pending),
+            "headings": common_headings(m.get("headings") for m in metas),
+            "page_no": page,
+            "content_type": merge_content_type(m.get("content_type") for m in metas),
+        })
+        pending = []
+        pending_tokens = 0
 
     for chunk in raw_chunks:
         # Accept a HierarchicalChunker chunk object or a bare string (used by the fallback splitting path)
         text = (chunk.text if hasattr(chunk, "text") else chunk).strip()
         if not text:
             continue
-        meta = _chunk_provenance(chunk)
+        meta = _chunk_provenance(chunk, doc)
 
         token_count = _count_tokens(tokenizer, text)
+        is_table = meta.get("content_type") == "table"
+        budget = table_budget if is_table else max_tokens
 
-        if token_count > max_tokens:
+        # Never merge across a section boundary.
+        if pending and section_key(pending[0][1].get("headings")) != section_key(meta.get("headings")):
+            _flush_pending()
+
+        if token_count > budget:
             # Oversized — flush any pending small chunks first
             _flush_pending()
-            for part in _split_by_lines(text, tokenizer, max_tokens, header=None):
+            if is_table and _is_triplet_table(text):
+                parts = _split_triplet_table(text, tokenizer, budget)
+            else:
+                parts = _split_by_lines(text, tokenizer, budget, header=None)
+            for part in parts:
                 output.append({"text": part, **meta})  # split pieces inherit the source chunk's meta
         elif token_count < merge_flush_threshold:
-            # Small — accumulate, flush when buffer crosses threshold
-            if not pending_buf:
-                pending_meta = meta
-            pending_buf.append(text)
+            # Small — accumulate (both halves stay under max_tokens), flush past the threshold
+            pending.append((text, meta))
             pending_tokens += token_count
             if pending_tokens >= merge_flush_threshold:
                 _flush_pending()
@@ -1063,12 +1122,40 @@ def _refine_chunks_for_token_budget(
     return output
 
 
+_HTML_EXTENSIONS = {".html", ".htm", ".xhtml"}
+_UTF8_BOM = b"\xef\xbb\xbf"
+_CHARSET_DECL = re.compile(
+    rb"<meta[^>]+charset\s*=|<\?xml[^>]+encoding\s*=", re.IGNORECASE)
+
+
+def _declare_html_utf8(data: bytes) -> bytes:
+    """Mark undeclared UTF-8 HTML as UTF-8 with a byte-order mark.
+
+    docling hands the raw bytes to BeautifulSoup, which guesses the encoding when
+    the page declares none; for short CJK text it guessed cp874 (Thai) and the
+    whole page came out garbled. Only bytes that are valid, non-ASCII UTF-8 with no
+    BOM and no charset / XML encoding declaration are touched; everything else is
+    left to the page's own declaration or to detection.
+    """
+    if data.startswith(_UTF8_BOM) or _CHARSET_DECL.search(data[:4096]):
+        return data
+    try:
+        data.decode("utf-8")
+    except UnicodeDecodeError:
+        return data
+    if data.isascii():
+        return data
+    return _UTF8_BOM + data
+
+
 def docling_convert_once(
     file_path: str,
     file_name: str,
     max_tokens: int = 512,
     tokenizer: Optional[str] = None,
     progress_cb: Optional[Any] = None,
+    report: Optional[dict] = None,
+    table_max_tokens: Optional[int] = None,
 ) -> tuple[str, List[dict]]:
     """Parse with Docling once, returning both the full text and chunk records (with headings/page_no).
 
@@ -1083,6 +1170,9 @@ def docling_convert_once(
         progress_cb: ``(stage, done, total)`` optional page-level parse progress callback.
             PDF reports ("loading", pages_done, total_pages) — OCR-heavy files finally get a progress
             bar; non-paginated formats (docx etc.) don't report counts, with unchanged behavior.
+        report: optional dict filled with ``warning`` (pages that could not be parsed,
+            None when complete) and ``missing_pages``.
+        table_max_tokens: budget a table may use before it is split (default max_tokens).
 
     Returns:
         (full_text, chunk_records) — full Markdown text + chunk records
@@ -1110,17 +1200,34 @@ def docling_convert_once(
         # (.md / .html / .csv / .vtt / .latex / .adoc) fail to detect. Wrapping into a
         # DocumentStream carrying the original file_name restores extension detection.
         path_obj = Path(file_path)
+        is_html = Path(file_name).suffix.lower() in _HTML_EXTENSIONS
         # Only convert() holds the inference lock; keep file reading outside to shorten hold time.
-        if path_obj.suffix == "" and Path(file_name).suffix != "":
+        if (path_obj.suffix == "" and Path(file_name).suffix != "") or is_html:
             from docling.datamodel.base_models import DocumentStream
             from io import BytesIO
             with path_obj.open("rb") as f:
-                stream = DocumentStream(name=file_name, stream=BytesIO(f.read()))
-            with DOCLING_INFER_LOCK:
-                result = converter.convert(source=stream)
+                data = f.read()
+            if is_html:
+                data = _declare_html_utf8(data)
+
+            def _source():  # a stream is consumed by convert(): build a fresh one per attempt
+                return DocumentStream(name=file_name, stream=BytesIO(data))
         else:
+            def _source():
+                return file_path
+
+        def _convert():
+            if progress_cb is not None:
+                _page_progress_tls.ctx["done"] = 0  # a retry restarts the page count
             with DOCLING_INFER_LOCK:
-                result = converter.convert(source=file_path)
+                return converter.convert(source=_source())
+
+        # Status is checked: a partial result is retried (smaller stage batch after an
+        # OOM) and pages still missing come back as a warning for the file record.
+        result, parse_warning = convert_checked(_convert, file_name)
+        if report is not None:
+            report["warning"] = parse_warning
+            report["missing_pages"] = missing_pages(result) if parse_warning else []
         doc = result.document
 
         # 2. Export full text as Markdown
@@ -1132,7 +1239,8 @@ def docling_convert_once(
         hf_tok = get_hf_tokenizer(tokenizer)
 
         raw_chunks = list(HierarchicalChunker().chunk(dl_doc=doc))
-        texts = _refine_chunks_for_token_budget(raw_chunks, hf_tok, max_tokens)
+        texts = _refine_chunks_for_token_budget(
+            raw_chunks, hf_tok, max_tokens, doc=doc, table_max_tokens=table_max_tokens)
 
         logger.info(
             f"Docling processed {file_name}: {len(texts)} chunks "
@@ -1165,4 +1273,6 @@ def docling_convert_once(
         # Page-progress TLS cleanup — the next file on the same thread must not inherit stale context
         if getattr(_page_progress_tls, "ctx", None) is not None:
             _page_progress_tls.ctx = None
+        # Hand cached GPU memory back after every file (the card is often shared with vLLM).
+        release_accelerator_cache()
 

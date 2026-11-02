@@ -1,10 +1,11 @@
 
-"""ref -- unit tests for chunk records (citation provenance).
+"""Unit tests for chunk records (citation provenance).
 
 _refine_chunks_for_token_budget returns List[dict] of {text, headings, page_no, content_type}.
-Contract: an oversized-chunk split has each segment inherit the source meta; a
-small-chunk merge takes the buffer's first chunk's meta; bare-string input
-yields None meta; leaf_splitter injects headings/page_no into leaf metadata.
+Contract: an oversized-chunk split has each segment inherit the source meta; small
+chunks merge only within one section, and the merged chunk carries the headings the
+pieces share; bare-string input yields None meta; leaf_splitter injects
+headings/page_no into leaf metadata.
 The fake tokenizer is 1 char = 1 token, never touching HuggingFace.
 """
 
@@ -42,8 +43,7 @@ class TestChunkProvenance:
 
     def test_full_extraction(self):
         c = _mk_chunk("x", headings=["第一章", "1.1 節"], page_no=3)
-        assert _chunk_provenance(c) == {"headings": ["第一章", "1.1 節"], "page_no": 3,
-                                        "content_type": None}
+        assert _chunk_provenance(c) == {"headings": ["第一章", "1.1 節"], "page_no": 3, "content_type": None}
 
     def test_missing_fields_defensive(self):
         # meta present but headings empty, prov empty -> all None, no crash
@@ -111,12 +111,54 @@ class TestRefineRecords:
             assert rec["page_no"] == 5
             assert len(rec["text"]) <= 10
 
-    def test_merge_takes_first_chunk_meta(self):
-        # Two small chunks (each 3 tokens < threshold 10) merge -> take the first chunk's meta
+    def test_small_chunks_never_merge_across_sections(self):
+        # Two small chunks of different sections used to merge, and the merged
+        # chunk was labelled with the first one's heading (the second one's text then
+        # carried the wrong section).
         c1 = _mk_chunk("aaa", headings=["首章"], page_no=1)
         c2 = _mk_chunk("bbb", headings=["次章"], page_no=9)
         out = _refine_chunks_for_token_budget([c1, c2], TOK, max_tokens=20)
-        assert out == [{"text": "aaa\nbbb", "headings": ["首章"], "page_no": 1, "content_type": None}]
+        assert out == [
+            {"text": "aaa", "headings": ["首章"], "page_no": 1, "content_type": None},
+            {"text": "bbb", "headings": ["次章"], "page_no": 9, "content_type": None},
+        ]
+
+    def test_merge_within_section_takes_common_headings(self):
+        # Same section (first two levels), different subsections -> merged, labelled
+        # with the headings both share; page from the first piece.
+        c1 = _mk_chunk("aaa", headings=["Manual", "5. Warranty"], page_no=4)
+        c2 = _mk_chunk("bbb", headings=["Manual", "5. Warranty", "5.1 Hardware"], page_no=5)
+        out = _refine_chunks_for_token_budget([c1, c2], TOK, max_tokens=20)
+        assert out == [{"text": "aaa\nbbb", "headings": ["Manual", "5. Warranty"],
+                        "page_no": 4, "content_type": None}]
+
+    def test_merged_content_type_table_wins(self):
+        table = SimpleNamespace(prov=[], label="table")
+        c1 = _mk_chunk("intro", headings=["A"])
+        c2 = SimpleNamespace(text="r, c = 1", meta=SimpleNamespace(headings=["A"], doc_items=[table]))
+        out = _refine_chunks_for_token_budget([c1, c2], TOK, max_tokens=40)
+        assert len(out) == 1 and out[0]["content_type"] == "table"
+
+    def test_table_may_use_larger_budget_than_prose(self):
+        table = SimpleNamespace(prov=[], label="table")
+        body = "A, x = 1. B, x = 2. C, x = 3"  # 28 tokens
+        c = SimpleNamespace(text=body, meta=SimpleNamespace(headings=["T"], doc_items=[table]))
+        whole = _refine_chunks_for_token_budget([c], TOK, max_tokens=20, table_max_tokens=40)
+        assert [r["text"] for r in whole] == [body]
+
+    def test_oversized_triplet_table_splits_at_row_boundaries(self):
+        table = SimpleNamespace(prov=[], label="table")
+        body = "Basic, Fee = 15. Basic, Seats = 5. Pro, Fee = 35. Pro, Seats = 20. Max, Fee = 90. Max, Seats = 99"
+        c = SimpleNamespace(text=body, meta=SimpleNamespace(headings=["Plans"], doc_items=[table]))
+        out = _refine_chunks_for_token_budget([c], TOK, max_tokens=40)
+        texts = [r["text"] for r in out]
+        assert len(texts) > 1
+        assert all(len(t) <= 40 for t in texts)
+        # every row stays whole (both cells of a row in the same piece)
+        for row in ("Basic", "Pro", "Max"):
+            holders = [t for t in texts if f"{row}, " in t]
+            assert len(holders) == 1, (row, texts)
+        assert all(r["content_type"] == "table" and r["headings"] == ["Plans"] for r in out)
 
     def test_empty_text_skipped(self):
         out = _refine_chunks_for_token_budget(["   ", ""], TOK, max_tokens=20)

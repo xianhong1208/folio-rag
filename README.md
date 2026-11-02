@@ -23,10 +23,11 @@ License: MIT&nbsp;·&nbsp;Python 3.12&nbsp;·&nbsp;PostgreSQL + pgvector&nbsp;·
 
 ## Key features
 
-- **Hierarchical chunking + auto-merging retrieval.** Documents are split into small **leaves** (precise matching) and large **parents** (full context) at index time. When several leaves from the same passage are hit, the whole parent is returned instead of fragments; a single-leaf hit expands to its neighbours so the answer never loses narrative continuity.
+- **Section-aligned hierarchical chunking + auto-merging retrieval.** Documents are split into small **leaves** (precise matching) and large **parents** (full context) at index time, and neither ever spans two sections. Each leaf carries its **breadcrumb** (file › heading path, xlsx sheet names included), so two documents with the same structure — two product manuals, two price sheets — stay distinguishable. When several leaves from the same passage are hit, the whole parent is returned instead of fragments; a single-leaf hit expands to its neighbours so the answer never loses narrative continuity.
 - **Hybrid search, tuned for Chinese.** Dense vector retrieval (pgvector) is fused with sparse **BM25** using Reciprocal Rank Fusion, so keyword signal genuinely affects ranking. Chinese text is word-segmented before Postgres full-text indexing — with **CKIP** (Academia Sinica) by default, or jieba / a dependency-free bigram tokenizer — so space-less Chinese actually gets tokenized instead of collapsing into one term.
 - **Cross-encoder reranking.** A `bge-reranker-v2-m3` / `mxbai-rerank-base-v2` model re-scores the fused candidates for fine-grained Top-K precision.
-- **Contextual retrieval.** At index time an LLM prepends a short, document-aware context to each chunk (Anthropic's recommended technique), improving retrievability of otherwise ambiguous fragments.
+- **Contextual retrieval.** At index time an LLM writes a short context line for each chunk (Anthropic's recommended technique) from the document outline and the chunk's own section, in the document's language. The context and breadcrumb are what the chunk is *found* by (embedding, BM25, rerank); results always show the original document text.
+- **Incremental re-indexing.** Re-indexing a file reuses the context line and embedding of every unchanged chunk, so editing one section costs about one LLM call and one embedding. The file's chunks are swapped in a single transaction — it never disappears from search mid-way.
 - **Per-folder MCP tools, scoped per token.** Every folder is registered as an `Agentic_<folder>` tool; the tool list a caller sees is filtered by their token — you only see folders you own. Ownership is keyed on the token's stable `jti`. Tool names stay within what every MCP client accepts (`[A-Za-z0-9_-]`, 64 chars): a folder name with spaces, CJK or other symbols becomes `Agentic_<ascii part>_<8-char hash>`, the same name every time.
 - **OAuth 2.1 resource server.** One `RemoteAuthProvider` + `JWTVerifier` protects `/mcp`; tokens are verified locally against MCP Gate's JWKS (RS256, offline), and are bound to this server's audience so a token for another server never works here.
 - **Document + audio ingestion.** [Docling](https://github.com/DS4SD/docling) parses PDF / DOCX / PPTX / XLSX / images (with OCR); **FireRedASR** transcribes audio locally in Traditional Chinese (or any OpenAI-compatible `/v1/transcriptions` endpoint).
@@ -108,8 +109,8 @@ Your folder is indexed once, then every query runs through the pipeline:
 | Stage | What happens |
 |-------|--------------|
 | **Ingest** | Docling parses PDF / DOCX / PPTX / XLSX / images (OCR); audio is transcribed by FireRedASR. |
-| **Chunk** | Hierarchical splitting into small **leaves** + large **parents**; an LLM adds a contextual prefix to each chunk. |
-| **Embed** | Each chunk is embedded (default `intfloat/multilingual-e5-large`, 1024-d) and written to **pgvector**. Chinese text is CKIP-segmented for the BM25 `text_search_tsv`. |
+| **Chunk** | Section-aligned splitting into small **leaves** + large **parents**; each leaf gets a breadcrumb (file › headings) and an LLM context line. Tables stay whole when they fit. |
+| **Embed** | Each leaf's retrieval text (context line + breadcrumb + original text) is embedded (default `intfloat/multilingual-e5-large`, 1024-d) and written to **pgvector** together with its BM25 `text_search_tsv` (Chinese CKIP-segmented), in one transaction per file. |
 | **Retrieve** | **Hybrid**: dense vector + sparse BM25, fused with Reciprocal Rank Fusion. |
 | **Merge** | Leaves from the same passage **auto-merge** into their parent; single hits **expand** to neighbours. |
 | **Rerank** | A cross-encoder (`bge-reranker-v2-m3` / `mxbai-rerank-base-v2`) re-scores for final Top-K precision. |
@@ -157,11 +158,17 @@ Settings live in `config/config.yaml`; secrets come from environment variables (
 | `rag.rerank.{model,base_url}` | `mixedbread-ai/mxbai-rerank-base-v2`, `:8787` | Cross-encoder reranker. |
 | `rag.rerank.score_threshold` / `auto_template` | `0.0` / `true` | Drop results scoring below the threshold (0.5 suits mxbai-rerank-v2); apply mxbai-v2's chat prompt automatically. |
 | `rag.rerank.gap_threshold` | `0.5` | Knowledge-gap analytics: best rerank score below this counts as "no good match". |
-| `rag.asr.provider` | `fireredasr` | Audio transcription: `fireredasr` (local zh-TW) · `docling-whisper` · `openai-compatible`. |
+| `rag.asr.provider` | `fireredasr` | Audio transcription: `fireredasr` (local zh-TW) · `docling-whisper` · `openai-compatible`. `rag.asr.enabled: false` fails audio files with a clear message (nothing is transcribed). |
 | `rag.retrieval.segmenter` | `ckip` | Chinese segmenter for keyword search: `ckip` · `jieba` · `bigram` (see *Chinese segmentation*). |
+| `rag.docling.ocr_enabled` | `true` | OCR for scanned PDFs and images. `false` really skips it (restart to apply); a scan with no text layer then fails with a clear message. |
+| `rag.contextual_retrieval.max_doc_chars` | `60000` | Upper bound on the document text the LLM reads per chunk. It reads the outline plus the chunk's own section, windowed to at most 12,000 characters. |
 | `rag.retrieval.*` | — | Top-K, similarity cutoff, BM25 candidates, `hybrid_fusion` (`rrf`/`concat`), auto-merging. Tunable live from the console, or via the **High Precision / Balanced / High Recall** presets. |
 
 GPU selection is a `uv sync --group {rocm-r714|rocm-r713|cuda|cpu}` choice — see the top of `pyproject.toml` and `docs/testing/ENVIRONMENTS.md`.
+
+**Chunk token counting** never downloads anything: it uses `assets/hf_tokenizers/<org>--<model>` when present, else the bundled XLM-RoBERTa tokenizer in `resources/tokenizers/` (the tokenizer of multilingual-e5 and bge-m3), so a fresh clone with OpenAI or Azure embeddings works out of the box.
+
+**Parsing failures are visible.** If docling cannot parse some pages (for example the GPU runs out of memory inside a stage), the parse is retried with a smaller batch; pages still missing are listed on the file (a *Partial* badge in the console, `warning` in the REST status).
 
 ## Use the console
 
@@ -189,7 +196,7 @@ Paste the token on the login screen. Folders created earlier through the old *Ow
 | Page | What you do there |
 |------|-------------------|
 | **Overview** | The live retrieval pipeline, corpus readouts, index health, and model-service status. |
-| **Folders** | Create folders (owned by your token); open one to upload files, watch per-file index status, view chunks, reindex, or delete. |
+| **Folders** | Create folders (owned by your token); open one to upload files, watch per-file index status, view chunks (with the AI context line shown apart from the document text), reindex, or delete. Files indexed by an older chunking pipeline show **Re-index recommended**. |
 | **Search Playground** | Run a live query against a folder and see the **per-signal retrieval trace** — Vector · BM25 · Hybrid · Rerank ranks side by side — plus an optional RAG answer. |
 | **Index Jobs** | Live stream of indexing jobs with progress; cancel a running job. |
 | **Query Analytics** | Volume, latency, zero-result rate, top queries and knowledge gaps. |
@@ -197,6 +204,10 @@ Paste the token on the login screen. Folders created earlier through the old *Ow
 | **Settings** | Live, persisted configuration for Embedding / LLM / Contextual Retrieval / Reranker / Speech-to-Text / Retrieval, with retrieval presets and connection tests. Changing anything needs `rag:admin`. |
 | **System Health** | Live connectivity to every external dependency. |
 | **Audit Log** | A timeline of every runtime settings change and who made it (`rag:admin`). |
+
+### Re-indexing after an upgrade
+
+Chunking changes are versioned per file. A file indexed by an older pipeline keeps working exactly as before, but shows **Re-index recommended** in the folder view (and `reindex_recommended: true` in `GET /api/rag/file/{id}/index/status`). Use the row's re-index button, or the header link that selects all such files, then *Reindex selected*. Per-file re-indexing is incremental from then on; *Reindex Folder* drops the folder's table and rebuilds everything.
 
 ## API reference
 

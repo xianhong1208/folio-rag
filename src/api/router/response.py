@@ -293,6 +293,12 @@ class FileIndexStatusResponse(BaseModel):
         None, description="Progress snapshot {current_index, total_files}"
     )
     error: Optional[str] = Field(None, description="Last error message (when failed)")
+    warning: Optional[str] = Field(
+        None, description="Indexed with a caveat, e.g. pages that could not be parsed")
+    pipeline_version: Optional[str] = Field(
+        None, description="Chunking pipeline that produced the chunks (null = before versions were recorded)")
+    reindex_recommended: bool = Field(
+        False, description="Indexed by an older chunking pipeline: re-index to get the current chunks")
 
 
 class IndexingMetadata(BaseModel):
@@ -449,6 +455,12 @@ class IndexedFileEntry(BaseModel):
     embedding_model: Optional[str]
     chunk_size: Optional[int]
     chunk_overlap: Optional[int]
+    warning: Optional[str] = Field(
+        None, description="Indexed with a caveat, e.g. pages that could not be parsed")
+    pipeline_version: Optional[str] = Field(
+        None, description="Chunking pipeline that produced the chunks (null = before versions were recorded)")
+    reindex_recommended: bool = Field(
+        False, description="Indexed by an older chunking pipeline: re-index to get the current chunks")
 
 
 class IndexedFilesResponse(BaseModel):

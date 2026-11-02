@@ -190,7 +190,7 @@ QUERY_STOPWORDS = _ZH_STOPWORDS | _EN_STOPWORDS
 _WORDLIKE = re.compile(r"[^\W_]")
 
 # Leaves only. IS DISTINCT FROM keeps legacy rows that have no node_role.
-_LEAF_ONLY_SQL = "(metadata_->>'node_role' IS DISTINCT FROM 'parent')"
+from src.domain.rag.chunk_identity import LEAF_ONLY_SQL as _LEAF_ONLY_SQL  # noqa: E402
 
 
 def query_lexemes(segmented: str) -> List[str]:

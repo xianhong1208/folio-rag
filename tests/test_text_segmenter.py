@@ -149,7 +149,7 @@ class _Conn:
             r.scalar.return_value = self.others
         elif "SELECT EXISTS" in q:
             r.scalar.return_value = self.has_rows
-        elif q.startswith("SELECT id, text"):
+        elif q.startswith("SELECT id,"):
             r.fetchall.return_value = self.rows
         elif q.startswith("COMMENT ON COLUMN"):
             self.comment = q.split("IS '")[1].rstrip("'")
@@ -188,8 +188,18 @@ class TestStamp:
         conn = _Conn(comment="segmenter=ckip", rows=[(1, "退貨政策")])
         n = vsm.rebuild_text_search_tsv(_engine(conn), "t", ts.BigramSegmenter())
         assert n == 1 and conn.comment == "segmenter=bigram"
-        update = [p for q, p in conn.sql if q.startswith("UPDATE")][0]
+        update = [p for q, p in conn.sql if q.startswith("UPDATE") and "to_tsvector" in q][0]
         assert update == [{"id": 1, "seg": "退貨 貨政 政策"}]
+
+    def test_rebuild_matches_the_indexer_leaves_only(self):
+        """Same rows and text as chunk_store: leaf retrieval text in, parents cleared."""
+        conn = _Conn(comment="segmenter=ckip", rows=[(1, "x")])
+        vsm.rebuild_text_search_tsv(_engine(conn), "t", ts.BigramSegmenter(), file_id="f1")
+        select = next(q for q, _ in conn.sql if q.startswith("SELECT id,"))
+        assert "concat_ws" in select and "IS DISTINCT FROM 'parent'" in select
+        assert "metadata_->>'file_id' = :fid" in select
+        clear = next(q for q, _ in conn.sql if "= NULL" in q)
+        assert "NOT (metadata_->>'node_role' IS DISTINCT FROM 'parent')" in clear
 
     def test_full_rebuild_of_empty_table_still_stamps(self):
         conn = _Conn(comment=None, rows=[])

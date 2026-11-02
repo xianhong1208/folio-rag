@@ -12,6 +12,7 @@ from typing import Any, Dict, List, Optional
 from sqlalchemy import func
 
 from db.db import File, FileIndex, Folder, IndexJob, Session
+from src.domain.rag.chunk_identity import reindex_recommended
 from src.log import get_db_logger
 
 log = get_db_logger()
@@ -139,6 +140,11 @@ def files_with_index_status(folder_id: int) -> List[Dict[str, Any]]:
                 "indexed_at": _iso(ix.indexed_at) if ix else None,
                 # Truncate the error message to 300 chars (full message stays in the DB; keep the list view lean)
                 "error": (err[:300] + ("…" if len(err) > 300 else "")) or None,
+                # Indexed with a caveat (e.g. pages that could not be parsed)
+                "warning": (getattr(ix, "index_warning", None) or None) if ix else None,
+                "pipeline_version": getattr(ix, "pipeline_version", None) if ix else None,
+                "reindex_recommended": reindex_recommended(
+                    ix.status if ix else None, getattr(ix, "pipeline_version", None) if ix else None),
             })
         return out
 
@@ -227,6 +233,8 @@ def chunks_for_file(folder_id: int, file_id: str, limit: int = 500) -> Dict[str,
             "headings": meta.get("headings"),
             "page": meta.get("page_no"),
             "content_type": meta.get("content_type"),
+            # LLM-written situating sentence: retrieval aid, not document text (shown apart)
+            "context": meta.get("context_prefix"),
         })
     return {"chunks": chunks, "total": len(chunks), "file_name": fidx}
 
