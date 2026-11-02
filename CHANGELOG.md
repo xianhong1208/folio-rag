@@ -116,6 +116,20 @@ to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   tokenizer of multilingual-e5 and bge-m3) and a `tokenizers` dependency.
 
 ### Changed
+- **Renamed from Agentic RAG to Folio.** The console, MCP server name and
+  instructions, API title, log banners and docs say Folio; the Python
+  distribution is `folio-rag`. Per-folder MCP tools are now `Folio_<folder>`
+  (clients pick the new names up on their next tool listing). A config.yaml
+  that still has the old defaults (`app.tool_prefix: "Agentic"`,
+  `app.name: "Agentic RAG"`, …) loads with the Folio values and logs a
+  warning; a custom prefix is kept. Environment variables are now
+  `FOLIO_CORE_DUMPS`, `FOLIO_INDEXING_CONCURRENCY`,
+  `FOLIO_PER_FILE_TIMEOUT_SECONDS` and `FOLIO_JOB_TIMEOUT_SECONDS`; the old
+  names still work with a deprecation warning. The console's saved theme moves
+  to the `folio_theme` key on first load. Database names, the port, the
+  audience URL and storage paths are unchanged.
+- **The storage-root override is `FOLIO_STORAGE_ROOT`.** The previous variable
+  is no longer read.
 - **Evaluation scores the production search path.** Modes are `vector`,
   `bm25`, `rrf`, `rerank` (when a reranker is configured) and `production` — all
   through the shared hybrid search; `production` is the same call as
@@ -139,7 +153,7 @@ to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   reranker to order) instead of llama-index's native hybrid, which behaved as
   vector-only for Chinese. `hybrid_alpha` is deprecated and ignored.
 - MCP tool names are always client-safe (`[A-Za-z0-9_-]`, max 64): folder names
-  with spaces, CJK or symbols become `Agentic_<ascii>_<hash>`. Tool
+  with spaces, CJK or symbols become `Folio_<ascii>_<hash>`. Tool
   descriptions are English.
 - The settings API validates ranges and choices (e.g. `max_concurrent ≥ 1`,
   `score_threshold` 0–1, known providers — including the per-role LLM, vision
@@ -275,6 +289,9 @@ to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   full-text vector until a separate CKIP pass ran (and none at all if it failed).
 
 ### Removed
+- The inherited `docs/testing/` document set, `docs/integrate-existing-api.md`,
+  `docs/ENGINEERING_BACKLOG.md` and the `web/retrieval_terminal_concept.html`
+  mock-up.
 - **The legacy single-file console** (`/admin-classic`, `web/admin_console.html`
   and its loader `src/api/router/admin_page_html.py`). The React console at
   `/admin` is the only console.
