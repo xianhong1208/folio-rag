@@ -56,7 +56,7 @@ rag:
     model: "intfloat/multilingual-e5-large"
     dimension: 1024
     base_url: "http://localhost:7075/v1"
-    api_key: "not-needed"
+    api_key: "${EMBEDDING_API_KEY:-not-needed}"   # self-hosted vLLM ignores the key
     # e5 requires these prefixes; remove them for the bge family
     query_prefix: "query: "
     passage_prefix: "passage: "
@@ -66,7 +66,7 @@ rag:
     provider: "vllm"
     model: "openai/gpt-oss-120b"
     base_url: "http://localhost:5052/v1"
-    api_key: "not-needed"
+    api_key: "${LLM_API_KEY:-not-needed}"
 
   # Reranker — cross-encoder that reorders retrieval results
   # ⚠️ model name must match `vllm serve`, or /v1/score returns 404 → silent fallback to the original order
@@ -75,7 +75,7 @@ rag:
     enabled: true
     model: "mixedbread-ai/mxbai-rerank-base-v2"
     base_url: "http://localhost:8787"
-    api_key: "not-needed"
+    api_key: "${RERANK_API_KEY:-not-needed}"
     top_n: null                                 # null = determined by top_k
     score_threshold: 0.25                       # rerank score floor: results often all filtered out → lower it; too much noise → raise it
     # mxbai's official template ({text} placeholder); without it, scores all cluster high and the threshold becomes ineffective

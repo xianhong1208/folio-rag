@@ -74,10 +74,10 @@ data/*
 
 # docling
 assets/*
-# 本地測試/覆蓋率輸出(CI 內自產)
+# Local test / coverage output (CI produces its own)
 reports/
 
-# 評測素材不進 repo(可能含內部資料;基線 JSON 要進)
+# Eval material stays out of the repo (it may be private); baseline JSON files are committed
 evals/rag/documents/*
 evals/asr/audio/*
 evals/asr/golden_transcripts/*

@@ -16,7 +16,7 @@ and validates the per-role choices against them:
 Why reject (not warn) literal keys in ``cloud``: a cloud key is a billable credential
 and config.yaml is the file people copy, paste into issues and commit. ``local`` keeps
 accepting literal values because self-hosted vLLM/Ollama endpoints take placeholder keys
-("not-needed", "not-needed") that are not secrets. Errors fail startup (main.py exits) and
+(such as "not-needed") that are not secrets. Errors fail startup (main.py exits) and
 reject the offending console change (HTTP 422); they never degrade silently.
 """
 
