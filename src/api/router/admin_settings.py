@@ -28,8 +28,10 @@ router = APIRouter(tags=["Admin: Runtime Settings"])
 # Control Center data plane (read-only aggregates) and management plane (CRUD/index ops) mount on the same module
 from src.api.router.admin_overview import router as _overview_router  # noqa: E402
 from src.api.router.admin_manage import router as _manage_router  # noqa: E402
+from src.api.router.console_session import router as _session_router  # noqa: E402
 router.include_router(_overview_router)
 router.include_router(_manage_router)
+router.include_router(_session_router)
 
 
 # Product decision (same as the media endpoints): the settings console is unauthenticated —
