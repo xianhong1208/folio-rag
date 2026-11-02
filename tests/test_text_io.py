@@ -58,6 +58,7 @@ def test_utf32_le_bom_not_mistaken_for_utf16(tmp_path):
 
 def test_big5_detected(tmp_path):
     """Big5/CP950 (legacy Taiwan txt/csv) is read via charset detection (TC-text-io-06)."""
+    text = "品名,單價,數量\n無線滑鼠,450,12\n機械鍵盤,2300,5\n螢幕支架,890,8"
     p = _write(tmp_path, "big5.csv", text.encode("cp950"))
     assert read_text_robust(p) == text
 
