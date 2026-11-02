@@ -7,6 +7,35 @@ to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 ## [Unreleased]
 
 ### Added
+- **Cloud profile** (`rag.profile: local | hybrid | cloud`). Every model role —
+  embedding, contextual-prefix / answer / eval LLM (`rag.contextual_llm`,
+  `rag.answer_llm`, `rag.eval_llm`, inheriting from `rag.llm`), reranker, document
+  parsing (vision) and speech-to-text — takes an OpenAI-compatible `base_url`,
+  `model`, `${ENV}` key, `timeout` and `max_retries`. `cloud` refuses in-process
+  providers and literal API keys (startup fails; console writes get 422);
+  `hybrid` warns about literal keys; `local` is the default and existing configs
+  behave as before. See README → Cloud profile.
+- **Cloud PDF and image parsing** (`rag.parsing`): a vision model transcribes every
+  page; pages are stitched into one document (previous-page context, continued
+  tables and paragraphs joined) so headings and breadcrumbs survive page breaks,
+  chunks keep their start page, failed pages are retried and then marked, and
+  per-file / per-day page caps bound the cost.
+- **Rerank API styles** `rag.rerank.api: score | cohere | jina | generic` (+
+  `endpoint_path`), behind the existing reranker.
+- **Segmented cloud speech-to-text**: long recordings are uploaded in
+  silence-aligned pieces with retries, and empty-despite-speech or looping
+  transcripts are re-requested (`rag.asr.language`, `segment_seconds`, `timeout`,
+  `max_retries`).
+- **Cost guards for contextual prefixes**: `max_calls_per_file`,
+  `max_tokens_per_day`.
+- **Per-role console settings and probes**: a Model Roles panel (where each role
+  runs, key set / from which env var — never the key) and
+  `POST /api/admin/probe/{role}`, which sends one minimal real request with the
+  saved settings. Console key fields accept `${ENV_VAR}`; the reference is
+  stored, not the key.
+- `tests/test_cloud_profile_no_local_models.py` proves a cloud deployment imports
+  no torch, transformers, sentence-transformers, docling models, Whisper,
+  FireRedASR or CKIP.
 - **Console login.** The `/admin` console now signs in with an MCP Gate access
   token for this service (`POST /api/console/session`). The token is verified
   offline once and exchanged for an HttpOnly, SameSite=Strict session cookie
@@ -31,6 +60,14 @@ to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   logs a warning at startup.
 
 ### Fixed
+- The `openai` embedding and LLM providers ignored `base_url`, so an
+  OpenAI-compatible cloud had to be configured as `vllm`; it is honoured now, and
+  `openai-compatible` is a provider of its own.
+- Chunk token counting no longer crashes when no tokenizer can be loaded (it falls
+  back to the Rust `tokenizers` package, then a character estimate), and no longer
+  imports torch through transformers in the cloud profile.
+- The "Whisper weights not found" startup line no longer appears when local
+  Whisper is not the configured speech-to-text provider.
 - Retrying a file's indexing checked folder ownership but not that the file was
   in that folder.
 - The chunk viewer no longer reads a file name from outside the folder.
@@ -43,6 +80,14 @@ to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   `/admin` is the only console.
 
 ### Changed
+- **Install: the in-process model stack is now the `local` extra.** Local and hybrid
+  deployments install with `uv sync --extra local --group <gpu>`; a plain
+  `uv sync` is the torch-free core for the cloud profile. A `uv sync --group <gpu>`
+  without `--extra local` removes the local stack from an existing venv.
+- Startup logs where every model role runs and warms docling only when a role uses
+  its local models; CKIP is not loaded under the cloud profile.
+- The unauthenticated `/v1/ocr/general` answers 503 when PDFs/images are parsed
+  in the cloud instead of spending the vision budget on anonymous uploads.
 - **The authorization server is now called MCP Gate** (formerly MCP Center). Docs
   and log messages follow the new name; `src/auth/mcp_center_auth.py` is now
   `src/auth/mcp_gate_auth.py` and `McpCenterTokenVerifier` is

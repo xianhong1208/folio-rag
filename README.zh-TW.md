@@ -47,8 +47,9 @@ License: MIT&nbsp;·&nbsp;Python 3.12&nbsp;·&nbsp;PostgreSQL + pgvector&nbsp;·
 git clone https://github.com/xianhong1208/agentic_rag.git
 cd agentic_rag
 
-# 1. 安裝 —— torch 依平台走 PEP 735 dependency group,務必帶 --group。
-uv sync --group rocm-r714    # AMD ROCm 7.1.4（multi-arch wheel） | rocm-r713 | cuda | cpu
+# 1. 安裝 —— 本地模型需要 `local` extra;torch 依平台走 PEP 735 dependency group,務必一起帶 --group。
+#    （全雲端部署:直接 `uv sync`,見下方「雲端 profile」。）
+uv sync --extra local --group rocm-r714    # AMD ROCm 7.1.4（multi-arch wheel） | rocm-r713 | cuda | cpu
 
 # 2. 設定資料庫與模型端點
 cp .env.example .env         # 設定 DATABASE_URL（Postgres + pgvector）
@@ -135,8 +136,103 @@ Agentic_product-docs  mode="search"  query="要怎麼輪替簽章金鑰?"
 | `rag.rerank.{model,base_url}` | `mixedbread-ai/mxbai-rerank-base-v2`、`:8787` | cross-encoder 重排器。 |
 | `rag.asr.provider` | `fireredasr` | 音訊轉錄:`fireredasr`（本地繁中）· `docling-whisper` · `openai-compatible`。 |
 | `rag.retrieval.*` | — | Top-K、相似度門檻、BM25 候選數、`hybrid_fusion`（`rrf`/`concat`）、auto-merging。可從主控台即時調,或用 **High Precision / Balanced / High Recall** 預設。 |
+| `rag.profile` | `local` | `local` · `hybrid` · `cloud` —— 見[雲端 profile](#雲端-profile)。 |
+| `rag.<role>.{timeout,max_retries}` | 各角色不同 | 每個模型角色的請求逾時與重試（429 / 5xx / 逾時,含退避）。 |
 
-GPU 選擇是 `uv sync --group {rocm-r714|rocm-r713|cuda|cpu}` 的取捨 —— 見 `pyproject.toml` 開頭與 `docs/testing/ENVIRONMENTS.md`。
+GPU 選擇是 `uv sync --extra local --group {rocm-r714|rocm-r713|cuda|cpu}` 的取捨 —— 見 `pyproject.toml` 開頭與 `docs/testing/ENVIRONMENTS.md`。
+
+## 雲端 profile
+
+所有模型都走 API、本機完全不載入任何模型 —— 不需要 GPU、不 import torch、不下載模型。設定 `rag.profile: cloud`,每個角色各給一個 OpenAI 相容端點:
+
+```bash
+uv sync                      # 核心安裝:沒有 torch / transformers（本地模型堆疊在 `--extra local`）
+export OPENAI_API_KEY=sk-...  # 金鑰從環境變數來,絕不寫進 config.yaml
+uv run python main.py
+```
+
+```yaml
+rag:
+  profile: cloud            # local (default) | hybrid | cloud
+
+  embedding:                # changing it means re-indexing existing folders
+    provider: openai        # openai | openai-compatible | azure | vllm | ollama
+    model: text-embedding-3-small
+    dimension: 1536
+    base_url: https://api.openai.com/v1      # any OpenAI-compatible gateway works
+    api_key: "${OPENAI_API_KEY}"
+    timeout: 60
+    max_retries: 3
+
+  llm:                      # default for every LLM role
+    provider: openai
+    model: gpt-4o-mini
+    api_key: "${OPENAI_API_KEY}"
+  contextual_llm:           # optional per-role overrides; unset fields inherit from llm
+    model: gpt-4.1-nano
+  # answer_llm: {...}       # Search Playground answers
+  # eval_llm: {...}         # eval question generation / judging
+
+  contextual_retrieval:
+    enabled: true
+    max_calls_per_file: 2000     # cost guards (0 = unlimited)
+    max_tokens_per_day: 5000000
+
+  rerank:
+    enabled: true
+    api: cohere             # score (vLLM /v1/score) | cohere | jina | generic (OpenAI-compatible /rerank)
+    model: rerank-v3.5
+    base_url: https://api.cohere.com
+    endpoint_path: /v2/rerank
+    api_key: "${COHERE_API_KEY}"
+
+  parsing:                  # cloud is the default under profile: cloud
+    vision:
+      provider: openai
+      model: gpt-4o-mini
+      api_key: "${OPENAI_API_KEY}"
+    max_concurrency: 4      # page requests in flight, process-wide
+    max_pages_per_file: 500
+    max_pages_per_day: 5000
+    on_page_failure: mark   # mark = keep the file, mark the page | fail
+
+  asr:
+    provider: openai-compatible
+    base_url: https://api.openai.com/v1
+    model: whisper-1
+    api_key: "${OPENAI_API_KEY}"
+    segment_seconds: 600    # long audio is uploaded in silence-aligned pieces
+
+  retrieval:
+    hybrid_search: true
+    # segmenter: bigram     # model-free Chinese BM25 segmentation (CKIP is not loaded in cloud)
+```
+
+profile 做了什麼:
+
+- **驗證。** `cloud` 會拒絕在本機程序內載入的 provider（`huggingface` embedding、`fireredasr` /
+  `docling-whisper` ASR、本地 PDF/圖片解析）,而且**拒絕不是 `${ENV}` 參照的 API 金鑰** —— 雲端金鑰會計費,
+  而 config.yaml 是最常被複製流傳的檔案。啟動會失敗並列出有問題的設定路徑。`hybrid` 對寫死的金鑰只發警告;
+  `local`（預設 —— 既有設定不受影響）不做任何新檢查。
+- **不 import 任何本地模型。** HuggingFace embedding、docling 的版面/OCR 模型、Whisper、FireRedASR、CKIP
+  只在被選用時才 import;啟動時略過 docling 預熱,並在 log 中列出每個角色跑在哪裡。
+  `tests/test_cloud_profile_no_local_models.py` 在沒有本地堆疊的安裝上跑完整流程來證明這點。
+- **雲端 PDF 與圖片解析。** 每一頁由視覺模型轉成 Markdown,所有頁面先接回**同一份**文件再切 chunk,
+  標題、麵包屑與表格都能跨頁延續。每頁都會附上前一頁的結尾與目前的標題路徑;頁面以有序區塊並行
+  （並行數有上限）;失敗的頁面會退避重試,仍失敗就在文字中標記,而不是讓整個檔案失敗。chunk 保留起始頁碼
+  供引用。單檔與每日頁數上限控制成本。未驗證的 `/v1/ocr/general` 端點不會轉給付費模型。
+- **雲端語音轉文字。** 音訊重新取樣後,在靜音處切段上傳（每個請求都不會超過上傳上限）,有重試;
+  轉錄結果在有語音卻為空、或疑似生成迴圈時會重新請求。
+- **每個角色各自的重試與逾時**（`timeout`、`max_retries`）:429 / 5xx / 逾時以指數退避加抖動重試,並遵守 `Retry-After`。
+- **中文 BM25。** CKIP 是本地 torch 模型,cloud profile 不載入它;在選用不需模型的斷詞器
+  （`rag.retrieval.segmenter: bigram`）之前,中文以不斷詞的方式建索引。
+
+**主控台。** *Settings* 最上方是 **Model Roles** 面板:每個角色跑在哪、provider、模型與端點、
+是否已設定金鑰以及來自哪個環境變數（金鑰值永不回傳）,還有 **Test** 按鈕,用已儲存的設定送出一次最小的真實請求
+（一次 embedding —— 會檢查維度 ——、16 token 的對話、給視覺模型的 8×8 圖片、一組 rerank、給語音轉文字的半秒靜音）。
+金鑰欄位可填 `${ENV_VAR}`;伺服器存的是參照,不是金鑰。修改需要 `rag:admin` scope。
+
+每日上限存在記憶體中,於 UTC 午夜或重啟時歸零 —— 它是防失控的保護,不是計費。
 
 ## 使用主控台
 
