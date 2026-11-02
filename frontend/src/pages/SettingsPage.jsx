@@ -1,27 +1,30 @@
 import { useEffect, useState, useCallback, useRef } from 'react'
 import { useLocation, useNavigate } from 'react-router-dom'
-import { Layers, Sparkles, List, ArrowDownUp, Mic, SlidersHorizontal } from 'lucide-react'
+import { Layers, Sparkles, List, ArrowDownUp, Mic, SlidersHorizontal, MessageSquare, FlaskConical, ScanText } from 'lucide-react'
 import { get, post, api } from '../services/api'
 import { fmtNum } from '../lib/format'
-import { META, FIELDS, PRESETS, sectionOf } from '../lib/settings-config'
+import { META, FIELDS, PRESETS, sectionOf, normalizeValue, keyIndicator, runsLabel, probeText } from '../lib/settings-config'
 import { useModal } from '../contexts/ModalContext'
 import { useToast } from '../contexts/ToastContext'
 import { useSession } from '../contexts/SessionContext'
 
-const ICON = { layers: Layers, spark: Sparkles, list: List, sort: ArrowDownUp, mic: Mic, sliders: SlidersHorizontal }
-const PARAM_TO_SEC = { embedding: 'rag.embedding', llm: 'rag.llm', contextual: 'rag.contextual_retrieval', reranker: 'rag.rerank', asr: 'rag.asr', retrieval: 'rag.retrieval' }
+const ICON = { layers: Layers, spark: Sparkles, list: List, sort: ArrowDownUp, mic: Mic, sliders: SlidersHorizontal, message: MessageSquare, flask: FlaskConical, scan: ScanText }
+const PARAM_TO_SEC = { embedding: 'rag.embedding', llm: 'rag.llm', 'contextual-llm': 'rag.contextual_llm', 'answer-llm': 'rag.answer_llm', 'eval-llm': 'rag.eval_llm', contextual: 'rag.contextual_retrieval', reranker: 'rag.rerank', parsing: 'rag.parsing', asr: 'rag.asr', retrieval: 'rag.retrieval' }
 const SEC_TO_PARAM = Object.fromEntries(Object.entries(PARAM_TO_SEC).map(([p, s]) => [s, p]))
 
-function Field({ path, f, value, overridden, onChange, disabled }) {
+function Field({ path, f, value, entry, onChange, disabled }) {
   const wide = f.type === 'textarea'
   const isBool = f.type === 'bool'
-  const setV = (v) => onChange(path, v)
+  const overridden = entry?.overridden
+  const setV = (v) => onChange(path, normalizeValue(f, v))
+  const key = f.type === 'secret' ? keyIndicator(entry) : null
 
   return (
     <div className={'field' + (wide ? ' wide' : '')}>
       <div className="f-head">
         <label htmlFor={isBool ? undefined : path}>{f.label}</label>
         <div className="grow" />
+        {key && <span className={'pill ' + key.cls} title="API keys are never shown; only whether one is set and which environment variable it comes from">{key.text}</span>}
         {overridden && <span className="ovr" title="Differs from config.yaml">Overridden</span>}
         {isBool && (
           <label className="toggle"><input type="checkbox" aria-label={f.label} checked={!!value} disabled={disabled} onChange={(e) => setV(e.target.checked)} /><span /></label>
@@ -36,7 +39,7 @@ function Field({ path, f, value, overridden, onChange, disabled }) {
         ) : f.type === 'textarea' ? (
           <textarea id={path} value={value ?? ''} disabled={disabled} onChange={(e) => setV(e.target.value)} />
         ) : f.type === 'secret' ? (
-          <input id={path} type="password" placeholder="Set — type to replace" value={value ?? ''} disabled={disabled} onChange={(e) => setV(e.target.value)} />
+          <input id={path} type="password" autoComplete="off" placeholder={'Type ${ENV_VAR} (recommended) or a new key'} value={value === '•••' ? '' : (value ?? '')} disabled={disabled} onChange={(e) => setV(e.target.value)} />
         ) : f.range ? (
           <div className="slider-wrap">
             <input id={path} type="range" min={f.range[0]} max={f.range[1]} step={f.step || 0.05} disabled={disabled}
@@ -53,12 +56,58 @@ function Field({ path, f, value, overridden, onChange, disabled }) {
   )
 }
 
+function RolesPanel({ view, readOnly, probes, onProbe }) {
+  if (!view || !view.roles || !view.roles.length) return null
+  const usage = view.usage || {}
+  return (
+    <section className="card" id="model-roles">
+      <div className="card-head">
+        <div className="icon"><Layers size={16} /></div>
+        <div>
+          <h2>Model Roles · profile <code>{view.profile}</code></h2>
+          <div className="desc">Where each job runs and which model serves it. Keys are never shown — only whether one is set.</div>
+        </div>
+        <div className="grow" />
+      </div>
+      <div className="role-grid">
+        {view.roles.map((r) => {
+          const runs = runsLabel(r)
+          const key = r.runs === 'endpoint' ? keyIndicator({ is_set: r.key_set, env: r.key_env }) : null
+          const pr = probeText(probes[r.role])
+          return (
+            <div className="role" key={r.role}>
+              <div className="role-head">
+                <span className="name">{r.label}</span>
+                <span className={'pill ' + runs.cls}>{runs.text}</span>
+              </div>
+              <div className="val" title={r.base_url || ''}>{r.runs === 'off' ? '—' : `${r.provider || '—'} · ${r.model || '—'}`}</div>
+              {r.runs === 'endpoint' && <div className="sub" title={r.base_url || ''}>{r.base_url || 'provider default endpoint'}</div>}
+              {r.inherits && r.runs !== 'off' && <div className="sub">inherits the LLM section</div>}
+              <div className="role-foot">
+                {key && <span className={'pill ' + key.cls}>{key.text}</span>}
+                <div className="grow" />
+                {!readOnly && r.runs !== 'off' && <button className="btn-ghost sm" onClick={() => onProbe(r.role)}>Test</button>}
+              </div>
+              {pr.text && <div className={'probe-result ' + pr.cls}>{pr.text}</div>}
+            </div>
+          )
+        })}
+      </div>
+      {(usage.vision_pages || usage.prefix_tokens) ? (
+        <div className="card-foot"><span className="probe-result">Today (UTC): {fmtNum(usage.vision_pages || 0)} cloud-parsed page(s) · {fmtNum(usage.prefix_tokens || 0)} estimated prefix token(s) against daily caps</span></div>
+      ) : null}
+    </section>
+  )
+}
+
 export default function SettingsPage() {
   const { confirm } = useModal()
   const toast = useToast()
   const { isAdmin } = useSession()
   const readOnly = !isAdmin
-  const [state, setState] = useState(null) // path -> {value, overridden}
+  const [state, setState] = useState(null) // path -> {value, overridden, is_set, env}
+  const [view, setView] = useState(null) // {profile, roles, usage}
+  const [roleProbe, setRoleProbe] = useState({}) // role -> probe result
   const [dirty, setDirty] = useState({})
   const [saving, setSaving] = useState('')
   const [probe, setProbe] = useState({}) // sec -> {cls,text}
@@ -76,6 +125,7 @@ export default function SettingsPage() {
     const m = {}
     for (const s of r.data.settings) m[s.path] = s
     setState(m)
+    setView({ profile: r.data.profile, roles: r.data.roles || [], usage: r.data.usage || {} })
   }, [])
   useEffect(() => { loadSettings().catch(() => {}) }, [loadSettings])
 
@@ -157,20 +207,25 @@ export default function SettingsPage() {
     catch (e) { toast('Preset failed: ' + e.message, 'bad') }
   }
 
-  const testConn = async (sec) => {
-    setProbe((p) => ({ ...p, [sec]: { cls: '', text: 'Testing…' } }))
+  // Per-role probe: one minimal real request with the *saved* settings (the key stays on the server).
+  const runProbe = async (role) => {
+    setRoleProbe((p) => ({ ...p, [role]: { status: 'unset', detail: 'Testing…' } }))
     try {
-      if (sec === 'rag.asr' && valOf('rag.asr.provider') !== 'openai-compatible') {
-        const a = (await get('/api/admin/overview')).data.models.asr
-        setProbe((p) => ({ ...p, [sec]: a.available ? { cls: 'ok', text: '✓ Ready — local weights found' } : { cls: 'bad', text: '✗ Not ready — weights missing under assets/' } }))
-        return
-      }
-      const base = valOf(sec + '.base_url')
-      if (!base) { setProbe((p) => ({ ...p, [sec]: { cls: 'bad', text: 'No endpoint set' } })); return }
-      const r = await post('/api/admin/probe', { base_url: base })
-      const ok = r.data && r.data.reachable
-      setProbe((p) => ({ ...p, [sec]: ok ? { cls: 'ok', text: '✓ Reachable' } : { cls: 'bad', text: '✗ Unreachable' } }))
-    } catch (e) { setProbe((p) => ({ ...p, [sec]: { cls: 'bad', text: '✗ ' + e.message } })) }
+      const r = await post('/api/admin/probe/' + role, {})
+      setRoleProbe((p) => ({ ...p, [role]: r.data }))
+      return r.data
+    } catch (e) {
+      const res = { status: 'down', detail: e.message }
+      setRoleProbe((p) => ({ ...p, [role]: res }))
+      return res
+    }
+  }
+
+  const testConn = async (sec) => {
+    const dirtyHere = Object.keys(dirty).some((p) => sectionOf(p) === sec)
+    setProbe((p) => ({ ...p, [sec]: { cls: '', text: 'Testing…' } }))
+    const res = probeText(await runProbe(META[sec].probe))
+    setProbe((p) => ({ ...p, [sec]: dirtyHere ? { ...res, text: res.text + ' (saved settings — save to test your edits)' } : res }))
   }
 
   return (
@@ -181,7 +236,8 @@ export default function SettingsPage() {
           <span>Read-only. Your token can view these settings but not change them — changing settings (and testing connections) needs a token with the <code>rag:admin</code> scope.</span>
         </div>
       )}
-      <p className="lede">Changes take effect <strong>immediately</strong> and persist across restarts. An <strong>Overridden</strong> badge means the value differs from config.yaml. Changes in the <span style={{ color: 'var(--signal-hi)' }}>amber section (Embedding)</span> require re-indexing existing folders.</p>
+      <p className="lede">Changes take effect <strong>immediately</strong> and persist across restarts. An <strong>Overridden</strong> badge means the value differs from config.yaml. Changes in the <span style={{ color: 'var(--signal-hi)' }}>amber section (Embedding)</span> require re-indexing existing folders. API keys are best given as <code>{'${ENV_VAR}'}</code> references — the server stores the reference, never the key (required under the cloud profile).</p>
+      <RolesPanel view={view} readOnly={readOnly} probes={roleProbe} onProbe={runProbe} />
       <div className="preset-bar">
         <span className="preset-label">Retrieval presets</span>
         {Object.entries(PRESETS).map(([k, p]) => (
@@ -205,7 +261,7 @@ export default function SettingsPage() {
             {meta.warn && <div className="warnnote"><span>⚠</span><span>{meta.warn}</span></div>}
             <div className="fields">
               {paths.map((p) => (
-                <Field key={p} path={p} f={FIELDS[p]} value={valOf(p)} overridden={state[p]?.overridden} onChange={onChange} disabled={readOnly} />
+                <Field key={p} path={p} f={FIELDS[p]} value={valOf(p)} entry={state[p]} onChange={onChange} disabled={readOnly} />
               ))}
             </div>
             <div className="card-foot">

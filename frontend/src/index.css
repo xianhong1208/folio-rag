@@ -266,6 +266,20 @@
   .svc .val { font-family: "JetBrains Mono", monospace; font-size: 12px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .svc .grow { flex: 1; min-width: 0; }
 
+  /* Model roles overview (Settings) */
+  .role-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(260px, 1fr)); gap: 12px; padding: 4px 22px 18px; }
+  .role { display: flex; flex-direction: column; gap: 6px; min-width: 0;
+    border: 1px solid var(--hairline); border-radius: 12px; padding: 12px 14px; background: var(--input-bg); }
+  .role-head { display: flex; align-items: center; gap: 8px; }
+  .role-head .name { font-size: 12px; font-weight: 600; color: var(--ink-muted); flex: 1; min-width: 0;
+    font-family: "Chakra Petch", "PingFang TC", system-ui, sans-serif; }
+  .role .val { font-family: "JetBrains Mono", monospace; font-size: 12px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .role .sub { font-size: 11px; color: var(--ink-subtle); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .role-foot { display: flex; align-items: center; gap: 8px; margin-top: 2px; }
+  .role-foot .grow { flex: 1; }
+  .btn-ghost.sm { padding: 4px 10px; font-size: 11.5px; }
+  .field .f-head .pill { font-size: 10.5px; padding: 2px 8px; }
+
   /* Breadcrumb back link */
 
   /* ── Settings form (kept) ── */
