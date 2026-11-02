@@ -61,3 +61,38 @@ class TestAdminStats:
         mine = [j for j in js if j["folder_id"] == folder.id]
         assert mine and mine[0]["folder_name"] == folder.name
         assert mine[0]["status"] == "failed" and mine[0]["error"] == "boom"
+
+
+class TestOwnerScope:
+    """Console scoping: an owner key only counts / lists its own folders."""
+
+    def test_overview_scoped_to_owner(self, seeded):
+        from db import admin_stats
+        mine = admin_stats.overview(owner="itest-token")
+        assert mine["folders"] >= 1 and mine["index"]["total_chunks"] >= 42
+        nobody = admin_stats.overview(owner="no-such-owner")
+        assert nobody["folders"] == 0 and nobody["files"] == 0
+        assert nobody["index"]["total_chunks"] == 0 and nobody["jobs"]["by_status"] == {}
+        assert admin_stats.indexing_trend(7, owner="no-such-owner")[-1]["count"] == 0
+
+    def test_folder_list_scoped_to_owner(self, seeded):
+        from db import admin_stats
+        folder, _ = seeded
+        assert any(f["id"] == folder.id for f in admin_stats.folders_with_index_stats(owner="itest-token"))
+        assert admin_stats.folders_with_index_stats(owner="no-such-owner") == []
+
+    def test_jobs_scoped_and_flagged(self, seeded):
+        from db import admin_stats
+        folder, _ = seeded
+        assert admin_stats.recent_jobs(50, owner="no-such-owner") == []
+        everyone = admin_stats.recent_jobs(50, viewer="someone-else")
+        mine = [j for j in everyone if j["folder_id"] == folder.id]
+        assert mine and mine[0]["owned"] is False
+        own = admin_stats.recent_jobs(50, owner="itest-token", viewer="itest-token")
+        assert own and all(j["owned"] for j in own)
+
+    def test_chunks_require_file_in_folder(self, seeded):
+        from db import admin_stats
+        folder, file_row = seeded
+        out = admin_stats.chunks_for_file(folder.id + 100000, str(file_row.id))
+        assert out["file_name"] is None and out["chunks"] == []

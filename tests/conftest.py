@@ -110,12 +110,17 @@ def make_cfg():
     return _cfg
 
 
-def console_identity(owner="owner-tok", *, admin=False, sub="alice"):
+def _identity(owner="owner-tok", *, admin=False, sub="alice"):
     """A token-mode console identity owning folders bound to ``owner``."""
     from src.auth.console_session import ConsoleIdentity
     scopes = ("rag:admin",) if admin else ()
     return ConsoleIdentity(mode="token", via="cookie", jti=owner, sub=sub,
                            scopes=scopes, is_admin=admin, expires_at=None)
+
+
+@pytest.fixture()
+def make_identity():
+    return _identity
 
 
 @pytest.fixture()

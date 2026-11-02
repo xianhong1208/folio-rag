@@ -3,9 +3,8 @@
 
 The service-layer logic is in test_runtime_settings.py; here we pin the HTTP
 face: routing / status codes / response shape / error translation (422) /
-probe guards / admin page reachability.
-No auth (product decision): the endpoints have no auth attached, so tests call
-them directly.
+probe guards / root redirect. The console guards are overridden with an admin
+identity; the guards themselves are covered by test_console_auth_matrix.py.
 """
 
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -20,11 +19,11 @@ _SVC = "src.adapter.runtime_settings_service"
 
 
 @pytest.fixture()
-def client():
-    # No auth (product decision) -- no override needed, the endpoints are callable as-is
+def client(as_identity, make_identity):
+    # Signed in as the owner of the folders the tests use ("owner-tok", with rag:admin).
     app = FastAPI()
     app.include_router(router)
-    return TestClient(app)
+    return TestClient(as_identity(app, make_identity("owner-tok", admin=True)))
 
 
 class TestSettingsApi:
@@ -45,16 +44,16 @@ class TestSettingsApi:
         body = r.json()
         assert body["data"]["applied"] == {"rag.embedding.model": "m"}
         assert body["data"]["warnings"] == ["警告文案"]
-        # No auth: without an Authorization header -> the audit field records "console"
-        assert ap.call_args.kwargs.get("updated_by") == "console"
+        # The audit field records the session's sub (never a token)
+        assert ap.call_args.kwargs.get("updated_by") == "alice"
 
-    def test_put_with_bearer_records_masked_token(self, client):
+    def test_put_with_bearer_never_records_the_token(self, client):
         with patch(f"{_SVC}.apply_settings", return_value=({}, [])) as ap:
             client.put("/api/admin/settings",
                        json={"settings": {"rag.rerank.enabled": True}},
                        headers={"Authorization": "Bearer secret-token-xyz-12345"})
         ub = str(ap.call_args.kwargs.get("updated_by"))
-        assert "secret-token-xyz-12345" not in ub  # only the masked form is stored
+        assert "secret-token" not in ub and ub == "alice"
 
     def test_put_empty_body_422(self, client):
         assert client.put("/api/admin/settings", json={}).status_code == 422
@@ -69,9 +68,10 @@ class TestSettingsApi:
         assert "不可熱改" in r.json()["detail"]
 
     def test_delete_resets_override(self, client):
-        with patch(f"{_SVC}.reset_setting", return_value=True):
+        with patch(f"{_SVC}.reset_setting", return_value=True) as rs:
             r = client.delete("/api/admin/settings/rag.rerank.score_threshold")
         assert r.status_code == 200
+        assert rs.call_args.kwargs == {"updated_by": "alice"}
         assert r.json()["data"]["reset"] == "rag.rerank.score_threshold"
 
     def test_delete_no_override_404(self, client):

@@ -17,13 +17,28 @@ from src.api.router.admin_settings import router
 
 
 @pytest.fixture()
-def client():
+def client(as_identity, make_identity):
+    # Signed in as the owner of the folders the tests use ("owner-tok", with rag:admin).
     app = FastAPI()
     app.include_router(router)
-    return TestClient(app)
+    return TestClient(as_identity(app, make_identity("owner-tok", admin=True)))
 
 
 _STATS = "db.admin_stats"
+
+
+def _owned_folder(folder_id, token="owner-tok", name="f"):
+    return SimpleNamespace(id=folder_id, name=name, user_token=token)
+
+
+@pytest.fixture(autouse=True)
+def owned_folders():
+    """Folder lookups resolve to folders owned by the signed-in test identity."""
+    with patch("db.cached_folderdb.CachedFolderDB.get_by_id",
+               side_effect=lambda fid: _owned_folder(fid)), \
+         patch("db.cached_folderdb.CachedFolderDB.get_by_user_token",
+               return_value=[_owned_folder(7)]):
+        yield
 
 
 class TestOverviewApi:
@@ -65,7 +80,8 @@ class TestOverviewApi:
     def test_jobs_limit_validated(self, client):
         with patch(f"{_STATS}.recent_jobs", return_value=[]) as m:
             assert client.get("/api/admin/jobs?limit=5").status_code == 200
-        m.assert_called_once_with(5)
+        # Admin identity: every folder's jobs, flagged by ownership.
+        m.assert_called_once_with(5, owner=None, viewer="owner-tok")
         assert client.get("/api/admin/jobs?limit=0").status_code == 422
         assert client.get("/api/admin/jobs?limit=999").status_code == 422
 
@@ -88,7 +104,7 @@ class TestChunkViewer:
 
 class TestActiveStages:
     def test_active_stages_endpoint(self, client):
-        stages = {"fid-1": {"stage": "embedding", "done": 3, "total": 9, "eta": 12}}
+        stages = {"fid-1": {"folder_id": 7, "stage": "embedding", "done": 3, "total": 9, "eta": 12}}
         from src.domain.rag.index_job_manager import IndexingJobManager
         mgr = MagicMock()
         mgr.active_file_stages.return_value = stages
@@ -141,7 +157,7 @@ class TestAnalytics:
             r = client.get("/api/admin/analytics?days=7&folder_id=3")
         assert r.status_code == 200
         assert r.json()["data"]["total"] == 12
-        assert m.call_args.kwargs == {"folder_id": 3, "days": 7}
+        assert m.call_args.kwargs == {"folder_id": 3, "days": 7, "folder_ids": None}
 
     def test_analytics_days_validated(self, client):
         assert client.get("/api/admin/analytics?days=0").status_code == 422
@@ -152,7 +168,7 @@ class TestEval:
     def _reset(self):
         from src.api.router import admin_overview as ov
         ov._EVAL.update(running=False, folder=None, done=0, total=0,
-                        result=None, error=None, started_at=None)
+                        result=None, error=None, started_at=None, owner=None)
 
     def test_status_returns_state(self, client):
         self._reset()
@@ -229,7 +245,7 @@ class TestEval:
 
     def test_report_missing_file_returns_null(self, client):
         with patch("db.cached_folderdb.CachedFolderDB.get_by_id",
-                   return_value=SimpleNamespace(name="nope")), \
+                   return_value=_owned_folder(1, name="nope")), \
              patch("os.path.exists", return_value=False):
             r = client.get("/api/admin/eval/report?folder_id=1")
         assert r.status_code == 200 and r.json()["data"] is None
@@ -238,7 +254,7 @@ class TestEval:
         from unittest.mock import mock_open
         rep = '{"folder": "f", "summary": {"vector": {}}}'
         with patch("db.cached_folderdb.CachedFolderDB.get_by_id",
-                   return_value=SimpleNamespace(name="f")), \
+                   return_value=_owned_folder(1)), \
              patch("os.path.exists", return_value=True), \
              patch("builtins.open", mock_open(read_data=rep)):
             r = client.get("/api/admin/eval/report?folder_id=1")
