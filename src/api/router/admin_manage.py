@@ -24,7 +24,7 @@ router = APIRouter(tags=["Admin: Manage"])
 def _normalize_owner_key(owner_token: str) -> str:
     """Normalize an admin-supplied owner token to the per-token ownership key.
 
-    The console's "Owner Token" field may hold either a full MCP Center token (a
+    The console's "Owner Token" field may hold either a full MCP Gate token (a
     JWT, ~900 chars) or a bare owner key already copied from an existing folder's
     owner. Ownership is keyed on the JWT ``jti`` everywhere else (the Bearer path
     runs ``extract_token`` -> ``owner_key_from_bearer``), so a JWT is reduced to its
@@ -52,12 +52,12 @@ def _reject_foreign_token(claims: dict) -> None:
     The console is an operator tool and deliberately never verifies signatures — it
     only needs the token's ``jti`` as the ownership key. But a folder bound to a
     token this server's auth will never accept (e.g. an AnyDoc PAT from the same
-    MCP Center: right issuer, wrong audience) is unreachable through REST/MCP by
+    MCP Gate: right issuer, wrong audience) is unreachable through REST/MCP by
     design, so refuse it up front with the reason instead of creating an orphan.
     No-op when auth is disabled (nothing to compare against).
     """
     import time
-    from src.auth.mcp_center_auth import settings_from_config
+    from src.auth.mcp_gate_auth import settings_from_config
     from src.config.config_manager import Config
     try:
         settings = settings_from_config(Config.get_config_model())

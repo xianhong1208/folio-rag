@@ -8,9 +8,9 @@ from .dependencies import (
     get_remote_verifier_instance,
     set_remote_verifier,
 )
-from .mcp_center_auth import (
+from .mcp_gate_auth import (
     AuthSettings,
-    McpCenterTokenVerifier,
+    McpGateTokenVerifier,
     build_auth_provider,
     settings_from_config,
 )
@@ -24,7 +24,7 @@ __all__ = [
     "get_remote_verifier_instance",
     "set_remote_verifier",
     "AuthSettings",
-    "McpCenterTokenVerifier",
+    "McpGateTokenVerifier",
     "build_auth_provider",
     "settings_from_config",
     "initialize_auth_system",

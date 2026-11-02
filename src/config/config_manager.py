@@ -25,7 +25,7 @@ from .model import (
 )
 
 
-# Environment-variable expansion for config values, matching MCP Center's convention:
+# Environment-variable expansion for config values, matching MCP Gate's convention:
 # `${VAR}` / `${VAR:-default}`. Lets the DB URL (and any other value) come from the
 # environment while config.yaml keeps a safe default.
 ENV_VAR_PATTERN = re.compile(r"\$\{([^}:]+)(?::-([^}]*))?\}")

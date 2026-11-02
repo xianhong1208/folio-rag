@@ -1,10 +1,10 @@
-"""Resource-server side of OAuth 2.1: verify MCP Center access tokens.
+"""Resource-server side of OAuth 2.1: verify MCP Gate access tokens.
 
-Agentic RAG never issues tokens. It trusts one authorization server (MCP Center),
+Agentic RAG never issues tokens. It trusts one authorization server (MCP Gate),
 fetches its JWKS once and verifies every bearer token OFFLINE. Two consumers use this
 module:
 
-- The REST API + MCP tool filter go through ``McpCenterTokenVerifier`` (PyJWT-based),
+- The REST API + MCP tool filter go through ``McpGateTokenVerifier`` (PyJWT-based),
   registered via ``set_remote_verifier`` so the existing middleware / tool-filter keep
   working unchanged — they only rely on the ``TokenVerifyResult`` shape and the
   ``async verify(token)`` contract.
@@ -38,7 +38,7 @@ class AuthSettings:
 
     @property
     def jwks_uri(self) -> str:
-        """JWKS endpoint published by the issuer (MCP Center)."""
+        """JWKS endpoint published by the issuer (MCP Gate)."""
         return f"{self.issuer}/.well-known/jwks.json"
 
 
@@ -56,7 +56,7 @@ def settings_from_config(config) -> Optional[AuthSettings]:
     if not issuer:
         raise RuntimeError(
             "auth.issuer is required when auth.enabled is true "
-            "(set it to the MCP Center base URL)"
+            "(set it to the MCP Gate base URL)"
         )
 
     server = getattr(config, "server", None)
@@ -90,8 +90,8 @@ def _parse_scopes(claims: dict) -> list[str]:
     return []
 
 
-class McpCenterTokenVerifier:
-    """Offline RS256 JWT verifier for MCP Center access tokens.
+class McpGateTokenVerifier:
+    """Offline RS256 JWT verifier for MCP Gate access tokens.
 
     Exposes the SAME async interface as the legacy ``RemoteTokenVerifier``
     (``async verify(token) -> TokenVerifyResult`` plus a no-op ``close``), so the
@@ -108,7 +108,7 @@ class McpCenterTokenVerifier:
         # PyJWKClient caches fetched keys internally; keep one instance alive.
         self._jwk_client = jwt.PyJWKClient(settings.jwks_uri)
         logger.info(
-            f"McpCenterTokenVerifier initialized: jwks_uri={settings.jwks_uri} "
+            f"McpGateTokenVerifier initialized: jwks_uri={settings.jwks_uri} "
             f"audience={settings.audience}"
         )
 
