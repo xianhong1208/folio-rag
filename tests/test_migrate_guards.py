@@ -160,3 +160,49 @@ class TestAdvisoryLock:
              patch.object(DatabaseMigrator, "_execute_upgrade", return_value=False):
             assert m.upgrade("head") is False
         assert _lock_calls(conn)[-1] == "unlock", "the failure path must unlock too"
+
+
+class TestUnknownCurrentRevision:
+    """The database is stamped with a revision this code has no file for (e.g. it was
+    migrated by another branch or a different codebase). That used to log "No migrations
+    to apply" and report success, so the server started against a schema it does not
+    match and failed later with UndefinedColumn errors. It must fail loudly instead."""
+
+    def _chain(self, tmp_path):
+        _write_migration(tmp_path, "001_a.py", "aaa111", None)
+        _write_migration(tmp_path, "002_b.py", "bbb222", "aaa111")
+
+    def test_upgrade_fails_and_applies_nothing(self, tmp_path):
+        self._chain(tmp_path)
+        m = _bare_migrator(tmp_path)
+        conn = MagicMock()
+        m._engine.connect.return_value.__enter__.return_value = conn
+        with patch.object(DatabaseMigrator, "_get_current_revision", return_value="feedface99"), \
+             patch.object(DatabaseMigrator, "_get_head_revision", return_value="bbb222"), \
+             patch.object(DatabaseMigrator, "_execute_upgrade") as ex, \
+             patch("db.migrate.logger") as log:
+            assert m.upgrade("head") is False
+        ex.assert_not_called()
+        assert _lock_calls(conn) == ["lock", "unlock"]
+        msg = " ".join(str(c.args[0]) for c in log.error.call_args_list)
+        assert "feedface99" in msg and "stamp" in msg
+
+    def test_auto_migrate_reports_failure(self, tmp_path):
+        self._chain(tmp_path)
+        m = _bare_migrator(tmp_path)
+        m._engine.connect.return_value.__enter__.return_value = MagicMock()
+        with patch.object(DatabaseMigrator, "_get_current_revision", return_value="feedface99"), \
+             patch.object(DatabaseMigrator, "_get_head_revision", return_value="bbb222"), \
+             patch.object(DatabaseMigrator, "_execute_upgrade") as ex:
+            assert m.auto_migrate() is False
+        ex.assert_not_called()
+
+    def test_known_intermediate_revision_still_upgrades(self, tmp_path):
+        self._chain(tmp_path)
+        m = _bare_migrator(tmp_path)
+        m._engine.connect.return_value.__enter__.return_value = MagicMock()
+        with patch.object(DatabaseMigrator, "_get_current_revision", return_value="aaa111"), \
+             patch.object(DatabaseMigrator, "_get_head_revision", return_value="bbb222"), \
+             patch.object(DatabaseMigrator, "_execute_upgrade", return_value=True) as ex:
+            assert m.upgrade("head") is True
+        assert [c.args[1] for c in ex.call_args_list] == ["bbb222"]

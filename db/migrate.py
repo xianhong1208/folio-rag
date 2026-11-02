@@ -237,6 +237,18 @@ class DatabaseMigrator:
                         logger.warning("⚠️ No migration files found")
                         return True
 
+                    # A revision we have no file for (another branch or codebase migrated
+                    # this database): walking the chain would find nothing to apply and
+                    # report success against a schema this code does not match.
+                    if current_rev is not None and current_rev not in {r for r, _, _ in chain}:
+                        logger.error(
+                            f"❌ The database is at revision {current_rev}, which is not one of "
+                            f"this code's migrations (head {target_rev}). It was migrated by "
+                            f"another branch or codebase. Compare its schema with versions/, then "
+                            f"`python main.py --migrate-only stamp -r <matching revision>` and "
+                            f"start again (or point DATABASE_URL at a fresh database).")
+                        return False
+
                     start_applying = current_rev is None
                     migrations_to_apply = []
 
