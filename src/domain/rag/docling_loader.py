@@ -27,6 +27,11 @@ from typing import Any, List, Optional
 
 from src.log import get_api_logger
 from src.utils.runtime_paths import resolve_external_dir
+from src.domain.rag.docling_guard import (
+    convert_checked,
+    missing_pages,
+    release_accelerator_cache,
+)
 
 logger = get_api_logger()
 
@@ -227,6 +232,16 @@ def _resolve_whisper_path() -> Optional[Path]:
     return None
 
 
+def ocr_enabled() -> bool:
+    """config ``rag.docling.ocr_enabled`` (restart-level: the converter is a singleton).
+    Unreadable config keeps the default (on)."""
+    try:
+        from src.config.config_manager import Config as _Cfg
+        return bool(_Cfg.get_config_model().rag.docling.ocr_enabled)
+    except Exception:
+        return True
+
+
 def asr_wants_local_whisper() -> bool:
     """Whether config `rag.asr` requires local docling-whisper.
 
@@ -312,9 +327,9 @@ def _apply_docling_env():
                     os.environ["DOCLING_INFERENCE"] = '{"compile_torch_models": false}'
                     logger.info("[DOCLING_INIT] torch.compile disabled (faster startup)")
 
-                # OCR toggle
+                # OCR toggle: applied as PdfPipelineOptions(do_ocr=...) in _build_converter
+                # (docling reads no environment variable for it).
                 if not docling_config.ocr_enabled:
-                    os.environ["DOCLING_OCR_ENABLED"] = "false"
                     logger.info("[DOCLING_INIT] OCR disabled")
 
                 return
@@ -516,25 +531,30 @@ def _build_converter():
         # Layout / TableFormer / OCR / Whisper all run on the configured device
         accelerator_options = _get_accelerator_options()
 
+        ocr_on = ocr_enabled()
+        pdf_kwargs = {
+            "accelerator_options": accelerator_options,
+            # rag.docling.ocr_enabled=false must really skip OCR (the model is not even loaded).
+            "do_ocr": ocr_on,
+        }
         if artifacts_path:
             logger.info(f"[DOCLING] Using local artifacts_path: {artifacts_path}")
-            pdf_kwargs = {
-                "artifacts_path": str(artifacts_path),
-                "accelerator_options": accelerator_options,
-            }
+            pdf_kwargs["artifacts_path"] = str(artifacts_path)
             # OCR uses the rapidocr torch backend (PP-OCRv6, file selected per ocr_model_scale)
-            ocr_options = _get_rapidocr_options(artifacts_path, accelerator_options)
+            ocr_options = _get_rapidocr_options(artifacts_path, accelerator_options) if ocr_on else None
             if ocr_options is not None:
                 pdf_kwargs["ocr_options"] = ocr_options
-            pdf_pipeline_options = PdfPipelineOptions(**pdf_kwargs)
-            # PDF and Image share the same pipeline_options (IMAGE internally goes through StandardPdfPipeline)
-            format_options[InputFormat.PDF] = PdfFormatOption(pipeline_options=pdf_pipeline_options)
-            format_options[InputFormat.IMAGE] = ImageFormatOption(pipeline_options=pdf_pipeline_options)
         else:
             logger.warning(
                 "[DOCLING] No local artifacts_path; models will be fetched from HuggingFace Hub "
                 "on first use (online machines only)"
             )
+        if not ocr_on:
+            logger.info("[DOCLING] OCR off (rag.docling.ocr_enabled=false): scanned pages yield no text")
+        pdf_pipeline_options = PdfPipelineOptions(**pdf_kwargs)
+        # PDF and Image share the same pipeline_options (IMAGE internally goes through StandardPdfPipeline)
+        format_options[InputFormat.PDF] = PdfFormatOption(pipeline_options=pdf_pipeline_options)
+        format_options[InputFormat.IMAGE] = ImageFormatOption(pipeline_options=pdf_pipeline_options)
 
         # Audio pipeline: installed only when the Whisper model exists AND config permits.
         # Not installed when rag.asr.enabled=false or the provider isn't docling-whisper (e.g. cloud),
@@ -559,8 +579,8 @@ def _build_converter():
             format_options[InputFormat.AUDIO] = AudioFormatOption(
                 pipeline_options=asr_pipeline_options,
             )
-        else:
-            logger.info("[DOCLING] assets/whisper_models/turbo.pt not found — audio uploads will fallback to SimpleDirectoryReader")
+        elif asr_wants_local_whisper():
+            logger.info("[DOCLING] assets/whisper_models/*.pt not found: local whisper transcription unavailable")
 
         converter_kwargs = {"format_options": format_options} if format_options else {}
 
@@ -1000,6 +1020,7 @@ def docling_convert_once(
     max_tokens: int = 512,
     tokenizer: Optional[str] = None,
     progress_cb: Optional[Any] = None,
+    report: Optional[dict] = None,
 ) -> tuple[str, List[dict]]:
     """Parse with Docling once, returning both the full text and chunk records (with headings/page_no).
 
@@ -1014,6 +1035,8 @@ def docling_convert_once(
         progress_cb: ``(stage, done, total)`` optional page-level parse progress callback.
             PDF reports ("loading", pages_done, total_pages) — OCR-heavy files finally get a progress
             bar; non-paginated formats (docx etc.) don't report counts, with unchanged behavior.
+        report: optional dict filled with ``warning`` (pages that could not be parsed,
+            None when complete) and ``missing_pages``.
 
     Returns:
         (full_text, chunk_records) — full Markdown text + chunk records
@@ -1046,12 +1069,26 @@ def docling_convert_once(
             from docling.datamodel.base_models import DocumentStream
             from io import BytesIO
             with path_obj.open("rb") as f:
-                stream = DocumentStream(name=file_name, stream=BytesIO(f.read()))
-            with DOCLING_INFER_LOCK:
-                result = converter.convert(source=stream)
+                data = f.read()
+
+            def _source():  # a stream is consumed by convert(): build a fresh one per attempt
+                return DocumentStream(name=file_name, stream=BytesIO(data))
         else:
+            def _source():
+                return file_path
+
+        def _convert():
+            if progress_cb is not None:
+                _page_progress_tls.ctx["done"] = 0  # a retry restarts the page count
             with DOCLING_INFER_LOCK:
-                result = converter.convert(source=file_path)
+                return converter.convert(source=_source())
+
+        # Status is checked: a partial result is retried (smaller stage batch after an
+        # OOM) and pages still missing come back as a warning for the file record.
+        result, parse_warning = convert_checked(_convert, file_name)
+        if report is not None:
+            report["warning"] = parse_warning
+            report["missing_pages"] = missing_pages(result) if parse_warning else []
         doc = result.document
 
         # 2. Export full text as Markdown
@@ -1096,4 +1133,6 @@ def docling_convert_once(
         # Page-progress TLS cleanup — the next file on the same thread must not inherit stale context
         if getattr(_page_progress_tls, "ctx", None) is not None:
             _page_progress_tls.ctx = None
+        # Hand cached GPU memory back after every file (the card is often shared with vLLM).
+        release_accelerator_cache()
 

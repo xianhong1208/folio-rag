@@ -4,6 +4,7 @@ import { get, post, api, upload as uploadFile } from '../services/api'
 import { fmtNum, fmtBytes, fmtTime, shortModel } from '../lib/format'
 import EmptyState from '../components/ui/EmptyState'
 import ChunkText, { ContentBadge } from '../components/ui/ChunkText'
+import { isPartial } from '../lib/fileStatus'
 import { useModal } from '../contexts/ModalContext'
 import { useToast } from '../contexts/ToastContext'
 
@@ -237,8 +238,9 @@ export default function FoldersPage() {
                   : shown.map((f) => (
                     <tr key={f.id} title={f.error || f.embedding_model || ''}>
                       <td className="selcol"><input type="checkbox" className="selcheck" checked={sel.has(f.id)} onChange={() => toggleSel(f.id)} /></td>
-                      <td className="cell-main file-cell">{f.name}{f.error && <div className="sub" style={{ color: 'var(--alert-hi)', whiteSpace: 'normal' }}>{f.error}</div>}</td>
-                      <td className="statuscol">{f._stage ? <>{statusPill(f._stage)}{f._stagePct != null && <span className="stage-bar"><div style={{ width: f._stagePct + '%' }} /></span>}</> : statusPill(f.status)}</td>
+                      <td className="cell-main file-cell">{f.name}{f.error && <div className="sub" style={{ color: 'var(--alert-hi)', whiteSpace: 'normal' }}>{f.error}</div>}
+                        {isPartial(f) && <div className="sub" style={{ color: 'var(--signal-hi)', whiteSpace: 'normal' }}>{f.warning}</div>}</td>
+                      <td className="statuscol">{f._stage ? <>{statusPill(f._stage)}{f._stagePct != null && <span className="stage-bar"><div style={{ width: f._stagePct + '%' }} /></span>}</> : isPartial(f) ? <span className="pill warn" title={f.warning}>Partial</span> : statusPill(f.status)}</td>
                       <td className="num">{fmtNum(f.chunks)}</td>
                       <td className="num">{fmtBytes(f.size_bytes)}</td>
                       <td className="num">{fmtTime(f.indexed_at)}</td>

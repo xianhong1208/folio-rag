@@ -579,6 +579,7 @@ async def get_file_index_status(
                 job_id=None,
                 progress=None,
                 error=None,
+                warning=getattr(record, "index_warning", None),
             )
             return {"data": payload.model_dump(), "message": "File is indexed"}
         if record and getattr(record, "status", None) == "failed":

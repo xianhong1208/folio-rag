@@ -214,17 +214,21 @@ class TestDocumentLoaderAudioRouting:
         doc = self._load(_loader(p), tmp_path)
         assert "打赏" not in doc.text and "開始" in doc.text
 
-    def test_disabled_asr_skips_provider(self, tmp_path):
+    def test_disabled_asr_fails_the_file_without_transcribing(self, tmp_path):
+        # Disabled must not fall through to docling's whisper or
+        # SimpleDirectoryReader (which still transcribed the audio).
         p = _FakeAsr()
         loader = _loader(p, enabled=False)
-        with patch(f"{_DL}.is_docling_supported", return_value=False), \
-             patch.object(type(loader), "_load_via_simple_reader",
-                          return_value="FALLBACK") as fb, \
+        with patch(f"{_DL}.is_docling_supported", return_value=True), \
+             patch(f"{_DL}.docling_convert_once") as conv, \
+             patch.object(type(loader), "_load_via_simple_reader") as fb, \
              patch(f"{_DL}.FileStorage.resolve_path", return_value=tmp_path / "m.mp3"):
             (tmp_path / "m.mp3").write_bytes(b"x")
-            out = loader.load(file_path="s/m.mp3", file_id="f1", file_name="m.mp3")
-        assert out == "FALLBACK" and p.calls == []
-        fb.assert_called_once()
+            with pytest.raises(ValueError, match="Speech-to-text is disabled"):
+                loader.load(file_path="s/m.mp3", file_id="f1", file_name="m.mp3")
+        assert p.calls == []
+        conv.assert_not_called()
+        fb.assert_not_called()
 
     def test_unavailable_provider_raises_clear_error(self, tmp_path):
         # The config-selected provider is the sole speech source: if unavailable
@@ -234,7 +238,7 @@ class TestDocumentLoaderAudioRouting:
         loader = _loader(p)
         with patch(f"{_DL}.FileStorage.resolve_path", return_value=tmp_path / "m.mp3"):
             (tmp_path / "m.mp3").write_bytes(b"x")
-            with pytest.raises(RuntimeError, match="不可用"):
+            with pytest.raises(RuntimeError, match="not available"):
                 loader.load(file_path="s/m.mp3", file_id="f1", file_name="m.mp3")
         assert p.calls == []  # transcription was not attempted
 

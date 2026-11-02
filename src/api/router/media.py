@@ -82,6 +82,16 @@ def _get_config_asr_provider():
     return create_asr_provider(asr_cfg), asr_cfg.provider
 
 
+def _asr_disabled() -> bool:
+    """config ``rag.asr.enabled`` is explicitly false (unreadable config = enabled)."""
+    try:
+        from src.config.config_manager import Config as _Cfg
+        asr_cfg = getattr(getattr(_Cfg.get_config_model(), "rag", None), "asr", None)
+        return asr_cfg is not None and not asr_cfg.enabled
+    except Exception:
+        return False
+
+
 def _get_loaded_whisper():
     """Extract the underlying whisper.Whisper instance from docling's initialized AsrPipeline.
 
@@ -265,6 +275,9 @@ async def transcribe(
     if ext not in _AUDIO_EXTS:
         logger.warning(f"[transcribe] ✗ rejected unsupported ext={ext} for {file_name}")
         raise HTTPException(415, f"Unsupported audio format: {ext}. Allowed: {sorted(_AUDIO_EXTS)}")
+    if _asr_disabled():
+        # Off means off: no fallback to whisper or any other model.
+        raise HTTPException(503, "Speech-to-text is disabled (rag.asr.enabled=false)")
 
     t_save = time.time()
     src_path, bytes_written = await _save_upload_to_temp(audio)
@@ -503,6 +516,9 @@ async def ocr(
     if ext not in _IMAGE_EXTS:
         logger.warning(f"[ocr] ✗ rejected unsupported ext={ext} for {file_name}")
         raise HTTPException(415, f"Unsupported format: {ext}. Allowed: {sorted(_IMAGE_EXTS)}")
+    from src.domain.rag.docling_loader import ocr_enabled
+    if not ocr_enabled():
+        raise HTTPException(503, "OCR is disabled (rag.docling.ocr_enabled=false)")
 
     t_save = time.time()
     src_path, bytes_written = await _save_upload_to_temp(file)
@@ -523,9 +539,23 @@ async def ocr(
         # docling's PdfPipeline contains a TableFormer transformer + RapidOCR session,
         # with the same thread-safety concern, so serialize. Time lock-wait / compute separately.
         def _run_docling_ocr():
-            with _DOCLING_INFER_LOCK:
-                t_compute = time.time()
-                return get_converter().convert(src_path), time.time() - t_compute
+            from src.domain.rag.docling_guard import convert_checked, release_accelerator_cache
+            spent = [0.0]
+
+            def _convert():
+                with _DOCLING_INFER_LOCK:
+                    t_compute = time.time()
+                    try:
+                        return get_converter().convert(src_path)
+                    finally:
+                        spent[0] += time.time() - t_compute
+
+            try:
+                # Same guard as indexing: retries a partial / out-of-memory conversion.
+                res, _warning = convert_checked(_convert, file_name)
+            finally:
+                release_accelerator_cache()
+            return res, spent[0]
 
         result, compute_seconds = await run_in_threadpool(_run_docling_ocr)
         text = result.document.export_to_markdown()
