@@ -74,9 +74,6 @@ _converter_lock = threading.Lock()
 # media.py imports this same lock — do not create separate ones.
 DOCLING_INFER_LOCK = threading.Lock()
 
-# HuggingFace tokenizer cache (keyed by local path) to avoid reloading
-_tokenizer_cache: dict[str, Any] = {}
-
 # Page-level parse progress (OCR progress bar). docling has no progress callback,
 # so we observe pages as they complete and report ("loading", done, total).
 # thread-local, since convert runs synchronously in one worker thread; media.py's
@@ -249,83 +246,17 @@ def asr_wants_local_whisper() -> bool:
     return True
 
 
-def _resolve_tokenizer_path(embedding_model_name: Optional[str]) -> Optional[Path]:
-    """Resolve the local HF tokenizer path used by HybridChunker (with fallback).
-
-    Path: `assets/hf_tokenizers/<mangled>` (BAAI/bge-m3 → BAAI--bge-m3). The chunker tokenizer only
-    counts tokens to decide split points and need not match the embedding model, so on an exact-match
-    miss it falls back to any existing tokenizer.
-
-    Args:
-        embedding_model_name: The model name to align with (e.g. `BAAI/bge-m3`).
-
-    Returns:
-        An absolute path string; returns None when nothing is found.
-    """
-    assets = resolve_assets_dir()
-    if not assets:
-        return None
-    tokenizers_dir = assets / "hf_tokenizers"
-    if not tokenizers_dir.is_dir():
-        return None
-
-    if embedding_model_name:
-        mangled = embedding_model_name.replace("/", "--")
-        exact = tokenizers_dir / mangled
-        if exact.is_dir():
-            return exact
-
-    fallback = next(
-        (p for p in sorted(tokenizers_dir.iterdir()) if p.is_dir()),
-        None,
-    )
-    if fallback:
-        logger.info(
-            f"[DOCLING] No exact tokenizer match for '{embedding_model_name}'; "
-            f"falling back to local tokenizer '{fallback.name}' for chunk token counting"
-        )
-    return fallback
-
-
-def _load_local_tokenizer(path: Path):
-    """Load an AutoTokenizer from a local directory and cache it."""
-    key = str(path)
-    if key not in _tokenizer_cache:
-        from transformers import AutoTokenizer
-        logger.info(f"[DOCLING] Loading local tokenizer from {path}")
-        _tokenizer_cache[key] = AutoTokenizer.from_pretrained(str(path))
-    return _tokenizer_cache[key]
-
-
 def get_hf_tokenizer(tokenizer_name: Optional[str]):
-    """Resolve and load the HF tokenizer (local assets preferred; fail loudly on missing files when offline).
+    """Token counter for chunk sizing (kept under its old name for callers).
 
-    The docling path and the fallback (non-docling file types) splitting share the same tokenizer,
-    guaranteeing both paths measure the token budget with the same ruler (bge-m3).
-
-    Args:
-        tokenizer_name: HF model name (e.g. "BAAI/bge-m3"); None uses the online fallback.
-
-    Returns:
-        An AutoTokenizer instance (local loads are cached via _load_local_tokenizer).
-
-    Raises:
-        RuntimeError: HF_HUB_OFFLINE=1 and no matching directory found under assets/hf_tokenizers.
+    Delegates to ``chunk_tokenizer.get_chunk_tokenizer``: local assets first,
+    then the bundled tokenizer, never a download. ``tokenizer_name`` is the
+    embedding model name, or None for providers without a HuggingFace name
+    (OpenAI / Azure), which used to crash every docling-parsed file.
     """
-    local_tok_path = _resolve_tokenizer_path(tokenizer_name)
-    if local_tok_path:
-        return _load_local_tokenizer(local_tok_path)
-    offline = os.environ.get("HF_HUB_OFFLINE") == "1"
-    if offline:
-        mangled = (tokenizer_name or "").replace("/", "--")
-        raise RuntimeError(
-            f"[DOCLING] hf_offline=true but no local tokenizer found for "
-            f"'{tokenizer_name}'. Expected at assets/hf_tokenizers/{mangled}"
-        )
-    # Legacy fallback — first use will hit HF Hub. Acceptable since
-    # production sets HF_HUB_OFFLINE=1 + local tokenizer assets.
-    from transformers import AutoTokenizer
-    return AutoTokenizer.from_pretrained(tokenizer_name)
+    from src.domain.rag.chunk_tokenizer import get_chunk_tokenizer
+
+    return get_chunk_tokenizer(tokenizer_name)
 
 
 def _apply_docling_env():
