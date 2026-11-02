@@ -17,6 +17,8 @@ from src.domain.exceptions import (
     QueryExecutionError,
 )
 from src.domain.rag.auto_merging import AutoMergingRetriever
+from src.domain.rag.hybrid_search import SearchSettings
+from src.domain.rag.merge_plan import MERGE_DISABLED
 from src.domain.rag.query_engine import QueryEngine
 from src.infrastructure.cache.cache_service import CacheKeys, CacheService, CacheTTL
 from src.log import get_adapter_logger, log_err, log_op
@@ -27,19 +29,12 @@ if TYPE_CHECKING:
 logger = get_adapter_logger()
 
 
-def _fusion_config() -> tuple:
-    """Read config.rag.retrieval → (hybrid_fusion, rrf_k, text_search_config).
+def _merge_threshold(ctx: "RAGContext", auto_merge: Optional[bool]) -> float:
+    """Merge threshold for this request: the configured one, or "never" when
+    auto-merge is off (per request via ``auto_merge``, else per config)."""
+    enabled = ctx.auto_merging_enabled if auto_merge is None else bool(auto_merge)
+    return ctx.merge_threshold if enabled else MERGE_DISABLED
 
-    Falls back to rrf/60/simple (the current defaults) when settings are missing;
-    a config read failure never blocks the query.
-    """
-    try:
-        ret = getattr(getattr(Config.get_config_model(), "rag", None), "retrieval", None)
-        return (getattr(ret, "hybrid_fusion", "rrf") or "rrf",
-                int(getattr(ret, "rrf_k", 60) or 60),
-                getattr(ret, "text_search_config", "simple") or "simple")
-    except Exception:
-        return "rrf", 60, "simple"
 
 # Global query concurrency gate (REST + MCP), capped at
 # rag.retrieval.max_concurrent_queries; excess queries queue rather than drop.
@@ -65,6 +60,20 @@ class RAGQueryService:
     def __init__(self, ctx: "RAGContext"):
         self._ctx = ctx
 
+    def _engine_for(self, folder_id: int, vector_store) -> QueryEngine:
+        """The folder's cached QueryEngine (built on first use).
+
+        Safe to share between concurrent requests: it holds only the store, its
+        index and the reranker — per-request settings are passed to each call.
+        The cache is cleared when the reranker or embedding changes.
+        """
+        key = f"{folder_id}"
+        engine = self._ctx.query_engines.get(key)
+        if engine is None:
+            engine = QueryEngine(vector_store=vector_store, reranker=self._ctx.reranker)
+            self._ctx.query_engines[key] = engine
+        return engine
+
     async def query_rag(
         self,
         query: str,
@@ -75,6 +84,7 @@ class RAGQueryService:
         use_cache: bool = True,
         sparse_top_k: Optional[int] = None,
         hybrid_alpha: Optional[float] = None,
+        auto_merge: Optional[bool] = None,
     ) -> RAGQueryResult:
         """Hybrid retrieval (vector + BM25) with optional rerank and result cache.
 
@@ -89,7 +99,10 @@ class RAGQueryService:
             similarity_cutoff: Similarity threshold; ignored when the reranker is enabled.
             use_cache: Whether to use the result cache (False = force retrieval).
             sparse_top_k: Number of BM25 candidates; None = config default.
-            hybrid_alpha: Vector vs BM25 weight (0=pure BM25, 1=pure vector); None = config default.
+            hybrid_alpha: Deprecated and ignored (fusion is rank-based); kept for
+                API compatibility.
+            auto_merge: Merge hit leaves into their section for this request;
+                None = follow ``rag.retrieval.auto_merging.enabled``.
 
         Returns:
             RAGQueryResult (query / results / total_results / retrieval_time_ms).
@@ -98,6 +111,9 @@ class RAGQueryService:
 
         try:
             folder = ctx.indexing_service.get_folder(folder_id, token)
+            settings = SearchSettings.from_config(
+                top_k=top_k, similarity_cutoff=similarity_cutoff, sparse_top_k=sparse_top_k)
+            merge_threshold = _merge_threshold(ctx, auto_merge)
 
             cache_key = None
             cache = CacheService.get_instance()
@@ -110,6 +126,7 @@ class RAGQueryService:
                     str(sparse_top_k) if sparse_top_k is not None else "default_sparse_top_k",
                     f"{hybrid_alpha}" if hybrid_alpha is not None else "default_hybrid_alpha",
                     f"rerank:{ctx.reranker._model}" if ctx.reranker else "no_rerank",
+                    f"merge:{merge_threshold}",
                 ]
                 query_fingerprint = hashlib.sha256(
                     "|".join(fingerprint_parts).encode("utf-8")
@@ -125,34 +142,10 @@ class RAGQueryService:
 
             vector_store = ctx.get_vector_store(folder_id, token)
 
-            fusion, rrf_k, tsc = _fusion_config()
-            engine_key = f"{folder_id}"
-            query_engine = ctx.query_engines.get(engine_key)
-            if query_engine is None:
-                query_engine = QueryEngine(
-                    vector_store=vector_store,
-                    top_k=top_k,
-                    similarity_cutoff=similarity_cutoff,
-                    sparse_top_k=sparse_top_k,
-                    hybrid_alpha=hybrid_alpha,
-                    reranker=ctx.reranker,
-                    hybrid_fusion=fusion,
-                    rrf_k=rrf_k,
-                    text_search_config=tsc,
-                )
-                ctx.query_engines[engine_key] = query_engine
-            else:
-                query_engine.update_config(
-                    top_k=top_k,
-                    similarity_cutoff=similarity_cutoff,
-                    sparse_top_k=sparse_top_k,
-                    hybrid_alpha=hybrid_alpha,
-                    hybrid_fusion=fusion,
-                    rrf_k=rrf_k,
-                )
-
+            query_engine = self._engine_for(folder_id, vector_store)
             async with _get_query_semaphore():
-                search_results = await query_engine.aquery(query)
+                search_results = await query_engine.aquery(
+                    query, settings, merge_threshold=merge_threshold)
 
             # Backfill folder_name if missing (backward compat)
             for res in search_results:
@@ -205,20 +198,11 @@ class RAGQueryService:
         ctx = self._ctx
         folder = ctx.indexing_service.get_folder(folder_id, token)
         vector_store = ctx.get_vector_store(folder_id, token)
-        fusion, rrf_k, tsc = _fusion_config()
-        engine = QueryEngine(
-            vector_store=vector_store,
-            top_k=top_k,
-            similarity_cutoff=similarity_cutoff,
-            sparse_top_k=sparse_top_k,
-            hybrid_alpha=hybrid_alpha,
-            reranker=ctx.reranker,
-            hybrid_fusion=fusion,
-            rrf_k=rrf_k,
-            text_search_config=tsc,
-        )
+        settings = SearchSettings.from_config(
+            top_k=top_k, similarity_cutoff=similarity_cutoff, sparse_top_k=sparse_top_k)
+        engine = self._engine_for(folder_id, vector_store)
         async with _get_query_semaphore():
-            trace = await engine.atrace(query, top_k=top_k)
+            trace = await engine.atrace(query, settings)
         for r in trace["results"]:
             if not r["metadata"].get("file_name"):
                 r["metadata"]["file_name"] = None
@@ -300,17 +284,13 @@ class RAGQueryService:
                 )
 
         if mode == "search":
-            # One-shot retriever: not cached, to stay flexible when folders switch often.
-            config = Config.get_config_model().rag.retrieval
+            # One retriever per request (it records that request's outcome); it
+            # shares the folder's searcher, so the path is the REST one.
             retriever = AutoMergingRetriever(
                 vector_store=vector_store,
-                reranker=ctx.reranker,
-                merge_threshold=(
-                    ctx.merge_threshold if ctx.auto_merging_enabled else 1.1
-                ),
+                merge_threshold=_merge_threshold(ctx, None),
                 expand_context_neighbors=ctx.expand_neighbors,
-                sparse_top_k=config.default_sparse_top_k,
-                hybrid_alpha=config.default_hybrid_alpha,
+                searcher=self._engine_for(folder.id, vector_store).searcher,
             )
             async with _get_query_semaphore():
                 return await handle_search(

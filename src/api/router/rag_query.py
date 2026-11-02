@@ -5,13 +5,13 @@ Handles retrieval queries only:
 - POST /api/rag/query                query indexed content (via hybrid + rerank)
 
 Indexing endpoints have moved to rag_indexing.py.
-Note: this endpoint uses RAGAdapter.query_rag (flat-style hybrid retrieval). For Auto-Merging +
-context expansion, use the MCP tool (Agentic_{folder_name}), or extend this endpoint with a
-mode parameter in a future version.
+Note: this endpoint retrieves through the same hybrid search path as the MCP search tool
+(src/domain/rag/hybrid_search.py) and applies the same auto-merge rule. Neighbour expansion
+(expand_context) remains an MCP-only feature.
 
-Defaults: if the four retrieval parameters (top_k / similarity_cutoff / sparse_top_k /
-hybrid_alpha) are not provided, they are read live from `rag.retrieval.*` in `config.yaml`,
-staying consistent with the server's overall config.
+Defaults: retrieval parameters that are not provided (top_k / similarity_cutoff /
+sparse_top_k / auto_merge) are read live from `rag.retrieval.*`, staying consistent with the
+server's overall config. hybrid_alpha is accepted for compatibility and ignored.
 """
 
 from fastapi import APIRouter, Body, Depends, HTTPException, Request
@@ -44,26 +44,24 @@ _QUERY_REQUEST_EXAMPLES = {
             "top_k": 10,
             "similarity_cutoff": 0.25,
             "sparse_top_k": 12,
-            "hybrid_alpha": 0.75,
         },
     },
-    "vector_heavy": {
-        "summary": "Vector-only retrieval (BM25 off)",
-        "description": "hybrid_alpha=1.0 uses vector scores only, ignoring keywords. Good for semantically close but differently worded queries.",
-        "value": {
-            "query": "What is the main conclusion?",
-            "folder_name": "my-folder",
-            "hybrid_alpha": 1.0,
-        },
-    },
-    "keyword_heavy": {
-        "summary": "Keyword-only retrieval (vector off)",
-        "description": "hybrid_alpha=0.0 uses BM25 only. Good for exact terms (e.g. model numbers, names).",
+    "keyword_depth": {
+        "summary": "Deeper keyword (BM25) candidate pool",
+        "description": "sparse_top_k sets how many BM25 hits enter fusion. Raise it when exact terms (model numbers, names) are missed.",
         "value": {
             "query": "AMD AI 395",
             "folder_name": "my-folder",
-            "hybrid_alpha": 0.0,
             "sparse_top_k": 30,
+        },
+    },
+    "no_auto_merge": {
+        "summary": "Leaf chunks only (no auto-merge)",
+        "description": "auto_merge=false returns the matched chunks as they are; null / omitted follows `config.rag.retrieval.auto_merging.enabled`.",
+        "value": {
+            "query": "What is the core conclusion of this document?",
+            "folder_name": "my-folder",
+            "auto_merge": False,
         },
     },
 }
@@ -180,6 +178,7 @@ async def query_rag(
             similarity_cutoff=similarity_cutoff,
             sparse_top_k=sparse_top_k,
             hybrid_alpha=hybrid_alpha,
+            auto_merge=query_request.auto_merge,
         )
         _elapsed_ms = (_time.perf_counter() - _t0) * 1000
         _latency_ms = int(_elapsed_ms)

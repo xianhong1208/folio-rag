@@ -30,7 +30,7 @@ License: MIT&nbsp;·&nbsp;Python 3.12&nbsp;·&nbsp;PostgreSQL + pgvector&nbsp;·
 - **每資料夾一個 MCP 工具,依 token 隔離。** 每個資料夾註冊成 `Agentic_<folder>` 工具;呼叫者看到的工具清單會依其 token 過濾 —— 你只看得到自己擁有的資料夾。歸屬以 token 穩定的 `jti` 為 key。
 - **OAuth 2.1 resource server。** 一個 `RemoteAuthProvider` + `JWTVerifier` 保護 `/mcp`;token 用 MCP Gate 的 JWKS 在本地離線驗證（RS256),並綁定本伺服器的 audience,別台的 token 在這裡無效。
 - **文件 + 音訊匯入。** [Docling](https://github.com/DS4SD/docling) 解析 PDF / DOCX / PPTX / XLSX / 圖片（含 OCR）;**FireRedASR** 在本地做繁體中文語音轉錄（或任何 OpenAI 相容的 `/v1/transcriptions`）。
-- **內建評測 harness。** 從你自己的 chunk 自動生成問題,對 `vector` / `hybrid` / `rerank` 評 **Recall@k · MRR · nDCG@k**,讓你針對真實語料調校檢索。
+- **內建評測 harness。** 從你自己的 chunk 自動生成問題,對 `vector` / `bm25` / `rrf` / `rerank`（全部走正式檢索路徑）評 **Recall@k · MRR · nDCG@k**,讓你針對真實語料調校檢索。
 - **Retrieval Terminal 主控台。** `/admin` 的 React 單頁主控台:管線總覽、資料夾與檔案、會顯示**逐訊號檢索軌跡**的 Search Playground、即時索引任務串流、查詢分析、評測 harness、即時設定、健康狀態與稽核時間軸。
 - **跑在你的 GPU 上。** PyTorch 以 PEP 735 dependency group 依平台選擇（`rocm-r714` / `rocm-r713` / `cuda` / `cpu`）—— AMD ROCm、NVIDIA CUDA 或純 CPU。
 
@@ -114,6 +114,10 @@ Agentic_product-docs  mode="search"  query="要怎麼輪替簽章金鑰?"
 | **Merge** | 同段落的 leaf **auto-merge** 成 parent;單一命中**擴展**到鄰居。 |
 | **Rerank** | cross-encoder（`bge-reranker-v2-m3` / `mxbai-rerank-base-v2`）重排,決定最終 Top-K 精度。 |
 | **Answer** | 走 `answer` 路徑時,`gpt-oss-120b` 依檢索到的脈絡合成回答,並由 corrective-RAG 信心檢查把關。 |
+
+### 檢索細節
+
+**單一檢索路徑。** REST `/api/rag/query`、MCP search 工具、主控台 Search Playground（含檢索軌跡）與評測 harness 都走同一份程式碼（`src/domain/rag/hybrid_search.py`）:密集向量 + BM25,以 `rrf`（預設）或 `concat`（先放向量命中,再接只有 BM25 命中的段落,交給 reranker 排序）融合,接著 rerank,再用同一條規則做 auto-merge。REST 每次請求可帶 `auto_merge`（`null` = 依 `rag.retrieval.auto_merging.enabled`）;`hybrid_alpha` 仍接受但不再生效。每次請求的參數隨呼叫傳入,不寫進各資料夾共用的 engine,所以不同 `top_k` 的並行請求不會互相干擾。
 
 **驗證。** Agentic RAG 是 *resource server*。FastMCP 會發佈 `/.well-known/oauth-protected-resource/mcp`,把用戶端導向 MCP Gate;伺服器抓一次 MCP Gate 的 JWKS,之後每個 bearer token 都離線驗證（RS256 —— 簽章、issuer、audience、效期、scope）。MCP Gate 從不在請求路徑上。
 

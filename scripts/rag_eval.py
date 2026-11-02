@@ -5,8 +5,9 @@ Usage:
     uv run --no-sync python scripts/rag_eval.py --folder <name or ID> --n 20
 
 Samples N indexed leaf chunks, uses the configured LLM to generate one question
-per chunk (gold = that chunk's node_id), then runs vector / hybrid / rrf / rerank
-retrieval and reports Recall@k, MRR, and nDCG@k for each mode. The eval set is
+per chunk (gold = that chunk's node_id), then runs vector / bm25 / rrf / rerank
+retrieval — all through the production search path — and reports Recall@k, MRR,
+and nDCG@k for each mode. The eval set is
 cached under reports/ and reused so scores are comparable across parameter changes.
 """
 from __future__ import annotations
@@ -149,69 +150,34 @@ def generate_eval_set(folder, n: int, out_path: str):
     return items
 
 
-async def _retr(index, query: str, vmode: str, k: int):
-    from llama_index.core.retrievers import VectorIndexRetriever
-    kwargs = {"sparse_top_k": max(k, 20)} if vmode in ("hybrid", "sparse") else {}
-    r = VectorIndexRetriever(index=index, similarity_top_k=k,
-                             vector_store_query_mode=vmode, vector_store_kwargs=kwargs)
-    nodes = await r.aretrieve(query)
-    return [n for n in nodes if n.node.metadata.get("node_role", "leaf") == "leaf"]
+# Modes, all through the production retrieval path (src/domain/rag/hybrid_search.py):
+#   vector — dense only;  bm25 — keyword (FTS) only, with the production segmentation;
+#   rrf    — dense + BM25 fused by RRF, no rerank;
+#   rerank — the production search: configured fusion + cross-encoder rerank.
+BASE_MODES = ("vector", "bm25", "rrf")
 
 
-def _rrf(lists, k, rrf_k=60):
-    scores, node_map = {}, {}
-    for lst in lists:
-        for rank, n in enumerate(lst):
-            nid = n.node.node_id
-            scores[nid] = scores.get(nid, 0.0) + 1.0 / (rrf_k + rank + 1)
-            node_map.setdefault(nid, n)
-    return sorted(node_map.values(), key=lambda n: scores[n.node.node_id], reverse=True)[:k]
-
-
-async def _rank_of_gold(index, reranker, query: str, gold: str, mode: str, k: int):
-    """Return the gold node_id's rank (1-based) in this mode's top-k, or None if absent.
-
-    mode: vector (dense) / hybrid (llama_index concat) / rrf (dense+sparse RRF) /
-          rerank (cross-encoder rerank over the RRF candidates — matches
-          production aquery).
-    """
-    retrieve_k = k * 3 if mode == "rerank" else k
+async def _retrieve_nodes(searcher, settings, query: str, mode: str, k: int):
+    """This mode's top-k leaf nodes for the query (best first)."""
     if mode == "vector":
-        nodes = (await _retr(index, query, "default", k))[:k]
-    elif mode == "hybrid":
-        nodes = (await _retr(index, query, "hybrid", k))[:k]
-    elif mode in ("rrf", "rerank"):
-        dense = await _retr(index, query, "default", retrieve_k)
-        sparse = await _retr(index, query, "sparse", retrieve_k)
-        nodes = _rrf([dense, sparse], retrieve_k)
-        if mode == "rerank" and reranker and nodes:
-            nodes = await reranker.arerank(query, nodes, top_n=k)
-        else:
-            nodes = nodes[:k]
-    else:
-        nodes = []
-    for i, n in enumerate(nodes):
+        return (await searcher.dense(query, k))[:k]
+    if mode == "bm25":
+        return (await searcher.sparse(query, max(k, settings.sparse_top_k), settings))[:k]
+    if mode == "rrf":
+        fused, _, _ = await searcher.candidates(
+            query, settings.with_overrides(fusion="rrf"), k=k)
+        return fused[:k]
+    if mode == "rerank":
+        return (await searcher.search(query, settings.with_overrides(top_k=k))).nodes
+    return []
+
+
+async def _rank_of_gold(searcher, settings, query: str, gold: str, mode: str, k: int):
+    """The gold node_id's rank (1-based) in this mode's top-k, or None if absent."""
+    for i, n in enumerate(await _retrieve_nodes(searcher, settings, query, mode, k)):
         if n.node.node_id == gold:
             return i + 1
     return None
-
-
-async def _retrieve_nodes(index, reranker, query: str, mode: str, k: int):
-    """Return this mode's top-k nodes (same retrieval as _rank_of_gold, but the nodes
-    themselves — used to build answer-generation context for the judge)."""
-    retrieve_k = k * 3 if mode == "rerank" else k
-    if mode == "vector":
-        return (await _retr(index, query, "default", k))[:k]
-    if mode == "hybrid":
-        return (await _retr(index, query, "hybrid", k))[:k]
-    if mode in ("rrf", "rerank"):
-        dense = await _retr(index, query, "default", retrieve_k)
-        sparse = await _retr(index, query, "sparse", retrieve_k)
-        nodes = _rrf([dense, sparse], retrieve_k)
-        if mode == "rerank" and reranker and nodes:
-            return await reranker.arerank(query, nodes, top_n=k)
-        return nodes[:k]
-    return []
 
 
 def _answer_and_judge(client, model: str, query: str, contexts: list) -> dict:
@@ -266,6 +232,8 @@ def _config_snapshot() -> dict:
             "rerank_enabled": bool(getattr(getattr(c, "rerank", None), "enabled", False)),
             "rerank_model": getattr(getattr(c, "rerank", None), "model", None),
             "fusion": getattr(ret, "hybrid_fusion", None),
+            "sparse_top_k": getattr(ret, "default_sparse_top_k", None),
+            "text_search_config": getattr(ret, "text_search_config", None),
             "contextual": bool(getattr(getattr(c, "contextual_retrieval", None), "enabled", False)),
         }
     except Exception:
@@ -357,13 +325,14 @@ async def evaluate(folder, items, k: int, progress=None, judge: bool = False) ->
     judge=True also generates an answer per question over the best retrieval mode and
     LLM-grades faithfulness + relevance (2 extra LLM calls/item — opt-in, slower).
     """
-    from llama_index.core import VectorStoreIndex
     from src.adapter.rag import get_rag_adapter
+    from src.domain.rag.hybrid_search import HybridSearcher, SearchSettings
     ctx = get_rag_adapter()._query_svc._ctx
     vs = ctx.get_vector_store(folder.id, folder.user_token)
-    index = VectorStoreIndex.from_vector_store(vs)
     reranker = ctx.reranker
-    modes = ["vector", "hybrid", "rrf"] + (["rerank"] if reranker else [])
+    searcher = HybridSearcher(vs, reranker=reranker)
+    settings = SearchSettings.from_config(top_k=k)
+    modes = list(BASE_MODES) + (["rerank"] if reranker else [])
 
     jclient = jmodel = None
     best_mode = "rerank" if reranker else "rrf"
@@ -382,7 +351,7 @@ async def evaluate(folder, items, k: int, progress=None, judge: bool = False) ->
     for j, it in enumerate(items):
         row = {"query": it["query"], "ranks": {}}
         for m in modes:
-            rank = await _rank_of_gold(index, reranker, it["query"], it["gold_node_id"], m, k)
+            rank = await _rank_of_gold(searcher, settings, it["query"], it["gold_node_id"], m, k)
             row["ranks"][m] = rank
             if rank is not None and rank <= k:
                 agg[m]["recall"] += 1
@@ -390,7 +359,7 @@ async def evaluate(folder, items, k: int, progress=None, judge: bool = False) ->
                 agg[m]["ndcg"] += 1.0 / math.log2(rank + 1)
         if judge:
             try:
-                nodes = await _retrieve_nodes(index, reranker, it["query"], best_mode, k)
+                nodes = await _retrieve_nodes(searcher, settings, it["query"], best_mode, k)
                 contexts = [n.node.text for n in nodes[:6]]
                 res = await loop.run_in_executor(
                     None, _answer_and_judge, jclient, jmodel, it["query"], contexts)

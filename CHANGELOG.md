@@ -7,6 +7,10 @@ to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 ## [Unreleased]
 
 ### Added
+- **REST auto-merge.** `POST /api/rag/query` applies the same auto-merge rule as
+  the MCP search tool; `auto_merge` (true / false / null = follow
+  `rag.retrieval.auto_merging.enabled`) overrides it per request. Merged results
+  carry `node_role: "parent"` and `merged_from`.
 - **Console login.** The `/admin` console now signs in with an MCP Gate access
   token for this service (`POST /api/console/session`). The token is verified
   offline once and exchanged for an HttpOnly, SameSite=Strict session cookie
@@ -19,6 +23,17 @@ to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   it Settings and System Health are read-only.
 
 ### Changed
+- **One retrieval path.** REST, the MCP search tool, the console Search
+  Playground and the evaluation harness now all retrieve through
+  `src/domain/rag/hybrid_search.py`. The MCP path used llama-index's native
+  hybrid mode on the raw query (no Chinese segmentation, no RRF), so agents got
+  almost no BM25 hits on Chinese questions.
+- `hybrid_fusion: concat` is now "dense hits, then BM25-only hits" (left for the
+  reranker to order) instead of llama-index's native hybrid, which behaved as
+  vector-only for Chinese. `hybrid_alpha` is deprecated and ignored.
+- The evaluation harness scores `vector` / `bm25` / `rrf` / `rerank` through the
+  production path. The old `hybrid` mode (identical to `vector`) is gone, and the
+  old BM25 numbers skipped segmentation: compare new runs with new runs only.
 - **The console is scoped to the signed-in token.** It shows and manages only
   the folders owned by the token's `jti` (the same ones REST / MCP callers with
   that token reach); folders it creates belong to it. The *Owner Token* field
@@ -31,6 +46,9 @@ to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   logs a warning at startup.
 
 ### Fixed
+- Concurrent REST queries on one folder could run with each other's `top_k` /
+  cutoff: the cached per-folder engine was reconfigured per request. Settings
+  are now passed with each call.
 - Retrying a file's indexing checked folder ownership but not that the file was
   in that folder.
 - The chunk viewer no longer reads a file name from outside the folder.
