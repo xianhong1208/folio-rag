@@ -1,4 +1,4 @@
-"""Agentic RAG MCP Server — FastAPI + FastMCP application assembly.
+"""Folio MCP Server — FastAPI + FastMCP application assembly.
 
 Exposes MCP RAG queries (no file/folder REST API), wires auth and request-id
 middleware, and registers a per-folder MCP tool for each (folder, user_token) pair.
@@ -46,7 +46,7 @@ def _load_instructions() -> str:
         return path.read_text(encoding="utf-8").strip()
     except FileNotFoundError:
         api_logger.warning(f"Instructions file not found: {path}, using default")
-        return "Agentic RAG — Hierarchical RAG with auto-merging retrieval"
+        return "Folio — hierarchical RAG with auto-merging retrieval"
 
 
 def create_app(config: BaseModel, transport: str) -> FastAPI:
@@ -54,9 +54,9 @@ def create_app(config: BaseModel, transport: str) -> FastAPI:
         raise RuntimeError("create_app requires a Pydantic ConfigModel instance.")
 
     app_config = getattr(config, "app", None)
-    app_name = getattr(app_config, "name", "Agentic RAG")
+    app_name = getattr(app_config, "name", "Folio")
     app_version = get_version()  # single source of truth: pyproject.toml (see src/version.py)
-    app_title = getattr(app_config, "title", "Agentic RAG MCP Server")
+    app_title = getattr(app_config, "title", "Folio MCP Server")
     app_description = getattr(app_config, "description", "")
     instructions = _load_instructions()
 

@@ -1,4 +1,4 @@
-"""Agentic RAG MCP Server CLI entry point.
+"""Folio MCP Server CLI entry point.
 
 Default run (`uv run python main.py`) does DB bootstrap, auto migration, Docling
 warmup (only when a role uses docling's local models), then starts the FastAPI +
@@ -43,11 +43,11 @@ _os.environ.setdefault("PYTORCH_CUDA_ALLOC_CONF", "expandable_segments:True")
 # library aborts (SIGABRT with si_code=SI_TKILL, i.e. abort() from inside the
 # process — torch/CUDA-style teardown) and, with the launcher's `ulimit -c
 # unlimited`, that left a ~16 GB core.<pid> in the repo root on every restart.
-# Set AGENTIC_RAG_CORE_DUMPS=1 to keep the launcher's limit when a native
+# Set FOLIO_CORE_DUMPS=1 (formerly AGENTIC_RAG_CORE_DUMPS) to keep the launcher's limit when a native
 # backtrace is actually wanted.
 def _disable_core_dumps() -> None:
-    import os
-    if os.environ.get("AGENTIC_RAG_CORE_DUMPS", "").strip().lower() in ("1", "true", "yes"):
+    from src.utils import env_compat
+    if (env_compat.getenv("FOLIO_CORE_DUMPS") or "").strip().lower() in ("1", "true", "yes"):
         return
     try:
         import resource
@@ -120,7 +120,7 @@ def run_migration_command(action: str, message: str = None, revision: str = "-1"
 
 def main():
     parser = argparse.ArgumentParser(
-        description="Agentic RAG MCP Server",
+        description="Folio MCP Server",
         formatter_class=argparse.ArgumentDefaultsHelpFormatter,
     )
     parser.add_argument("--config", type=str, default="config/config.yaml")
@@ -235,7 +235,12 @@ def main():
         port = args.port or getattr(server_conf, "port", 5032)
         transport = args.transport or getattr(server_conf, "transport", "http")
 
-        logger.info("Starting Agentic RAG MCP Server...")
+        for change in getattr(config_obj.app, "renamed_defaults", []) if config_obj.app else []:
+            logger.warning(
+                f"⚠️ config.yaml still has the pre-Folio default ({change}); "
+                "update config/config.yaml to silence this warning")
+
+        logger.info(f"Starting {getattr(config_obj.app, 'title', None) or 'Folio MCP Server'}...")
         logger.info(f"Config: {args.config}")
         logger.info(f"URL: http://{host}:{port}")
         mcp_endpoint = "mcp" if transport == "http" else transport

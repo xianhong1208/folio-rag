@@ -1,8 +1,10 @@
 
-"""Agentic Tools — MCP entry point.
+"""Per-folder MCP tools — entry point.
 
 config.modules.rag.mcp_tools.function_name points at this module's
-register_agentic_tools. It does two things:
+register_agentic_tools. (The module and function names describe the agentic,
+three-mode query and are referenced by existing config.yaml files, so they did
+not change when the project was renamed to Folio.) It does two things:
 1. Initializes DynamicToolManager (bound to the FastMCP instance).
 2. Provides the _query function — injected as the backend when
    dynamic_tool_manager registers a tool.
@@ -340,7 +342,7 @@ def _build_resource_files(response: dict) -> List[File]:
 def register_agentic_tools(mcp: FastMCP) -> None:
     """Module entry point — called by app.create_app after dynamic loading."""
     DynamicToolManager.initialize(mcp)
-    logger.info("✅ Agentic tools module initialized")
+    logger.info("✅ Folio MCP tools module initialized")
 
 
 async def _query(

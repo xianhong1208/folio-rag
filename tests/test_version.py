@@ -19,7 +19,7 @@ def test_metadata_path():
     """(1) importlib.metadata available → return directly (the primary path)."""
     with patch.object(v, "_pkg_version", return_value="9.9.9") as m:
         assert v.get_version() == "9.9.9"
-    m.assert_called_once_with("agentic-rag")
+    m.assert_called_once_with("folio-rag")
 
 
 def test_pyproject_fallback(tmp_path):

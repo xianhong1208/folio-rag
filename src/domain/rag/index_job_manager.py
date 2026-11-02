@@ -299,7 +299,7 @@ class IndexingJobManager:
 
     # Fallback job-level cap — only used if config can't be read at all. References the IndexingConfig
     # field default (10 days) instead of duplicating the 864000 literal.
-    # Resolution order: env RAG_JOB_TIMEOUT_SECONDS > config.rag.indexing.job_timeout_seconds > this.
+    # Resolution order: env FOLIO_JOB_TIMEOUT_SECONDS > config.rag.indexing.job_timeout_seconds > this.
     _JOB_TIMEOUT_FALLBACK = IndexingConfig.model_fields["job_timeout_seconds"].default
 
     # Upper bound cancel_job waits for a task to actually exit. Blocking calls inside to_thread
@@ -382,19 +382,19 @@ class IndexingJobManager:
     def _resolve_job_timeout(cls) -> int:
         """Resolve the job-level timeout in seconds.
 
-        Priority: env RAG_JOB_TIMEOUT_SECONDS > config.rag.indexing.job_timeout_seconds > fallback.
+        Priority: env FOLIO_JOB_TIMEOUT_SECONDS > config.rag.indexing.job_timeout_seconds > fallback.
 
         Returns:
             Cap in seconds; <=0 means no limit.
         """
-        import os
-        env_val = os.getenv("RAG_JOB_TIMEOUT_SECONDS")
+        from src.utils import env_compat
+        env_val = env_compat.getenv("FOLIO_JOB_TIMEOUT_SECONDS")
         if env_val:
             try:
                 return int(env_val)
             except ValueError:
                 logger.warning(
-                    f"Invalid RAG_JOB_TIMEOUT_SECONDS={env_val!r}, using config/default"
+                    f"Invalid FOLIO_JOB_TIMEOUT_SECONDS={env_val!r}, using config/default"
                 )
         try:
             from src.config.config_manager import Config

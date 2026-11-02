@@ -17,7 +17,7 @@ from pathlib import Path
 
 logger = logging.getLogger(__name__)
 
-_DISTRIBUTION_NAME = "agentic-rag"
+_DISTRIBUTION_NAME = "folio-rag"
 # src/version.py -> parents[1] = project root (where a dev checkout's pyproject.toml lives)
 _PYPROJECT_PATH = Path(__file__).resolve().parents[1] / "pyproject.toml"
 
@@ -37,6 +37,6 @@ def get_version() -> str:
         logger.warning(
             f"Could not resolve version from metadata or {_PYPROJECT_PATH} "
             f"({e}); returning 0.0.0. For packaged deployments, ensure libs/ "
-            f"contains agentic_rag's dist-info."
+            f"contains the folio-rag dist-info."
         )
         return "0.0.0"

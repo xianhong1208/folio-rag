@@ -1,5 +1,5 @@
 database:
-  # DATABASE_URL overrides this; the default is used when it is not set (mirrors MCP Center).
+  # DATABASE_URL overrides this; the default is used when it is not set (same convention as MCP Gate).
   url: "${DATABASE_URL:-postgresql://postgres:CHANGE_ME@localhost/agentic_rag}"
   port: 5444
   echo: false
@@ -34,10 +34,10 @@ logging:
 
 # Application
 app:
-  name: "Agentic RAG"
-  title: "Agentic RAG MCP Server"
-  description: "Agentic RAG — Hierarchical chunking + AutoMerging retrieval for LLM agents"
-  tool_prefix: "Agentic"
+  name: "Folio"
+  title: "Folio MCP Server"
+  description: "Folio — hierarchical chunking + auto-merging retrieval for LLM agents"
+  tool_prefix: "Folio"                          # per-folder MCP tools are named Folio_<folder>
 
 # ===========================================================================
 # RAG — three sections: (1) model services (2) document processing (3) query behavior
@@ -107,12 +107,12 @@ rag:
   # Indexing background-job behavior (auto-indexing of uploaded files goes through here)
   indexing:
     # Max concurrent jobs (100 ≈ unlimited); lower it only on GPU OOM / OCR thrash (typically 4-8)
-    # env RAG_INDEXING_CONCURRENCY can override this at runtime
+    # env FOLIO_INDEXING_CONCURRENCY can override this at runtime
     max_concurrent_jobs: 100
     # Per-file / per-job indexing limit defaults to 10 days (see IndexingConfig in
     # src/config/model.py) — for large-file OCR on slow machines. Change the default
     # in model.py; do not override it here. For temporary tweaks use the env vars:
-    # RAG_PER_FILE_TIMEOUT_SECONDS / RAG_JOB_TIMEOUT_SECONDS
+    # FOLIO_PER_FILE_TIMEOUT_SECONDS / FOLIO_JOB_TIMEOUT_SECONDS
 
   # Hierarchical Chunking — leaves are split by Docling, parents are composed afterward
   chunking:
@@ -231,7 +231,7 @@ modules:
     mcp_tools:
       module: "src.fastmcp_tools.agentic_tools"
       function_name: "register_agentic_tools"
-    description: "Agentic RAG MCP tools (per-folder Agentic_{name} with auto-merging)"
+    description: "Folio MCP tools (per-folder Folio_{name} with auto-merging)"
 
   admin:
     api_router:

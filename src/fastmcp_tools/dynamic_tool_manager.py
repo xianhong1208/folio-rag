@@ -29,6 +29,19 @@ def _slug(text: str) -> str:
     return _UNSAFE.sub("_", ascii_text).strip("_")
 
 
+DEFAULT_TOOL_PREFIX = "Folio"
+
+
+def configured_tool_prefix() -> str:
+    """The client-safe tool prefix from ``app.tool_prefix`` (default ``Folio``)."""
+    try:
+        config = Config.get_config_model()
+        prefix = getattr(getattr(config, "app", None), "tool_prefix", None)
+    except Exception:
+        prefix = None
+    return _slug(prefix or "") or DEFAULT_TOOL_PREFIX
+
+
 def tool_name_for(prefix: str, folder_name: str) -> str:
     """Deterministic, client-safe MCP tool name for a folder.
 
@@ -38,7 +51,7 @@ def tool_name_for(prefix: str, folder_name: str) -> str:
     long names that only differ after the cut) and the name stable across restarts,
     so tokens with a same-named folder keep sharing one tool.
     """
-    pre = _slug(prefix or "") or "Agentic"
+    pre = _slug(prefix or "") or DEFAULT_TOOL_PREFIX
     plain = f"{pre}_{folder_name}"
     if _UNSAFE.search(folder_name) is None and folder_name and len(plain) <= _TOOL_NAME_MAX:
         return plain
@@ -143,10 +156,8 @@ class DynamicToolManager:
         if token_folder_key in self._token_folder_to_tool:
             return True  # already registered
 
-        # Tool name: config prefix (default Agentic) + a client-safe form of the folder name
-        config = Config.get_config_model()
-        prefix = getattr(getattr(config, "app", None), "tool_prefix", "Agentic")
-        tool_name = tool_name_for(prefix, folder_name)
+        # Tool name: config prefix (default Folio) + a client-safe form of the folder name
+        tool_name = tool_name_for(configured_tool_prefix(), folder_name)
 
         # Tool name already registered by another token? Share the same tool function
         if tool_name in self._registered_tools:
@@ -220,7 +231,7 @@ class DynamicToolManager:
 
         # Build the tool function
         def create_tool_func(top_k, similarity_cutoff, expand_context):
-            async def agentic_tool(
+            async def folder_tool(
                 query: str = "",
                 mode: Literal["search", "list", "read"] = "search",
                 file_id: Optional[str] = None,
@@ -237,13 +248,11 @@ class DynamicToolManager:
                     similarity_cutoff=similarity_cutoff,
                     expand_context=expand_context,
                 )
-            return agentic_tool
+            return folder_tool
 
-        agentic_tool = create_tool_func(default_top_k, default_cutoff, default_expand)
-
-        agentic_tool.__name__ = tool_name
-        agentic_tool.__doc__ = f"Agentic RAG tool for folder '{folder_name}' (search / list / read modes)"
-        tool_func = agentic_tool
+        tool_func = create_tool_func(default_top_k, default_cutoff, default_expand)
+        tool_func.__name__ = tool_name
+        tool_func.__doc__ = f"Folio tool for folder '{folder_name}' (search / list / read modes)"
 
         self._mcp.tool(
             name=tool_name,

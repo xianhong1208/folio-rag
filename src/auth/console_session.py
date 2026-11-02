@@ -60,7 +60,7 @@ _REJECTIONS: dict[str, str] = {
     "token_expired": "This token has expired. Issue a new one in MCP Gate.",
     "wrong_audience": (
         "This token was issued for a different service (audience mismatch). "
-        "Issue a token for Agentic RAG in MCP Gate."
+        "Issue a token for Folio in MCP Gate."
     ),
     "wrong_issuer": "This token was not issued by the MCP Gate this server trusts.",
     "bad_signature": "The token's signature is invalid.",
