@@ -238,6 +238,11 @@ class RerankConfig(BaseModel):
     # cross-encoders (bge-family) keep the default = raw text sent through as-is.
     query_template: str = "{text}"
     document_template: str = "{text}"
+    # mxbai-rerank-*-v2 needs the Qwen chat prompt for calibrated scores; when True it is applied
+    # automatically if the templates above are the default or the old chat-less form. Turn it off
+    # when the rerank server already applies a chat template (vLLM --chat-template), or the
+    # prompt is wrapped twice.
+    auto_template: bool = True
 
 
 class DoclingConfig(BaseModel):
