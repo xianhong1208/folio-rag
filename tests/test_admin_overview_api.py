@@ -172,7 +172,11 @@ class TestEval:
 
     def test_run_starts_background_task(self, client):
         self._reset()
-        with patch("asyncio.create_task") as T:
+        from src.api.router import admin_overview as ov
+        mod = ov._load_eval_mod()
+        mod.check_ready = MagicMock(return_value=SimpleNamespace(id=1))
+        with patch.object(ov, "_load_eval_mod", return_value=mod), \
+             patch("asyncio.create_task") as T:
             r = client.post("/api/admin/eval/run", json={"folder_id": 1, "n": 5})
         assert r.status_code == 200 and r.json()["data"]["started"] is True
         T.assert_called_once()
