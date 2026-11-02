@@ -143,12 +143,12 @@ async def eval_status(ident: ConsoleIdentity = Depends(require_console_session))
 @router.get("/api/admin/eval/report")
 async def eval_report(folder_id: int = Query(...),
                       ident: ConsoleIdentity = Depends(require_console_session)):
-    """Read the folder's most recent evaluation report (reports/rag_eval_<name>.json); returns null if none."""
+    """Read the folder's most recent evaluation report (reports/rag_eval_<id>_<name>.json); returns null if none."""
     import json
     import os
+    from src.domain.rag.eval_paths import report_path, report_slug
     folder = owned_folder(folder_id, ident)
-    slug = str(folder.name).replace("/", "_")
-    path = os.path.join("reports", f"rag_eval_{slug}.json")
+    path = report_path(report_slug(folder))
     if not os.path.exists(path):
         return {"data": None, "message": "no report yet"}
     with open(path, encoding="utf-8") as f:
@@ -161,9 +161,9 @@ async def eval_history(folder_id: int = Query(...), limit: int = Query(30, ge=1,
     """The folder's past evaluation runs (oldest first) for baseline comparison / trend."""
     import json
     import os
+    from src.domain.rag.eval_paths import history_path, report_slug
     folder = owned_folder(folder_id, ident)
-    slug = str(folder.name).replace("/", "_")
-    path = os.path.join("reports", f"rag_eval_history_{slug}.jsonl")
+    path = history_path(report_slug(folder))
     entries = []
     if os.path.exists(path):
         with open(path, encoding="utf-8") as f:
