@@ -80,6 +80,30 @@ class SearchSettings:
         return base.with_overrides(**overrides)
 
 
+def cache_fingerprint(query_text: str, settings: SearchSettings, *, reranker=None,
+                      merge_threshold: Optional[float] = None) -> str:
+    """Hash of everything that changes a search's results, for the result cache.
+
+    Covers the query, every SearchSettings field, the segmenter (simple config
+    only), the reranker's model / threshold / prompt templates and the merge
+    threshold, so a changed setting can never be answered from a stale entry.
+    """
+    import hashlib
+
+    parts = [query_text, repr(sorted(settings.__dict__.items()))]
+    if settings.text_search_config == "simple":
+        from src.domain.rag.text_segmenter import configured_segmenter_name
+
+        parts.append(f"seg:{configured_segmenter_name()}")
+    if reranker is not None:
+        parts.append("rerank:" + "|".join(str(getattr(reranker, a, None)) for a in (
+            "_model", "_score_threshold", "_query_template", "_document_template")))
+    else:
+        parts.append("no_rerank")
+    parts.append(f"merge:{merge_threshold}")
+    return hashlib.sha256("\x1f".join(parts).encode("utf-8")).hexdigest()
+
+
 @dataclass
 class SearchOutcome:
     """Result of one :meth:`HybridSearcher.search` call."""

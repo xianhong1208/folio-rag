@@ -7,7 +7,6 @@ Shares RAGContext's reranker / vector_store_manager / query_engines cache.
 from __future__ import annotations
 
 import asyncio
-import hashlib
 import time
 from typing import Any, Dict, Optional, TYPE_CHECKING
 
@@ -18,7 +17,7 @@ from src.domain.exceptions import (
     QueryExecutionError,
 )
 from src.domain.rag.auto_merging import AutoMergingRetriever
-from src.domain.rag.hybrid_search import SearchSettings
+from src.domain.rag.hybrid_search import SearchSettings, cache_fingerprint
 from src.domain.rag.merge_plan import MERGE_DISABLED
 from src.domain.rag.query_engine import QueryEngine
 from src.infrastructure.cache.cache_service import CacheKeys, CacheService, CacheTTL
@@ -136,18 +135,8 @@ class RAGQueryService:
             cache = CacheService.get_instance()
 
             if use_cache:
-                fingerprint_parts = [
-                    query,
-                    str(top_k),
-                    f"{similarity_cutoff}",
-                    str(sparse_top_k) if sparse_top_k is not None else "default_sparse_top_k",
-                    f"{hybrid_alpha}" if hybrid_alpha is not None else "default_hybrid_alpha",
-                    f"rerank:{ctx.reranker._model}" if ctx.reranker else "no_rerank",
-                    f"merge:{merge_threshold}",
-                ]
-                query_fingerprint = hashlib.sha256(
-                    "|".join(fingerprint_parts).encode("utf-8")
-                ).hexdigest()
+                query_fingerprint = cache_fingerprint(
+                    query, settings, reranker=ctx.reranker, merge_threshold=merge_threshold)
                 cache_key = CacheKeys.rag_query(folder_id, query_fingerprint)
                 cached_result = cache.get(cache_key)
 
