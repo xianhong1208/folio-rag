@@ -23,10 +23,11 @@ License: MIT&nbsp;·&nbsp;Python 3.12&nbsp;·&nbsp;PostgreSQL + pgvector&nbsp;·
 
 ## 功能特點
 
-- **階層切塊 + auto-merging 檢索。** 索引時把文件切成小的 **leaf**（精準匹配）與大的 **parent**（完整脈絡）。當同一段落的多個 leaf 被命中時,回傳整個 parent 而非碎片;單一 leaf 命中則向鄰居擴展,答案不會失去語意連貫性。
+- **依章節對齊的階層切塊 + auto-merging 檢索。** 索引時把文件切成小的 **leaf**（精準匹配）與大的 **parent**（完整脈絡）,兩者都不會跨越章節。每個 leaf 帶有**麵包屑**（檔名 › 標題路徑,xlsx 的工作表名稱也算在內）,結構相同的兩份文件(兩本產品手冊、兩張價目表)也能分得開。當同一段落的多個 leaf 被命中時,回傳整個 parent 而非碎片;單一 leaf 命中則向鄰居擴展,答案不會失去語意連貫性。
 - **混合搜尋,為中文調校。** 密集向量檢索（pgvector）與稀疏 **BM25** 以 Reciprocal Rank Fusion 融合,讓關鍵字訊號真的影響排名。中文在進 Postgres 全文索引前先用 **CKIP**（中研院）斷詞 —— 無空格的中文會被真正 tokenize,而不是塌成單一詞。
 - **Cross-encoder 重排。** 以 `bge-reranker-v2-m3` / `mxbai-rerank-base-v2` 對融合後的候選重新評分,提升 Top-K 精度。
-- **Contextual Retrieval。** 索引時由 LLM 為每個 chunk 加上一段依文件脈絡的前綴（Anthropic 建議的做法),提升原本模稜兩可片段的可檢索性。
+- **Contextual Retrieval。** 索引時由 LLM 依文件大綱與 chunk 所在章節,以文件本身的語言為每個 chunk 寫一句脈絡說明（Anthropic 建議的做法）。這句說明與麵包屑只用來*找到* chunk(embedding、BM25、rerank);結果一律顯示文件原文。
+- **增量重建索引。** 重新索引一個檔案時,沒變的 chunk 沿用原本的脈絡說明與 embedding,只改一個章節大約只花一次 LLM 呼叫與一次 embedding。檔案的 chunk 在單一交易內替換 —— 過程中不會從搜尋結果消失。
 - **每資料夾一個 MCP 工具,依 token 隔離。** 每個資料夾註冊成 `Agentic_<folder>` 工具;呼叫者看到的工具清單會依其 token 過濾 —— 你只看得到自己擁有的資料夾。歸屬以 token 穩定的 `jti` 為 key。
 - **OAuth 2.1 resource server。** 一個 `RemoteAuthProvider` + `JWTVerifier` 保護 `/mcp`;token 用 MCP Gate 的 JWKS 在本地離線驗證（RS256),並綁定本伺服器的 audience,別台的 token 在這裡無效。
 - **文件 + 音訊匯入。** [Docling](https://github.com/DS4SD/docling) 解析 PDF / DOCX / PPTX / XLSX / 圖片（含 OCR）;**FireRedASR** 在本地做繁體中文語音轉錄（或任何 OpenAI 相容的 `/v1/transcriptions`）。
@@ -108,8 +109,8 @@ Agentic_product-docs  mode="search"  query="要怎麼輪替簽章金鑰?"
 | 階段 | 內容 |
 |------|------|
 | **Ingest** | Docling 解析 PDF / DOCX / PPTX / XLSX / 圖片（OCR）;音訊由 FireRedASR 轉錄。 |
-| **Chunk** | 階層切成小 **leaf** + 大 **parent**;LLM 為每個 chunk 加上脈絡前綴。 |
-| **Embed** | 每個 chunk 做 embedding（預設 `intfloat/multilingual-e5-large`,1024 維）寫入 **pgvector**。中文以 CKIP 斷詞供 BM25 的 `text_search_tsv`。 |
+| **Chunk** | 依章節切成小 **leaf** + 大 **parent**;每個 leaf 帶麵包屑（檔名 › 標題）與 LLM 寫的脈絡說明。表格放得下時保持完整。 |
+| **Embed** | 每個 leaf 的檢索文字（脈絡說明 + 麵包屑 + 原文）做 embedding（預設 `intfloat/multilingual-e5-large`,1024 維）,與 BM25 的 `text_search_tsv`（中文以 CKIP 斷詞）在同一筆交易內寫入 **pgvector**,每個檔案一筆交易。 |
 | **Retrieve** | **混合**:密集向量 + 稀疏 BM25,以 Reciprocal Rank Fusion 融合。 |
 | **Merge** | 同段落的 leaf **auto-merge** 成 parent;單一命中**擴展**到鄰居。 |
 | **Rerank** | cross-encoder（`bge-reranker-v2-m3` / `mxbai-rerank-base-v2`）重排,決定最終 Top-K 精度。 |
@@ -133,10 +134,16 @@ Agentic_product-docs  mode="search"  query="要怎麼輪替簽章金鑰?"
 | `rag.embedding.{model,dimension,base_url}` | `intfloat/multilingual-e5-large`、`1024`、`:7075/v1` | embedding 模型;`dimension` **必須**等於模型實際輸出維度。 |
 | `rag.llm.{model,base_url}` | `openai/gpt-oss-120b`、`:5052/v1` | Contextual Retrieval 與 `answer` 路徑用的 LLM。 |
 | `rag.rerank.{model,base_url}` | `mixedbread-ai/mxbai-rerank-base-v2`、`:8787` | cross-encoder 重排器。 |
-| `rag.asr.provider` | `fireredasr` | 音訊轉錄:`fireredasr`（本地繁中）· `docling-whisper` · `openai-compatible`。 |
+| `rag.asr.provider` | `fireredasr` | 音訊轉錄:`fireredasr`（本地繁中）· `docling-whisper` · `openai-compatible`。`rag.asr.enabled: false` 時音檔會以明確訊息標為失敗(不做任何轉錄)。 |
+| `rag.docling.ocr_enabled` | `true` | 掃描 PDF 與圖片的 OCR。設 `false` 會真的關掉(重啟後生效);沒有文字層的掃描檔會以明確訊息失敗。 |
+| `rag.contextual_retrieval.max_doc_chars` | `60000` | 每個 chunk 交給 LLM 的文件文字上限。LLM 讀的是大綱加上 chunk 所在章節,以 chunk 為中心最多 12,000 字元。 |
 | `rag.retrieval.*` | — | Top-K、相似度門檻、BM25 候選數、`hybrid_fusion`（`rrf`/`concat`）、auto-merging。可從主控台即時調,或用 **High Precision / Balanced / High Recall** 預設。 |
 
 GPU 選擇是 `uv sync --group {rocm-r714|rocm-r713|cuda|cpu}` 的取捨 —— 見 `pyproject.toml` 開頭與 `docs/testing/ENVIRONMENTS.md`。
+
+**計算 chunk token 數**從不下載任何東西:有 `assets/hf_tokenizers/<org>--<model>` 就用它,否則用 `resources/tokenizers/` 內附的 XLM-RoBERTa tokenizer（multilingual-e5 與 bge-m3 用的就是它）,所以全新 clone 搭配 OpenAI 或 Azure embedding 也能直接用。
+
+**解析失敗看得到。** docling 若有頁面解析失敗(例如某個階段 GPU 記憶體不足),會以較小的 batch 重試;仍缺的頁碼會記在檔案上(主控台顯示 *Partial*,REST 狀態回 `warning`)。
 
 ## 使用主控台
 
@@ -162,7 +169,7 @@ GPU 選擇是 `uv sync --group {rocm-r714|rocm-r713|cuda|cpu}` 的取捨 —— 
 | 頁面 | 功能 |
 |------|------|
 | **Overview** | 活的檢索管線、語料讀數、索引健康、模型服務狀態。 |
-| **Folders** | 建立資料夾(歸你的 token 所有);點進去可上傳檔案、看逐檔索引狀態、檢視 chunk、重新索引、刪除。 |
+| **Folders** | 建立資料夾(歸你的 token 所有);點進去可上傳檔案、看逐檔索引狀態、檢視 chunk(AI 脈絡說明與文件原文分開顯示)、重新索引、刪除。以舊版切塊流程索引的檔案會標示 **Re-index recommended**。 |
 | **Search Playground** | 對資料夾即時查詢,顯示**逐訊號檢索軌跡** —— Vector · BM25 · Hybrid · Rerank 各自名次並列 —— 並可加 RAG 答案。 |
 | **Index Jobs** | 索引任務即時串流與進度;可取消執行中的任務。 |
 | **Query Analytics** | 查詢量、延遲、零結果率、熱門查詢與知識缺口。 |
@@ -170,6 +177,10 @@ GPU 選擇是 `uv sync --group {rocm-r714|rocm-r713|cuda|cpu}` 的取捨 —— 
 | **Settings** | Embedding / LLM / Contextual Retrieval / Reranker / Speech-to-Text / Retrieval 的即時、持久化設定,含檢索預設與連線測試。修改需要 `rag:admin`。 |
 | **System Health** | 每個外部相依的即時連線狀態。 |
 | **Audit Log** | 每次執行期設定變更與變更者的時間軸(`rag:admin`)。 |
+
+### 升級後重新索引
+
+切塊流程的版本逐檔記錄。以舊版流程索引的檔案照常可用,但資料夾檢視會標示 **Re-index recommended**(`GET /api/rag/file/{id}/index/status` 也會回 `reindex_recommended: true`)。按該列的重新索引按鈕,或用標題列的連結一次選取所有這類檔案,再按 *Reindex selected*。之後逐檔重新索引都是增量的;*Reindex Folder* 則會刪掉資料夾的資料表、全部重建。
 
 ## API 參考
 

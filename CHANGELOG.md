@@ -17,6 +17,24 @@ to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - **`rag:admin` scope.** Changing runtime settings, probing arbitrary endpoints,
   and reading the settings audit log and server-wide resources need it; without
   it Settings and System Health are read-only.
+- **Section-aligned chunks with breadcrumbs.** Small chunks merge only within
+  one section, and a merged chunk keeps the headings its pieces share; parents
+  are grouped by section. Every leaf carries a breadcrumb (file › heading path,
+  xlsx sheet names included) that is embedded and keyword-indexed with it, so
+  same-structure documents (two product manuals, two price sheets) are told
+  apart. Tables stay whole up to the full safe token window and are split at
+  row boundaries beyond it.
+- **Incremental re-indexing.** Re-indexing a file reuses the contextual prefix
+  and embedding of every unchanged chunk (content hash + model keys); chunk ids
+  are stable. Editing one section costs about one LLM call and one embedding.
+- **Chunking pipeline version per file** (`FileIndices.pipeline_version`).
+  Files indexed by an older pipeline show *Re-index recommended* in the console
+  (with a per-file re-index button) and `reindex_recommended` in the REST status.
+- **Parse warnings.** Pages docling could not parse are stored on the file
+  (`FileIndices.index_warning`), shown as *Partial* in the console and returned
+  as `warning` by the REST status endpoints.
+- Bundled chunk-counting tokenizer (`resources/tokenizers/xlm-roberta`, the
+  tokenizer of multilingual-e5 and bge-m3) and a `tokenizers` dependency.
 
 ### Changed
 - **The console is scoped to the signed-in token.** It shows and manages only
@@ -29,6 +47,22 @@ to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   a same-origin `Origin` / `Referer` (CSRF protection).
 - With `auth.enabled: false` the console stays open (dev mode) and the server
   logs a warning at startup.
+- **Search results show the original document text.** The LLM contextual
+  prefix is stored apart from the chunk text (`metadata.context_prefix`) and,
+  with the breadcrumb, is used only to find the chunk (embedding, BM25,
+  rerank). The console's chunk viewer shows it separately as *AI context*.
+- **Contextual prefixes are written from the document outline plus the chunk's
+  own section** (at most 12,000 characters around the chunk) instead of the
+  first `max_doc_chars` of the document, with a language-neutral prompt that
+  follows the document's language. Prompts are far shorter.
+- A file's chunks are replaced in one transaction, with the full-text vector
+  written in the same INSERT; parents are no longer keyword-searchable.
+- With contextual retrieval on, a chunk's own text is capped at 330 tokens
+  (was 380) to leave room for the breadcrumb in a 512-token embedding window.
+- **Re-index existing folders** to get the new chunks, breadcrumbs and
+  prefixes. Until then they keep working unchanged; the first re-index of a
+  file after upgrading is a full one (older chunks have no content hash).
+- `main.py` defaults `PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True`.
 
 ### Fixed
 - Retrying a file's indexing checked folder ownership but not that the file was
@@ -36,6 +70,28 @@ to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - The chunk viewer no longer reads a file name from outside the folder.
 - Eval reports, question sets and history are keyed by folder id: two owners'
   same-named folders used to share (and could read) each other's results.
+- Small chunks from different sections were merged and labelled with the first
+  piece's heading, so paragraphs carried the wrong section.
+- Every chunk past character ~60,000 of a long document got a contextual prefix
+  written from the start of the document.
+- The contextual-retrieval prompt hard-coded Chinese examples and produced
+  Chinese prefixes for English documents. Simplified characters that drift into
+  prefixes of Traditional documents are converted, and zero-width characters
+  are stripped from all indexed text (they split keyword tokens).
+- docling stage errors, CUDA out-of-memory included, silently dropped pages
+  (the result was `PARTIAL_SUCCESS` and nothing raised). The result status is
+  now checked; an OOM releases the GPU cache and retries with a smaller stage
+  batch (4 → 2 → 1), other partial results are retried once, and pages still
+  missing are reported on the file.
+- `rag.docling.ocr_enabled: false` had no effect (it set an environment variable
+  docling never reads); `rag.asr.enabled: false` still transcribed audio through
+  docling's whisper. Both switches now work, and `/v1/ocr/general` /
+  `/v1/transcriptions` return 503 when switched off.
+- With OpenAI or Azure embeddings every docling-parsed file failed on a fresh
+  clone (the chunk tokenizer name was `None`); token counting never downloads a
+  tokenizer at runtime now.
+- Re-indexing a file left a window with no chunks, and new rows had no
+  full-text vector until a separate CKIP pass ran (and none at all if it failed).
 
 ### Removed
 - **The legacy single-file console** (`/admin-classic`, `web/admin_console.html`
