@@ -310,7 +310,7 @@ async def test_generate_one_llm_exception_falls_back(mocker: MockerFixture):
 
 
 async def test_generate_one_truncates_long_document_in_prompt(mocker: MockerFixture):
-    """When full_document exceeds max_doc_chars, the document inside the prompt is truncated with a note appended (TC-ctxgen-30)"""
+    """Document context longer than max_doc_chars is cut to a window, marked with an ellipsis (TC-ctxgen-30)"""
     gen = _make_generator(max_doc_chars=10)
     mock_call = mocker.patch.object(gen, "_call_llm_sync", return_value="ctx")
 
@@ -319,7 +319,7 @@ async def test_generate_one_truncates_long_document_in_prompt(mocker: MockerFixt
     )
 
     prompt = mock_call.call_args[0][0]
-    assert "D" * 10 + "\n...(文件過長，已截斷)" in prompt
+    assert "D" * 10 + "…" in prompt
     assert "D" * 11 not in prompt
 
 
