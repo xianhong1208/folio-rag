@@ -267,10 +267,15 @@ class RagFile(File):
         self._standard_mime_type = mime_type
 
     def to_resource_content(self, mime_type=None, annotations=None):
-        resource = super().to_resource_content(mime_type=mime_type, annotations=annotations)
-        if self._standard_mime_type and not mime_type:
-            resource.resource.mimeType = self._standard_mime_type
-        return resource
+        # The SDK's resource-content models are immutable (``mimeType`` is a
+        # read-only alias property), so the standard type has to be passed in
+        # when FastMCP builds the object rather than patched on afterwards. It
+        # also lets FastMCP pick the right container: text/* becomes
+        # TextResourceContents, everything else a base64 BlobResourceContents.
+        return super().to_resource_content(
+            mime_type=mime_type or self._standard_mime_type,
+            annotations=annotations,
+        )
 
 
 def _build_resource_files(response: dict) -> List[File]:
