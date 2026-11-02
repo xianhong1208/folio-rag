@@ -273,7 +273,8 @@ def _config_snapshot() -> dict:
 
 
 def _history_path(slug: str) -> str:
-    return f"reports/rag_eval_history_{slug}.jsonl"
+    from src.domain.rag.eval_paths import history_path
+    return history_path(slug)
 
 
 def _read_history(slug: str) -> list:
@@ -457,8 +458,9 @@ def run_eval(folder_name: str, n: int = 15, k: int = 10,
     answer quality.
     """
     folder = _resolve_folder(folder_name)
-    slug = str(folder.name).replace("/", "_")
-    eval_path = f"reports/eval_set_{slug}.jsonl"
+    from src.domain.rag.eval_paths import eval_set_path, report_path, report_slug
+    slug = report_slug(folder)
+    eval_path = eval_set_path(slug)
     items, regen_reason, stale_dropped = None, None, 0
     if not regenerate and os.path.exists(eval_path):
         with open(eval_path, encoding="utf-8") as f:
@@ -487,11 +489,12 @@ def run_eval(folder_name: str, n: int = 15, k: int = 10,
     import datetime
     rep["generated_at"] = datetime.datetime.now().isoformat(timespec="seconds")
     rep["previous"] = prev[-1] if prev else None
-    out_path = f"reports/rag_eval_{slug}.json"
+    out_path = report_path(slug)
     os.makedirs(os.path.dirname(out_path), exist_ok=True)
     with open(out_path, "w", encoding="utf-8") as f:
         json.dump(rep, f, ensure_ascii=False, indent=2)
     _append_history(slug, rep)
+    rep["report_path"] = out_path  # for the CLI message; not part of the saved report
     return rep
 
 
@@ -507,8 +510,9 @@ async def run_eval_async(folder_name: str, n: int = 15, k: int = 10,
     """
     import datetime
     folder = _resolve_folder(folder_name)
-    slug = str(folder.name).replace("/", "_")
-    eval_path = f"reports/eval_set_{slug}.jsonl"
+    from src.domain.rag.eval_paths import eval_set_path, report_path, report_slug
+    slug = report_slug(folder)
+    eval_path = eval_set_path(slug)
     loop = asyncio.get_event_loop()
     items, regen_reason, stale_dropped = None, None, 0
     if not regenerate and os.path.exists(eval_path):
@@ -532,7 +536,7 @@ async def run_eval_async(folder_name: str, n: int = 15, k: int = 10,
     rep["stale_dropped"] = stale_dropped
     rep["generated_at"] = datetime.datetime.now().isoformat(timespec="seconds")
     rep["previous"] = prev[-1] if prev else None
-    out_path = f"reports/rag_eval_{slug}.json"
+    out_path = report_path(slug)
     os.makedirs(os.path.dirname(out_path), exist_ok=True)
     with open(out_path, "w", encoding="utf-8") as f:
         json.dump(rep, f, ensure_ascii=False, indent=2)
@@ -565,7 +569,7 @@ def main():
         # CLI only: exit non-zero with the message on stderr.
         raise SystemExit(f"error: {e}")
     _print_report(rep)
-    print(f"→ wrote report to reports/rag_eval_{str(rep['folder']).replace('/', '_')}.json")
+    print(f"→ wrote report to {rep.get('report_path')}")
 
 
 if __name__ == "__main__":

@@ -126,6 +126,10 @@ Settings live in `config/config.yaml`; secrets come from environment variables (
 | `DATABASE_URL` | `postgresql://…/agentic_rag` | PostgreSQL DSN. Requires the **pgvector** extension. Use **sync** `postgresql://` (psycopg2), not `+asyncpg`. |
 | `server.port` | `5039` | HTTP + MCP bind port. The MCP endpoint is `/mcp`. |
 | `auth.enabled` / `auth.issuer` / `auth.audience` | `true` / MCP Gate URL / this server's `/mcp` URL | OAuth 2.1 verification against MCP Gate. |
+| `auth.console.session_hours` | `8` | Longest a console session lasts (it also ends when the token expires). |
+| `auth.console.session_secret` | *(generated)* | Key that signs the session cookie; `${ENV_VAR}` works. Unset → generated once into `storage/.console_session_secret` (gitignored), so sessions survive restarts. |
+| `auth.console.secure_cookie` | `auto` | Cookie `Secure` flag: `auto` = only over https; `true` behind a TLS-terminating proxy. |
+| `auth.console.admin_scope` | `rag:admin` | Scope that unlocks the console's global settings. |
 | `rag.embedding.{model,dimension,base_url}` | `intfloat/multilingual-e5-large`, `1024`, `:7075/v1` | Embedding model; `dimension` **must** equal the model's real output dim. |
 | `rag.llm.{model,base_url}` | `openai/gpt-oss-120b`, `:5052/v1` | LLM for Contextual Retrieval and the `answer` path. |
 | `rag.rerank.{model,base_url}` | `mixedbread-ai/mxbai-rerank-base-v2`, `:8787` | Cross-encoder reranker. |
@@ -136,19 +140,36 @@ GPU selection is a `uv sync --group {rocm-r714|rocm-r713|cuda|cpu}` choice — s
 
 ## Use the console
 
-The **Retrieval Terminal** console is a React SPA served at `/admin` (the previous single-file console remains at `/admin-classic`).
+The **Retrieval Terminal** console is a React SPA served at `/admin`.
+
+### Console login
+
+You sign in by pasting an **MCP Gate access token issued for this service** — usually a personal access token (PAT). The server verifies it once, offline, exactly like a REST or MCP call (signature, issuer, audience, expiry; it must carry a `jti`), then sets an HttpOnly session cookie. The token itself is never stored or sent back.
+
+- **The session is that token's identity.** You see and manage exactly the folders owned by the token (folders are keyed on its `jti`) — the same folders it reaches over REST and MCP. Folders you create in the console belong to it too. Folders owned by another token are invisible; to manage them, sign in with that token.
+- **Two tiers.** Any valid token can sign in and manage its own folders. Changing runtime **Settings**, testing arbitrary endpoints, and reading the settings **Audit Log** and server-wide storage figures need the **`rag:admin`** scope. Without it, Settings and System Health are read-only (secrets are always masked), and Overview / Index Jobs / Query Analytics cover only your own folders; with it they cover the whole server.
+- **Sessions** last `auth.console.session_hours` (8 h) or until the token expires, whichever is first. Revoking the token in MCP Gate does not end a running session (verification is offline) — it ends at expiry or on *Sign out*.
+
+**Issuing tokens in MCP Gate.** No MCP Gate change is needed:
+
+1. *Services* → open the Agentic RAG service → *Scopes declared by this server* → add **`rag:admin`**. Do **not** mark it as a default scope (defaults are preselected on every new token). If the service restricts its *Allowed scopes*, allow `rag:admin` too.
+2. *Issue Token* → *Target service*: Agentic RAG (audience = `auth.audience`). Tick `rag:admin` for operators who may change settings; leave it off for people who only manage their own folders. Give it a label and copy the token — it is shown once.
+
+Paste the token on the login screen. Folders created earlier through the old *Owner Token* field belong to the token that was pasted there: sign in with that token to see them. Scripts can skip the cookie and call `/api/admin/*` with `Authorization: Bearer <token>` — the same rules apply, and no CSRF header is needed.
+
+**Dev mode.** With `auth.enabled: false` there is no login: the console is open to anyone who can reach the port, with full admin rights and every folder visible (folders created there are owned by `console`). The server logs a warning at startup. Use it only on a trusted machine.
 
 | Page | What you do there |
 |------|-------------------|
 | **Overview** | The live retrieval pipeline, corpus readouts, index health, and model-service status. |
-| **Folders** | Create token-scoped folders; open one to upload files, watch per-file index status, view chunks, reindex, or delete. |
+| **Folders** | Create folders (owned by your token); open one to upload files, watch per-file index status, view chunks, reindex, or delete. |
 | **Search Playground** | Run a live query against a folder and see the **per-signal retrieval trace** — Vector · BM25 · Hybrid · Rerank ranks side by side — plus an optional RAG answer. |
 | **Index Jobs** | Live stream of indexing jobs with progress; cancel a running job. |
 | **Query Analytics** | Volume, latency, zero-result rate, top queries and knowledge gaps. |
 | **Evaluation** | Auto-generate a question set and score `vector` / `hybrid` / `rerank` on Recall@k · MRR · nDCG@k. |
-| **Settings** | Live, persisted configuration for Embedding / LLM / Contextual Retrieval / Reranker / Speech-to-Text / Retrieval, with retrieval presets and connection tests. |
+| **Settings** | Live, persisted configuration for Embedding / LLM / Contextual Retrieval / Reranker / Speech-to-Text / Retrieval, with retrieval presets and connection tests. Changing anything needs `rag:admin`. |
 | **System Health** | Live connectivity to every external dependency. |
-| **Audit Log** | A timeline of every runtime settings change. |
+| **Audit Log** | A timeline of every runtime settings change and who made it (`rag:admin`). |
 
 ## API reference
 
@@ -157,6 +178,7 @@ The **Retrieval Terminal** console is a React SPA served at `/admin` (the previo
 | **MCP** | `POST /mcp` — per-folder `Agentic_<folder>` tools (`search` / `list` / `read`); `GET /.well-known/oauth-protected-resource/mcp` |
 | **Folders & files** | `/api/folders*` · `/api/folders/{id}/files*` (create, upload, list, download, delete — token-scoped) |
 | **RAG** | `POST /api/rag/query` (hybrid retrieval + rerank) · `/api/rag/files/{id}/index`, `/reindex`, `/index/jobs*` (background indexing + SSE progress) |
+| **Console session** | `POST /api/console/session` `{token}` (sign in) · `GET` (who am I) · `DELETE` (sign out) |
 | **Console (admin)** | `/api/admin/overview` · `/api/admin/folders*` · `/api/admin/jobs` · `/api/admin/analytics` · `/api/admin/eval/{run,status,report}` · `/api/admin/settings*` · `/api/admin/health` · `/api/admin/audit` · `/api/admin/probe` |
 | **Operational** | `GET /health` |
 

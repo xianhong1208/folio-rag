@@ -26,6 +26,11 @@ class TokenVerifyResult:
     scopes: Optional[list] = None
     expires_at: Optional[int] = None
     error: Optional[str] = None
+    # JWT ID of the verified token (per-token owner key); None for opaque tokens.
+    jti: Optional[str] = None
+    # Machine-readable failure reason (e.g. "token_expired", "wrong_audience"),
+    # set by the offline verifier so callers can explain a rejection.
+    error_code: Optional[str] = None
 
 
 class RemoteTokenVerifier:

@@ -897,3 +897,42 @@ html.light .toastx { box-shadow: 0 8px 30px rgba(16,24,40,.16); }
   outline: 2px solid var(--cyber);
   outline-offset: -2px;
 }
+
+/* ── Console login + user badge ── */
+.login-wrap { min-height: 100vh; display: grid; place-items: center; padding: 32px 16px; }
+.login-card { width: min(520px, 100%); margin: 0; }
+.login-brand { padding: 22px 22px 4px; }
+.login-brand .logo { font-family: "Chakra Petch", system-ui, sans-serif; font-weight: 700; font-size: 22px; color: var(--cyber); }
+.login-brand .sub { font-family: "Chakra Petch", system-ui, sans-serif; font-size: 10px; font-weight: 600;
+  letter-spacing: .28em; text-transform: uppercase; color: var(--ink-subtle); margin-top: 2px; }
+.login-body { padding: 4px 22px 18px; display: flex; flex-direction: column; gap: 8px; }
+.login-body label { font-size: 12px; font-weight: 600; color: var(--ink-muted);
+  font-family: "Chakra Petch", system-ui, sans-serif; letter-spacing: .02em; }
+.login-body textarea {
+  width: 100%; min-height: 118px; resize: vertical; padding: 10px 12px; border-radius: 9px;
+  background: var(--input-bg); border: 1px solid var(--hairline); color: var(--ink);
+  font-size: 11.5px; line-height: 1.5; word-break: break-all; outline: none; transition: all .25s;
+}
+.login-body textarea:focus { border-color: var(--cyber-line); box-shadow: var(--glow); }
+.login-msg { padding: 9px 14px; border-radius: 10px; font-size: 12px; line-height: 1.5; border: 1px solid; }
+.login-msg.bad { background: var(--alert-soft); border-color: var(--alert-line); color: var(--alert-hi); }
+.login-msg.warn { background: var(--signal-soft); border-color: var(--signal-line); color: var(--signal-hi); }
+.login-help { margin: 6px 0 0; padding-left: 18px; color: var(--ink-subtle); font-size: 11.5px; line-height: 1.6; }
+.login-help code { color: var(--cyber); }
+
+.user-badge { display: flex; align-items: center; gap: 9px; font-size: 12px; color: var(--ink-muted); min-width: 0; }
+.user-badge .ub-name { color: var(--ink); font-weight: 600; max-width: 22ch; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.user-badge .ub-meta { color: var(--ink-subtle); font-size: 11px; }
+.user-badge .theme-btn { padding: 4px 10px; }
+@media (max-width: 700px) { .user-badge .ub-meta { display: none; } }
+
+/* Read-only notice for Settings / System pages without rag:admin */
+.ro-note { display: flex; gap: 8px; align-items: baseline; margin: 0 0 18px; padding: 9px 14px;
+  border-radius: 10px; background: var(--cyber-soft); border: 1px solid var(--cyber-line);
+  color: var(--ink-muted); font-size: 12px; max-width: 80ch; }
+.ro-note code { color: var(--cyber); }
+.preset-btn:disabled { opacity: .45; cursor: not-allowed; }
+.preset-btn:disabled:hover { border-color: var(--hairline); background: var(--surface); }
+.preset-btn:disabled:hover b { color: var(--ink); }
+.field input:disabled, .field select:disabled, .field textarea:disabled { opacity: .7; cursor: not-allowed; }
+.toggle input:disabled + span { opacity: .55; cursor: not-allowed; }

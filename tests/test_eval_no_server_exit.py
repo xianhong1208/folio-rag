@@ -26,17 +26,20 @@ _FOLDER = SimpleNamespace(id=7, name="docs", vector_table_uuid="abc", user_token
 
 
 @pytest.fixture()
-def client():
+def client(as_identity, make_identity):
+    # Signed in as the owner of _FOLDER; folder lookups resolve only folder 7.
     app = FastAPI()
     app.include_router(router)
-    return TestClient(app)
+    with patch("db.cached_folderdb.CachedFolderDB.get_by_id",
+               side_effect=lambda fid: _FOLDER if fid == 7 else None):
+        yield TestClient(as_identity(app, make_identity("k")))
 
 
 @pytest.fixture(autouse=True)
 def _reset_eval_state():
     def reset():
         ov._EVAL.update(running=False, folder=None, done=0, total=0,
-                        result=None, error=None, started_at=None)
+                        result=None, error=None, started_at=None, owner=None)
     reset()
     yield
     reset()
@@ -101,8 +104,8 @@ class TestEndpoint:
              patch("asyncio.create_task") as create_task:
             r = client.post("/api/admin/eval/run", json={"folder_id": 999999})
             r2 = client.post("/api/admin/eval/run", json={"folder_id": "abc"})
-        assert r.status_code == 404 and "folder not found" in r.json()["detail"]
-        assert r2.status_code == 404
+        assert r.status_code == 404 and "not found" in r.json()["detail"]
+        assert r2.status_code == 422  # folder_id must be an id
         create_task.assert_not_called()
         assert ov._EVAL["running"] is False
         # The process is still up and answering.

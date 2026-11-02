@@ -1,10 +1,11 @@
 
 """Control Center management API — CRUD and operations for folders / files / index.
 
-Act-as-owner: a folder is bound to a user_token, and every console operation
-calls the existing REST endpoint functions with that owner token, so all
-security and cleanup logic stays single-source. An ownerless folder returns 409
-(ACL fail-closed). Endpoints are unauthenticated, matching the admin module.
+Every endpoint needs a console session (or a bearer PAT) and only reaches folders
+owned by that session's token (its jti) — the same folders a REST / MCP caller with
+the token can reach. Operations call the existing REST endpoint functions with that
+owner key, so all security and cleanup logic stays single-source. A folder you do
+not own is reported as not found (404), exactly like on the REST API.
 """
 
 from __future__ import annotations
@@ -12,116 +13,50 @@ from __future__ import annotations
 from typing import Optional
 from uuid import UUID
 
-from fastapi import APIRouter, Body, File, Form, HTTPException, UploadFile
+from fastapi import APIRouter, Body, Depends, File, Form, HTTPException, UploadFile
 
+from src.api.router.admin_scope import owned_folder
+from src.auth.console_session import ConsoleIdentity, require_console_session
 from src.log import get_api_logger
 
 logger = get_api_logger()
 
-router = APIRouter(tags=["Admin: Manage"])
+router = APIRouter(tags=["Admin: Manage"], dependencies=[Depends(require_console_session)])
+
+# Owner key for folders created in open (auth disabled) mode, where there is no token.
+OPEN_MODE_OWNER = "console"
+
+_Session = Depends(require_console_session)
 
 
-def _normalize_owner_key(owner_token: str) -> str:
-    """Normalize an admin-supplied owner token to the per-token ownership key.
-
-    The console's "Owner Token" field may hold either a full MCP Gate token (a
-    JWT, ~900 chars) or a bare owner key already copied from an existing folder's
-    owner. Ownership is keyed on the JWT ``jti`` everywhere else (the Bearer path
-    runs ``extract_token`` -> ``owner_key_from_bearer``), so a JWT is reduced to its
-    ``jti`` here too; anything that is not a JWT is treated as an already-final owner
-    key. Without this, the raw token was stored verbatim and overflowed
-    ``user_token`` (varchar 256) — this admin path calls ``create_folder`` directly
-    as a function, so the ``extract_token`` dependency never runs.
-    """
-    import jwt
-
-    try:
-        claims = jwt.decode(
-            owner_token, options={"verify_signature": False, "verify_aud": False}
-        )
-    except Exception:
-        return owner_token  # not a JWT: an already-final owner key
-    _reject_foreign_token(claims)
-    jti = claims.get("jti")
-    return str(jti) if jti else owner_token
-
-
-def _reject_foreign_token(claims: dict) -> None:
-    """422 when a JWT was issued for another service (issuer/audience) or has expired.
-
-    The console is an operator tool and deliberately never verifies signatures — it
-    only needs the token's ``jti`` as the ownership key. But a folder bound to a
-    token this server's auth will never accept (e.g. an AnyDoc PAT from the same
-    MCP Gate: right issuer, wrong audience) is unreachable through REST/MCP by
-    design, so refuse it up front with the reason instead of creating an orphan.
-    No-op when auth is disabled (nothing to compare against).
-    """
-    import time
-    from src.auth.mcp_gate_auth import settings_from_config
-    from src.config.config_manager import Config
-    try:
-        settings = settings_from_config(Config.get_config_model())
-    except Exception:
-        settings = None
-    if settings is None:
-        return
-    def _reject(reason: str) -> None:
-        # Log it: a 422 raised here never reaches the error log, and an operator
-        # debugging "my folder wasn't created" needs to see the rejection.
-        logger.warning(
-            f"[ADMIN] folder create rejected: {reason} "
-            f"(jti={str(claims.get('jti', ''))[:12]}…)")
-        raise HTTPException(422, reason)
-
-    iss = str(claims.get("iss") or "").rstrip("/")
-    if iss and iss != settings.issuer:
-        _reject(f"Token was issued by {iss}, not by this server's issuer ({settings.issuer}).")
-    aud = claims.get("aud")
-    auds = list(aud) if isinstance(aud, (list, tuple)) else ([aud] if aud else [])
-    if auds and settings.audience not in auds:
-        _reject(f"Token audience {auds} is not this server ({settings.audience}) — "
-                "this looks like a token for another service (e.g. AnyDoc). "
-                "Use a token issued for Agentic RAG.")
-    exp = claims.get("exp")
-    if exp and float(exp) < time.time():
-        _reject("Token has expired.")
-
-
-def _owner(folder_id: int):
-    """Load the folder and return (folder, owner_token); refuse to manage an ownerless folder."""
-    from db.cached_folderdb import CachedFolderDB
-    folder = CachedFolderDB.get_by_id(folder_id)
-    if not folder:
-        raise HTTPException(404, f"Folder {folder_id} not found")
-    if not folder.user_token:
-        raise HTTPException(
-            409, f"Folder {folder_id} has no owner token — console cannot manage it")
+def _owner(folder_id: int, ident: ConsoleIdentity):
+    """Load a folder the session owns and return (folder, owner_key) — 404 otherwise."""
+    folder = owned_folder(folder_id, ident)
     return folder, folder.user_token
 
 
 @router.post("/api/admin/manage/folders")
 async def admin_create_folder(
-    body: dict = Body(..., example={"name": "docs", "description": "", "owner_token": "…"}),
+    body: dict = Body(..., examples=[{"name": "docs", "description": ""}]),
+    ident: ConsoleIdentity = _Session,
 ):
-    """Create a folder (owner_token required — the folder is bound to an owner who accesses it with that token)."""
+    """Create a folder owned by the signed-in token (reachable via REST / MCP with that token)."""
     name = (body.get("name") or "").strip()
-    owner_token = (body.get("owner_token") or "").strip()
     if not name:
         raise HTTPException(422, "name is required")
-    if not owner_token:
-        raise HTTPException(422, "owner_token is required — folders are token-scoped")
     from src.api.router.folder_api import create_folder
     from src.api.router.response import CreateFolderRequest
     return await create_folder(
         CreateFolderRequest(name=name, description=body.get("description")),
-        user_token=_normalize_owner_key(owner_token),
+        user_token=ident.owner_key or OPEN_MODE_OWNER,
     )
 
 
 @router.patch("/api/admin/manage/folders/{folder_id}")
-async def admin_update_folder(folder_id: int, body: dict = Body(...)):
+async def admin_update_folder(folder_id: int, body: dict = Body(...),
+                             ident: ConsoleIdentity = _Session):
     """Rename / change description (only patches the fields provided)."""
-    _, token = _owner(folder_id)
+    _, token = _owner(folder_id, ident)
     from src.api.router.folder_api import update_folder_api
     from src.api.router.response import UpdateFolderRequest
     return await update_folder_api(
@@ -132,9 +67,9 @@ async def admin_update_folder(folder_id: int, body: dict = Body(...)):
 
 
 @router.delete("/api/admin/manage/folders/{folder_id}")
-async def admin_delete_folder(folder_id: int):
+async def admin_delete_folder(folder_id: int, ident: ConsoleIdentity = _Session):
     """Delete a folder (reuses the existing endpoint: cancel in-flight jobs first, then soft-delete files and vectors)."""
-    _, token = _owner(folder_id)
+    _, token = _owner(folder_id, ident)
     from src.api.router.folder_api import delete_folder
     return await delete_folder(folder_id, user_token=token)
 
@@ -145,9 +80,10 @@ async def admin_upload_file(
     file: UploadFile = File(...),
     description: Optional[str] = Form(None),
     auto_index: bool = Form(True),
+    ident: ConsoleIdentity = _Session,
 ):
     """Upload a file to the folder (auto_index=True runs the existing background indexing flow)."""
-    _, token = _owner(folder_id)
+    _, token = _owner(folder_id, ident)
     from src.api.router.file_api import upload_file
     return await upload_file(
         folder_id, file=file, description=description, tags=None,
@@ -156,16 +92,16 @@ async def admin_upload_file(
 
 
 @router.get("/api/admin/manage/folders/{folder_id}/files/{file_id}/download")
-async def admin_download_file(folder_id: int, file_id: UUID):
-    _, token = _owner(folder_id)
+async def admin_download_file(folder_id: int, file_id: UUID, ident: ConsoleIdentity = _Session):
+    _, token = _owner(folder_id, ident)
     from src.api.router.file_api import download_file
     return await download_file(folder_id, file_id, user_token=token)
 
 
 @router.delete("/api/admin/manage/folders/{folder_id}/files/{file_id}")
-async def admin_delete_file(folder_id: int, file_id: UUID):
+async def admin_delete_file(folder_id: int, file_id: UUID, ident: ConsoleIdentity = _Session):
     """Delete a file (the existing endpoint also clears the file's vectors and index records)."""
-    _, token = _owner(folder_id)
+    _, token = _owner(folder_id, ident)
     from src.api.router.file_api import delete_file
     return await delete_file(folder_id, file_id, user_token=token)
 
@@ -173,7 +109,8 @@ async def admin_delete_file(folder_id: int, file_id: UUID):
 @router.post("/api/admin/manage/folders/{folder_id}/index")
 async def admin_index_folder(
     folder_id: int,
-    body: dict = Body(default={}, example={"skip_existing": True}),
+    body: dict = Body(default={}, examples=[{"skip_existing": True}]),
+    ident: ConsoleIdentity = _Session,
 ):
     """Start a background indexing job for the whole folder.
 
@@ -182,7 +119,7 @@ async def admin_index_folder(
     rerun); a plain index cannot rebuild because the per-file content_hash
     short-circuit skips unchanged files, so settings changes would have no effect.
     """
-    folder, token = _owner(folder_id)
+    folder, token = _owner(folder_id, ident)
     from src.api.router.response import IndexRequest
     skip_existing = bool(body.get("skip_existing", True))
     if skip_existing:
@@ -195,7 +132,7 @@ async def admin_index_folder(
 
 
 @router.post("/api/admin/manage/folders/{folder_id}/rebuild-fts")
-async def admin_rebuild_fts(folder_id: int):
+async def admin_rebuild_fts(folder_id: int, ident: ConsoleIdentity = _Session):
     """Backfill the folder's CKIP full-text search vector (`text_search_tsv`).
 
     Folders indexed before the CKIP migration carry llama-index's native
@@ -208,7 +145,7 @@ async def admin_rebuild_fts(folder_id: int):
 
     Blocking (sync DB + CKIP inference), so it runs in a threadpool off the loop.
     """
-    folder, _ = _owner(folder_id)
+    folder, _ = _owner(folder_id, ident)
 
     # Only meaningful in CKIP mode; other FTS configs keep the native tsvector.
     from src.config.config_manager import Config
@@ -240,14 +177,16 @@ async def admin_rebuild_fts(folder_id: int):
 
 
 @router.post("/api/admin/manage/folders/{folder_id}/files/{file_id}/retry")
-async def admin_retry_file(folder_id: int, file_id: UUID):
+async def admin_retry_file(folder_id: int, file_id: UUID, ident: ConsoleIdentity = _Session):
     """Retry indexing a single file (force bypasses the content_hash short-circuit; one-click rerun for failed files)."""
-    _, token = _owner(folder_id)
+    _, token = _owner(folder_id, ident)
     from db.filedb import FileDB
     from src.domain.rag.dto import FileRequest
     from src.adapter.rag import get_rag_adapter
     rows = FileDB.get(id=file_id)
-    if not rows:
+    # The file must live in this (owned) folder: otherwise a folder you own could be
+    # used to reindex a file in someone else's folder.
+    if not rows or rows[0].folder_id != folder_id:
         raise HTTPException(404, f"File {file_id} not found")
     f = rows[0]
     req = FileRequest(
@@ -260,14 +199,15 @@ async def admin_retry_file(folder_id: int, file_id: UUID):
 
 
 @router.post("/api/admin/manage/folders/{folder_id}/query")
-async def admin_query_folder(folder_id: int, body: dict = Body(..., example={"query": "…"})):
-    """Run one retrieval against the folder (query test bench; act-as-owner). Returns matched chunks + scores.
+async def admin_query_folder(folder_id: int, body: dict = Body(..., examples=[{"query": "…"}]),
+                             ident: ConsoleIdentity = _Session):
+    """Run one retrieval against the folder (query test bench). Returns matched chunks + scores.
 
     trace=true: run the retrieval trace (breaking out vector / BM25 / hybrid /
     rerank ranks) and build results from the trace's final hits (without rerunning
     a normal query).
     """
-    folder, token = _owner(folder_id)
+    folder, token = _owner(folder_id, ident)
     q = (body.get("query") or "").strip()
     if len(q) < 2:
         raise HTTPException(422, "query too short (min 2 chars)")
@@ -543,16 +483,17 @@ async def _stream_answer_events(query: str, results: list):
 
 
 @router.post("/api/admin/manage/folders/{folder_id}/query/stream")
-async def admin_query_folder_stream(folder_id: int, body: dict = Body(..., example={"query": "…"})):
+async def admin_query_folder_stream(folder_id: int, body: dict = Body(..., examples=[{"query": "…"}]),
+                                    ident: ConsoleIdentity = _Session):
     """Retrieve, then stream a CRAG answer over Server-Sent Events (text/event-stream).
 
     Retrieval and relevance grading complete first (a `sources` frame carries the
     matched chunks); only the final generation streams token by token. Same
-    act-as-owner semantics as the non-streaming /query endpoint.
+    ownership rules as the non-streaming /query endpoint.
     """
     import json
     from starlette.responses import StreamingResponse
-    folder, token = _owner(folder_id)
+    folder, token = _owner(folder_id, ident)
     q = (body.get("query") or "").strip()
     if len(q) < 2:
         raise HTTPException(422, "query too short (min 2 chars)")
@@ -586,8 +527,8 @@ async def admin_query_folder_stream(folder_id: int, body: dict = Body(..., examp
 
 
 @router.post("/api/admin/manage/folders/{folder_id}/jobs/{job_id}/cancel")
-async def admin_cancel_job(folder_id: int, job_id: str):
+async def admin_cancel_job(folder_id: int, job_id: str, ident: ConsoleIdentity = _Session):
     """Cancel a running indexing job."""
-    folder, token = _owner(folder_id)
+    folder, token = _owner(folder_id, ident)
     from src.api.router.rag_indexing import cancel_index_job
     return await cancel_index_job(folder_id, job_id, token=token, folder=folder)

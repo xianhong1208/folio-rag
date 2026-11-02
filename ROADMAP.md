@@ -14,11 +14,9 @@ tracked but not started. Items are grounded in the current codebase and its know
   CKIP upgrade. *Follow-up:* it runs synchronously, and a 5.6k-chunk folder took
   ~10 min — past any sane HTTP timeout. Turn it into a background job with
   progress, like indexing.
-- **Retire the legacy console.** *Partly shipped.* The root URL now redirects to
-  the React console; the single-file `admin_console.html` is retired from the
-  front door and kept only at `/admin-classic` as a temporary escape hatch. Hard
-  deletion (file + loader + packaging entry) is deferred until the SPA is
-  validated in real use.
+- **Retire the legacy console.** *Shipped.* The root URL redirects to the React
+  console, and the single-file `admin_console.html`, its loader and the
+  `/admin-classic` route have been deleted (recoverable from git history).
 - **Frontend tests / CI.** *Shipped.* Vitest pure-function suites (format +
   settings-config) and a GitHub Actions workflow that builds and tests the SPA.
 
@@ -123,8 +121,10 @@ fragmented chunks and weak precision.
 - **Synchronous** SQLAlchemy / psycopg2 — do not use `+asyncpg`.
 - **GPU selection is manual** — PyTorch is chosen per platform via a
   `uv sync --group` (rocm / cuda / cpu).
-- **Console is unauthenticated** — by design, for internal-network use; lock down
-  `_AUTH` before exposing it publicly.
+- **Console sessions outlive token revocation.** The console session is a
+  stateless signed cookie, so revoking the token in MCP Gate does not end it
+  before its expiry (`auth.console.session_hours`, default 8 h) — the same
+  offline-verification trade-off as bearer tokens.
 - **The server aborts at shutdown.** Every restart, the old `python3 main.py`
   dies with SIGABRT raised from inside the process (`si_code=SI_TKILL`, i.e. a
   native library's `abort()` during interpreter teardown — torch/CUDA-style), which
@@ -141,7 +141,7 @@ fragmented chunks and weak precision.
 - One-click **Rebuild-FTS** to backfill CKIP full-text search on existing folders.
 - **Frontend tests + CI** (Vitest + GitHub Actions) for the console SPA.
 - **React console is the front door** (root URL redirects to `/admin`); legacy
-  console kept at `/admin-classic`.
+  console kept at `/admin-classic` (since deleted).
 - **Console i18n foundation** (English + 繁體中文): provider, language toggle,
   translated shell + Folders page.
 - Admin console migrated from a single-file HTML app to a **React SPA** (Vite +

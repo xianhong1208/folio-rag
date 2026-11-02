@@ -90,6 +90,31 @@ def _parse_scopes(claims: dict) -> list[str]:
     return []
 
 
+def _error_code(exc: Exception) -> str:
+    """Map a PyJWT exception to a stable, machine-readable rejection reason.
+
+    Order matters: several of these are subclasses of one another
+    (InvalidSignatureError < DecodeError, PyJWKClientConnectionError < PyJWKClientError).
+    """
+    if isinstance(exc, jwt.ExpiredSignatureError):
+        return "token_expired"
+    if isinstance(exc, jwt.InvalidAudienceError):
+        return "wrong_audience"
+    if isinstance(exc, jwt.InvalidIssuerError):
+        return "wrong_issuer"
+    if isinstance(exc, jwt.InvalidSignatureError):
+        return "bad_signature"
+    if isinstance(exc, jwt.PyJWKClientConnectionError):
+        return "jwks_unavailable"
+    if isinstance(exc, jwt.PyJWKClientError):
+        return "unknown_signing_key"
+    if isinstance(exc, jwt.MissingRequiredClaimError):
+        return "missing_claim"
+    if isinstance(exc, jwt.DecodeError):
+        return "malformed_token"
+    return "invalid_token"
+
+
 class McpGateTokenVerifier:
     """Offline RS256 JWT verifier for MCP Gate access tokens.
 
@@ -125,10 +150,10 @@ class McpGateTokenVerifier:
                 options={"require": ["exp"]},
             )
         except jwt.PyJWTError as e:
-            return TokenVerifyResult(valid=False, error=str(e))
+            return TokenVerifyResult(valid=False, error=str(e), error_code=_error_code(e))
         except Exception as e:  # noqa: BLE001 - JWKS fetch / network failures
             logger.warning(f"Token verification error: {e}")
-            return TokenVerifyResult(valid=False, error=str(e))
+            return TokenVerifyResult(valid=False, error=str(e), error_code="invalid_token")
 
         scopes = _parse_scopes(claims)
 
@@ -139,13 +164,16 @@ class McpGateTokenVerifier:
                 return TokenVerifyResult(
                     valid=False,
                     error=f"insufficient_scope: missing {missing}",
+                    error_code="insufficient_scope",
                 )
 
+        jti = claims.get("jti")
         return TokenVerifyResult(
             valid=True,
             user_name=claims.get("sub"),
             scopes=scopes,
             expires_at=claims.get("exp"),
+            jti=str(jti) if jti else None,
         )
 
     async def verify(self, token: str) -> TokenVerifyResult:

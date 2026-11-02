@@ -6,12 +6,13 @@ import { fmtNum } from '../lib/format'
 import { META, FIELDS, PRESETS, sectionOf } from '../lib/settings-config'
 import { useModal } from '../contexts/ModalContext'
 import { useToast } from '../contexts/ToastContext'
+import { useSession } from '../contexts/SessionContext'
 
 const ICON = { layers: Layers, spark: Sparkles, list: List, sort: ArrowDownUp, mic: Mic, sliders: SlidersHorizontal }
 const PARAM_TO_SEC = { embedding: 'rag.embedding', llm: 'rag.llm', contextual: 'rag.contextual_retrieval', reranker: 'rag.rerank', asr: 'rag.asr', retrieval: 'rag.retrieval' }
 const SEC_TO_PARAM = Object.fromEntries(Object.entries(PARAM_TO_SEC).map(([p, s]) => [s, p]))
 
-function Field({ path, f, value, overridden, onChange }) {
+function Field({ path, f, value, overridden, onChange, disabled }) {
   const wide = f.type === 'textarea'
   const isBool = f.type === 'bool'
   const setV = (v) => onChange(path, v)
@@ -23,29 +24,29 @@ function Field({ path, f, value, overridden, onChange }) {
         <div className="grow" />
         {overridden && <span className="ovr" title="Differs from config.yaml">Overridden</span>}
         {isBool && (
-          <label className="toggle"><input type="checkbox" aria-label={f.label} checked={!!value} onChange={(e) => setV(e.target.checked)} /><span /></label>
+          <label className="toggle"><input type="checkbox" aria-label={f.label} checked={!!value} disabled={disabled} onChange={(e) => setV(e.target.checked)} /><span /></label>
         )}
       </div>
       {f.hint && <div className="hint">{f.hint}</div>}
       {isBool ? null
         : f.type === 'select' ? (
-          <select id={path} value={value ?? ''} onChange={(e) => setV(e.target.value)}>
+          <select id={path} value={value ?? ''} disabled={disabled} onChange={(e) => setV(e.target.value)}>
             {f.options.map((o) => <option key={o} value={o}>{o}</option>)}
           </select>
         ) : f.type === 'textarea' ? (
-          <textarea id={path} value={value ?? ''} onChange={(e) => setV(e.target.value)} />
+          <textarea id={path} value={value ?? ''} disabled={disabled} onChange={(e) => setV(e.target.value)} />
         ) : f.type === 'secret' ? (
-          <input id={path} type="password" placeholder="Set — type to replace" value={value ?? ''} onChange={(e) => setV(e.target.value)} />
+          <input id={path} type="password" placeholder="Set — type to replace" value={value ?? ''} disabled={disabled} onChange={(e) => setV(e.target.value)} />
         ) : f.range ? (
           <div className="slider-wrap">
-            <input id={path} type="range" min={f.range[0]} max={f.range[1]} step={f.step || 0.05}
+            <input id={path} type="range" min={f.range[0]} max={f.range[1]} step={f.step || 0.05} disabled={disabled}
               value={value ?? f.range[0]}
               style={{ '--fill': (((value ?? f.range[0]) - f.range[0]) / (f.range[1] - f.range[0]) * 100) + '%' }}
               onChange={(e) => setV(parseFloat(e.target.value))} />
-            <input type="number" aria-label={f.label + ' (number)'} step={f.step || 0.05} value={value ?? ''} onChange={(e) => setV(e.target.value === '' ? null : parseFloat(e.target.value))} />
+            <input type="number" aria-label={f.label + ' (number)'} step={f.step || 0.05} value={value ?? ''} disabled={disabled} onChange={(e) => setV(e.target.value === '' ? null : parseFloat(e.target.value))} />
           </div>
         ) : (
-          <input id={path} type={f.type === 'number' ? 'number' : 'text'} value={value ?? ''}
+          <input id={path} type={f.type === 'number' ? 'number' : 'text'} value={value ?? ''} disabled={disabled}
             onChange={(e) => setV(f.type === 'number' ? (e.target.value === '' ? null : Number(e.target.value)) : e.target.value)} />
         )}
     </div>
@@ -55,6 +56,8 @@ function Field({ path, f, value, overridden, onChange }) {
 export default function SettingsPage() {
   const { confirm } = useModal()
   const toast = useToast()
+  const { isAdmin } = useSession()
+  const readOnly = !isAdmin
   const [state, setState] = useState(null) // path -> {value, overridden}
   const [dirty, setDirty] = useState({})
   const [saving, setSaving] = useState('')
@@ -172,11 +175,17 @@ export default function SettingsPage() {
 
   return (
     <div id="view-settings">
+      {readOnly && (
+        <div className="ro-note" role="note">
+          <span>🔒</span>
+          <span>Read-only. Your token can view these settings but not change them — changing settings (and testing connections) needs a token with the <code>rag:admin</code> scope.</span>
+        </div>
+      )}
       <p className="lede">Changes take effect <strong>immediately</strong> and persist across restarts. An <strong>Overridden</strong> badge means the value differs from config.yaml. Changes in the <span style={{ color: 'var(--signal-hi)' }}>amber section (Embedding)</span> require re-indexing existing folders.</p>
       <div className="preset-bar">
         <span className="preset-label">Retrieval presets</span>
         {Object.entries(PRESETS).map(([k, p]) => (
-          <button key={k} className="preset-btn" onClick={() => applyPreset(k)}><b>{p.label}</b><span>{p.sub}</span></button>
+          <button key={k} className="preset-btn" disabled={readOnly} title={readOnly ? 'Needs rag:admin' : undefined} onClick={() => applyPreset(k)}><b>{p.label}</b><span>{p.sub}</span></button>
         ))}
       </div>
 
@@ -196,12 +205,12 @@ export default function SettingsPage() {
             {meta.warn && <div className="warnnote"><span>⚠</span><span>{meta.warn}</span></div>}
             <div className="fields">
               {paths.map((p) => (
-                <Field key={p} path={p} f={FIELDS[p]} value={valOf(p)} overridden={state[p]?.overridden} onChange={onChange} />
+                <Field key={p} path={p} f={FIELDS[p]} value={valOf(p)} overridden={state[p]?.overridden} onChange={onChange} disabled={readOnly} />
               ))}
             </div>
             <div className="card-foot">
-              <button className="btn-cyber" disabled={!secDirty || saving === sec} onClick={() => saveSection(sec)}>{saving === sec ? 'Saving…' : 'Save Changes'}</button>
-              {meta.probe && <button className="btn-ghost" onClick={() => testConn(sec)}>Test Connection</button>}
+              <button className="btn-cyber" disabled={readOnly || !secDirty || saving === sec} title={readOnly ? 'Needs rag:admin' : undefined} onClick={() => saveSection(sec)}>{saving === sec ? 'Saving…' : 'Save Changes'}</button>
+              {meta.probe && !readOnly && <button className="btn-ghost" onClick={() => testConn(sec)}>Test Connection</button>}
               {pr && <span className={'probe-result ' + pr.cls}>{pr.text}</span>}
               <div className="grow" />
             </div>

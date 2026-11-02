@@ -90,7 +90,7 @@ def apply_settings(patch: Dict[str, Any], updated_by: Optional[str] = None
         return applied, warnings
 
 
-def reset_setting(path: str) -> bool:
+def reset_setting(path: str, updated_by: Optional[str] = None) -> bool:
     """Remove a single override, restore the config.yaml value, and rebind. Returns whether an override existed to delete."""
     if path not in ro.EDITABLE:
         raise ValueError(f"Setting path is not editable: {path}")
@@ -104,7 +104,7 @@ def reset_setting(path: str) -> bool:
         ro.validate_and_apply(config_model, {path: yaml_value})
         _rebind([path])
         _audit(path, "reset", None,
-               "•••" if path in ro.SECRET_PATHS else yaml_value, None)
+               "•••" if path in ro.SECRET_PATHS else yaml_value, updated_by)
         logger.info(f"[RUNTIME] reset {path} -> yaml default {yaml_value!r}")
         return True
 

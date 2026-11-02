@@ -9,7 +9,7 @@ zero-result rate), top queries, zero-result queries, and the daily trend.
 from __future__ import annotations
 
 from datetime import datetime, timedelta, timezone
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, Iterable, List, Optional
 
 from sqlalchemy import func
 
@@ -55,9 +55,10 @@ class QueryLogDB(BaseDB):
 
     @classmethod
     def analytics(cls, folder_id: Optional[int] = None, days: int = 30,
-                  top: int = 10) -> Dict[str, Any]:
+                  top: int = 10, folder_ids: Optional[Iterable[int]] = None) -> Dict[str, Any]:
         """Query-analytics aggregation. folder_id=None means all folders; days
-        is the statistics window in days.
+        is the statistics window in days. ``folder_ids`` (when not None) further
+        limits the aggregation to those folders — the console's per-owner scope.
 
         Returns {total, zero_result, zero_rate, avg_latency_ms, top_queries[],
         zero_queries[], by_day[]}. If the DB is down or the table is missing,
@@ -68,11 +69,14 @@ class QueryLogDB(BaseDB):
                  "by_day": [], "days": days, "folder_id": folder_id}
         try:
             since = datetime.now(timezone.utc) - timedelta(days=days)
+            scope_ids = list(folder_ids) if folder_ids is not None else None
             with Session() as s:
                 def scoped(q):
                     q = q.filter(QueryLog.created_at >= since)
                     if folder_id is not None:
                         q = q.filter(QueryLog.folder_id == folder_id)
+                    if scope_ids is not None:
+                        q = q.filter(QueryLog.folder_id.in_(scope_ids))
                     return q
 
                 total = scoped(s.query(func.count(QueryLog.id))).scalar() or 0
