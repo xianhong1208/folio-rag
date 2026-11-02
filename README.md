@@ -170,7 +170,7 @@ Settings live in `config/config.yaml`; secrets come from environment variables (
 | `rag.profile` | `local` | `local` · `hybrid` · `cloud` — see [Cloud profile](#cloud-profile). |
 | `rag.<role>.{timeout,max_retries}` | per role | Request timeout and retries (429 / 5xx / timeouts, with backoff) for each model role. |
 
-GPU selection is a `uv sync --extra local --group {rocm-r714|rocm-r713|cuda|cpu}` choice — see the top of `pyproject.toml` and `docs/testing/ENVIRONMENTS.md`.
+GPU selection is a `uv sync --extra local --group {rocm-r714|rocm-r713|cuda|cpu}` choice — see the top of `pyproject.toml`, where each group is mapped to its PyTorch index.
 
 ## Cloud profile
 
@@ -345,7 +345,7 @@ See [`ROADMAP.md`](ROADMAP.md) for what's under evaluation (Graph RAG, "LLM Wiki
 
 ## Contributing
 
-Issues and pull requests are welcome. Code comments are in English; commit history uses the project's own identity. See `docs/` for the testing and environment notes.
+Issues and pull requests are welcome. Code comments are in English. Run the unit suite with `uv run pytest`; the PostgreSQL integration suite under `tests/integration` is opt-in (`RAG_RUN_DB_ITESTS=1`) and creates and drops its own database.
 
 ## License
 

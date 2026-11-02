@@ -1,0 +1,29 @@
+# Retrieval eval QA set (template)
+#
+# Each entry is a question plus the file names that should appear in the
+# top-k results. The names must match files in evals/rag/documents/. Aim for
+# 30-50 entries and mix the question types the corpus has to serve:
+#   - single-fact answers (one chunk)
+#   - answers spanning sections (exercises the auto-merge parent)
+#   - tables (xlsx / PDF tables)
+#   - scanned pages (OCR path)
+#   - audio (ASR path)
+#   - distractors (several files on a similar topic; tests ranking)
+#
+# Run it with: uv run --no-sync python scripts/run_rag_eval.py
+#
+# The entries below are fictional examples and stay commented out: the script
+# scores a question 0 when its expected file is missing, so replace the whole
+# list with entries for your own documents before using it.
+
+# - id: qa-001
+#   question: "How long is the warranty on the Aster K2 kettle?"
+#   expected_files: ["aster-k2-user-guide.pdf"]
+#
+# - id: qa-002
+#   question: "What was the total Q1 budget for the Harbor Street library renovation?"
+#   expected_files: ["harbor-street-budget-q1.xlsx"]
+#
+# - id: qa-003
+#   question: "Which change to the book-return process was agreed in the March meeting?"
+#   expected_files: ["march-volunteer-meeting.mp3"]

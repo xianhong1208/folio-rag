@@ -5,7 +5,7 @@
 #   uv sync --extra local --group <gpu>       + in-process models (docling layout/OCR, Whisper,
 #                                             FireRedASR, CKIP, HuggingFace embeddings)
 # GPU builds select PyTorch via PEP 735 dependency groups: `--group {rocm-r713|rocm-r714|cuda|cpu}`.
-# Only torch/torchvision/torchaudio differ per group; see docs/testing/ENVIRONMENTS.md for the matrix.
+# Only torch/torchvision/torchaudio differ per group; the [tool.uv] sections below map each one to its index.
 
 [project]
 name = "agentic-rag"
@@ -115,7 +115,7 @@ testpaths = ["tests"]
 pythonpath = ["."]
 
 # Unit-test coverage. `omit` lists modules that need DB/vLLM/GPU/network and are covered by
-# integration tests instead (see docs/testing/TEST_STRATEGY.md).
+# integration tests instead (tests/integration, opt-in with RAG_RUN_DB_ITESTS=1).
 [tool.coverage.run]
 source = ["src"]
 omit = [

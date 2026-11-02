@@ -169,7 +169,7 @@ Agentic_product-docs  mode="search"  query="要怎麼輪替簽章金鑰?"
 | `rag.profile` | `local` | `local` · `hybrid` · `cloud` —— 見[雲端 profile](#雲端-profile)。 |
 | `rag.<role>.{timeout,max_retries}` | 各角色不同 | 每個模型角色的請求逾時與重試（429 / 5xx / 逾時,含退避）。 |
 
-GPU 選擇是 `uv sync --extra local --group {rocm-r714|rocm-r713|cuda|cpu}` 的取捨 —— 見 `pyproject.toml` 開頭與 `docs/testing/ENVIRONMENTS.md`。
+GPU 選擇是 `uv sync --extra local --group {rocm-r714|rocm-r713|cuda|cpu}` 的取捨 —— 見 `pyproject.toml` 開頭,每個 group 對應到各自的 PyTorch index。
 
 ## 雲端 profile
 
@@ -332,7 +332,7 @@ profile 做了什麼:
 
 ## 參與貢獻
 
-歡迎 issue 與 PR。程式註解一律英文。詳見 `docs/`。
+歡迎 issue 與 PR。程式註解一律英文。單元測試用 `uv run pytest`;`tests/integration` 下的 PostgreSQL 整合測試需明確開啟（`RAG_RUN_DB_ITESTS=1`),會自行建立並刪除測試資料庫。
 
 ## 授權
 
