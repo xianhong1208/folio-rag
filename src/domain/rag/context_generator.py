@@ -123,6 +123,11 @@ def _is_script_mismatch(chunk_text: str, candidate_prefix: str) -> bool:
     return bool(chunk_main) and not prefix_main
 
 
+# Part of every prefix's cache key: bump it whenever the prompt changes so that an
+# incremental re-index regenerates prefixes written by an older prompt.
+PROMPT_VERSION = "1"
+
+
 class ContextGenerator:
     """Uses an LLM to generate a context prefix for each chunk.
 
@@ -152,6 +157,12 @@ class ContextGenerator:
             f"max_concurrent={max_concurrent}, max_doc_chars={max_doc_chars}, "
             f"max_tokens={max_tokens}, reasoning_effort={reasoning_effort})"
         )
+
+    @property
+    def cache_key(self) -> str:
+        """Identity of what produces a prefix (model + prompt + length limit). A stored
+        prefix is reused on re-index only when its key matches."""
+        return f"{self._model}|prompt={PROMPT_VERSION}|max={self._max_context_length}"
 
     @classmethod
     def from_config(cls, rag_config) -> Optional["ContextGenerator"]:

@@ -28,8 +28,15 @@ from src.domain.rag.embedding.batch_exec import (
     _embed_batch_with_retry,
 )
 from src.domain.rag.hierarchy import build_hierarchy
-from src.domain.rag.chunk_identity import breadcrumb, retrieval_text
-from src.domain.rag.chunk_store import replace_file_chunks
+from src.domain.rag.chunk_identity import (
+    breadcrumb,
+    chunk_hash,
+    embedding_key,
+    leaf_node_id,
+    parent_node_id,
+    retrieval_text,
+)
+from src.domain.rag.chunk_store import fetch_reusable, replace_file_chunks
 
 if TYPE_CHECKING:
     from src.domain.rag.context_generator import ContextGenerator
@@ -235,7 +242,13 @@ class HierarchicalIndexer:
         contextualizing -> embedding -> writing stages (None for silent).
         should_abort returns True to abort this file (checked per chunk while
         contextualizing, per batch while embedding, and before writing), raising
-        IndexingAbortedError. Returns {"leaves": N, "parents": M, "warning": str|None}.
+        IndexingAbortedError.
+
+        Re-indexing a file is incremental: leaves whose content hash is unchanged keep
+        their contextual prefix and embedding (see chunk_store.fetch_reusable), and the
+        file's rows are swapped in one transaction.
+
+        Returns {"leaves", "parents", "llm_calls", "embedded", "warning"}.
         """
         file_name = document.metadata.get("file_name", "unknown")
 
@@ -254,16 +267,47 @@ class HierarchicalIndexer:
         n_chunks = len(leaf_docs)
         logger.info(f"Chunked {file_name}: {n_chunks} leaf chunks")
 
-        # 2. Breadcrumb (file › heading path) and contextual prefix for each leaf. Both
-        # live in metadata; the leaf's text stays the original document text, which is
-        # what every read path shows. Retrieval uses prefix + breadcrumb + text.
+        # 2. Identity of each leaf: breadcrumb (file › heading path) and content hash.
+        # The leaf's text stays the original document text, which is what every read
+        # path shows; retrieval uses prefix + breadcrumb + text (chunk_identity).
+        file_id_meta = str(document.metadata.get("file_id") or "")
+        if not file_id_meta:
+            raise ValueError(f"{file_name}: document has no file_id; cannot replace its chunks")
+        hashes: List[str] = []
+        leaf_ids: List[str] = []
+        seen_hashes: Dict[str, int] = {}
         for ld in leaf_docs:
-            ld.metadata["breadcrumb"] = breadcrumb(file_name, ld.metadata.get("headings"))
-        if self._context_generator and document.text:
+            crumb = breadcrumb(file_name, ld.metadata.get("headings"))
+            chash = chunk_hash(ld.text, crumb)
+            occurrence = seen_hashes.get(chash, 0)
+            seen_hashes[chash] = occurrence + 1
+            ld.metadata["breadcrumb"] = crumb
+            ld.metadata["chunk_hash"] = chash
+            hashes.append(chash)
+            leaf_ids.append(leaf_node_id(file_id_meta, chash, occurrence))
+
+        # Incremental re-index: an unchanged leaf keeps its prefix (LLM call) and its
+        # embedding when they were made by the same prefix generator / embedding model.
+        reusable = await asyncio.to_thread(fetch_reusable, vector_store, file_id_meta)
+        ctx_key = self._context_generator.cache_key if self._context_generator else "off"
+
+        prefixes: List[Optional[str]] = [None] * n_chunks
+        need_llm: List[int] = []
+        for i, chash in enumerate(hashes):
+            old = reusable.get(chash)
+            if old is not None and old.get("ctx_key") == ctx_key:
+                prefixes[i] = old.get("context_prefix") or ""
+            elif not self._context_generator or not document.text:
+                prefixes[i] = ""
+            else:
+                need_llm.append(i)
+        n_reused_prefix = n_chunks - len(need_llm)
+
+        if need_llm:
             _raise_if_aborted(should_abort, file_name, "contextualizing")
-            _report_chunk_progress(progress_cb, "contextualizing", 0, n_chunks)
-            prefixes = await self._context_generator.generate_prefixes(
-                chunks=[d.text for d in leaf_docs],
+            _report_chunk_progress(progress_cb, "contextualizing", 0, len(need_llm))
+            generated = await self._context_generator.generate_prefixes(
+                chunks=[leaf_docs[i].text for i in need_llm],
                 full_document=document.text,
                 file_name=file_name,
                 on_progress=lambda done, total: _report_chunk_progress(
@@ -274,14 +318,19 @@ class HierarchicalIndexer:
             # generate_prefixes no-ops through the rest on abort; this is the real
             # stopping point — the result is discarded and never reaches embedding.
             _raise_if_aborted(should_abort, file_name, "contextualizing")
-            for ld, prefix in zip(leaf_docs, prefixes):
+            for i, prefix in zip(need_llm, generated):
                 # Reasoning models occasionally emit control characters: clean before PGVector.
-                prefix = self._clean_text(prefix or "").strip()
-                if prefix:
-                    ld.metadata["context_prefix"] = prefix
-            logger.info(f"Contextual prefixes generated for {len(leaf_docs)} leaves ({file_name})")
+                prefixes[i] = None if prefix is None else self._clean_text(prefix).strip()
+            logger.info(f"Contextual prefixes generated for {len(need_llm)} leaves ({file_name})")
 
-        # 3. Build hierarchy (leaves + parents)
+        for ld, prefix in zip(leaf_docs, prefixes):
+            if prefix:
+                ld.metadata["context_prefix"] = prefix
+            if prefix is not None:
+                # A prefix that failed (None) carries no key, so the next re-index retries it.
+                ld.metadata["ctx_key"] = ctx_key
+
+        # 3. Build hierarchy (leaves + parents), with ids stable across re-indexes
         base_metadata = {
             k: v for k, v in document.metadata.items()
             if v is not None and not k.startswith("_")
@@ -290,6 +339,8 @@ class HierarchicalIndexer:
             leaf_documents=leaf_docs,
             parent_target_tokens=self._parent_target_tokens,
             base_metadata=base_metadata,
+            leaf_ids=leaf_ids,
+            parent_id_for=lambda idxs: parent_node_id(file_id_meta, [hashes[i] for i in idxs]),
         )
         search_texts = {n.node_id: retrieval_text(n.text, n.metadata) for n in leaf_nodes}
 
@@ -298,8 +349,24 @@ class HierarchicalIndexer:
         embed_model = self._embed_model if self._embed_model is not None else Settings.embed_model
         if embed_model is None:
             raise RuntimeError("Embedding model not configured (neither injected nor global)")
+        emb_key = embedding_key(embed_model)
 
-        leaf_texts = [search_texts[n.node_id] for n in leaf_nodes]
+        to_embed: List[TextNode] = []
+        for n in leaf_nodes:
+            n.metadata["emb_key"] = emb_key
+            old = reusable.get(n.metadata["chunk_hash"])
+            same_text = (
+                old is not None
+                and old.get("ctx_key") == n.metadata.get("ctx_key")
+                and (old.get("context_prefix") or "") == (n.metadata.get("context_prefix") or "")
+            )
+            if same_text and old.get("emb_key") == emb_key and old.get("embedding"):
+                n.embedding = old["embedding"]
+            else:
+                to_embed.append(n)
+        n_reused_emb = len(leaf_nodes) - len(to_embed)
+
+        leaf_texts = [search_texts[n.node_id] for n in to_embed]
         n_leaves = len(leaf_texts)
         n_batches = (n_leaves + _EMBEDDING_BATCH_SIZE - 1) // _EMBEDDING_BATCH_SIZE
         _report_chunk_progress(progress_cb, "embedding", 0, n_leaves)
@@ -325,13 +392,19 @@ class HierarchicalIndexer:
                 f"Embedded batch {i + 1}/{n_batches} "
                 f"({batch_start}-{batch_end} of {n_leaves})"
             )
-        for n, emb in zip(leaf_nodes, leaf_embeddings):
+        for n, emb in zip(to_embed, leaf_embeddings):
             n.embedding = emb
+        if reusable:
+            logger.info(
+                f"[INCREMENTAL] {file_name}: {n_chunks} leaves; reused {n_reused_prefix} "
+                f"prefix(es) and {n_reused_emb} embedding(s); {len(need_llm)} LLM call(s), "
+                f"{n_leaves} embedding(s)"
+            )
 
         # Parent nodes: assign a zero vector (PGVector disallows NULL embeddings).
         # Combined with the query-time node_role=leaf filter, parents never affect ranking.
-        embed_dim = len(leaf_embeddings[0]) if leaf_embeddings else 1024
-        zero_vec = [0.0] * embed_dim
+        dims = next((len(n.embedding) for n in leaf_nodes if n.embedding), 1024)
+        zero_vec = [0.0] * dims
         for p in parent_nodes:
             p.embedding = zero_vec
 
@@ -339,11 +412,8 @@ class HierarchicalIndexer:
         # the full-text vector written in the same INSERT. Re-indexing never leaves a
         # window with no chunks or with NULL search vectors (see chunk_store).
         _raise_if_aborted(should_abort, file_name, "writing")
-        _report_chunk_progress(progress_cb, "writing", n_leaves, n_leaves)
+        _report_chunk_progress(progress_cb, "writing", len(leaf_nodes), len(leaf_nodes))
         all_nodes: List[TextNode] = list(leaf_nodes) + list(parent_nodes)
-        file_id_meta = str(document.metadata.get("file_id") or "")
-        if not file_id_meta:
-            raise ValueError(f"{file_name}: document has no file_id; cannot replace its chunks")
         tsv_config = self._text_search_config()
         segment = None
         if tsv_config == "simple":
@@ -383,6 +453,8 @@ class HierarchicalIndexer:
         return {
             "leaves": len(leaf_nodes),
             "parents": len(parent_nodes),
+            "llm_calls": len(need_llm),
+            "embedded": n_leaves,
             # Parse caveat from the loader (pages docling could not parse), for the file record.
             "warning": document.metadata.get("_parse_warning"),
         }

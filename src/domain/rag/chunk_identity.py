@@ -26,6 +26,8 @@ unchanged, so old folders keep working until they are re-indexed.
 
 from __future__ import annotations
 
+import hashlib
+import uuid
 from pathlib import Path
 from typing import Any, Iterable, List, Mapping, Optional, Sequence, Tuple
 
@@ -129,3 +131,39 @@ def node_retrieval_text(node: Any) -> str:
     """retrieval_text for a llama-index node or NodeWithScore."""
     inner = getattr(node, "node", node)
     return retrieval_text(getattr(inner, "text", "") or "", getattr(inner, "metadata", None))
+
+
+# --- identity for incremental re-indexing ------------------------------------------
+# A leaf is identified by what determines its retrieval text apart from the prefix:
+# its breadcrumb and original text. When a file is re-indexed, a leaf whose hash is
+# unchanged keeps its contextual prefix (an LLM call) and its embedding, as long as
+# the prefix generator and the embedding model are the same as when they were made.
+
+# Fixed namespace for deterministic node ids (changing it re-keys every chunk).
+_NODE_NAMESPACE = uuid.UUID("2f6b1c84-5d0e-4c3a-9a57-8e41d0b7c6f2")
+
+
+def chunk_hash(raw_text: str, crumb: str) -> str:
+    """Content hash of a leaf: breadcrumb + original text (moving a paragraph to
+    another section changes its breadcrumb, hence its hash)."""
+    return hashlib.sha256(f"{crumb}\n{raw_text}".encode("utf-8")).hexdigest()[:32]
+
+
+def leaf_node_id(file_id: str, chash: str, occurrence: int = 0) -> str:
+    """Stable leaf id: the same chunk of the same file keeps its id across re-indexes."""
+    return str(uuid.uuid5(_NODE_NAMESPACE, f"{file_id}|leaf|{chash}|{occurrence}"))
+
+
+def parent_node_id(file_id: str, child_hashes: Sequence[str]) -> str:
+    """Stable parent id, derived from its children."""
+    joined = hashlib.sha256("|".join(child_hashes).encode("utf-8")).hexdigest()[:32]
+    return str(uuid.uuid5(_NODE_NAMESPACE, f"{file_id}|parent|{joined}"))
+
+
+def embedding_key(embed_model: Any) -> str:
+    """Identity of the embedding space: model class, model name and passage prefix
+    (e5's "passage: " changes every vector). Reuse a stored vector only on a match."""
+    inner = getattr(embed_model, "_inner", None) or embed_model
+    name = getattr(embed_model, "model_name", None) or getattr(inner, "model_name", None) or ""
+    passage = getattr(embed_model, "_passage_prefix", "") or ""
+    return f"{type(inner).__name__}|{name}|passage={passage}"
