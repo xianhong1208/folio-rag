@@ -1,8 +1,10 @@
 
 from datetime import datetime
 from typing import Optional, List, Dict, Any
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 from uuid import UUID
+
+from src.domain.rag.query_limits import MAX_QUERY_CHARS
 
 class UpdateFileRequest(BaseModel):
     """Update-file request model."""
@@ -16,15 +18,39 @@ class BatchDeleteRequest(BaseModel):
     delete_all: bool = False
 
 
+def _folder_name(v):
+    """NFC-normalise + trim; reject empty and over-long names (422 instead of a DB 500)."""
+    if v is None:
+        return v
+    from src.utils.names import MAX_NAME_LEN, normalize_name
+    v = normalize_name(v)
+    if not v:
+        raise ValueError("name must not be empty")
+    if len(v) > MAX_NAME_LEN:
+        raise ValueError(f"name is too long (max {MAX_NAME_LEN} characters)")
+    return v
+
+
 class CreateFolderRequest(BaseModel):
     """Request model to create a folder in a given space."""
-    name: str
-    description: Optional[str] = None
+    name: str = Field(..., description="Folder name (1-255 characters, NFC-normalised)")
+    description: Optional[str] = Field(None, max_length=10000)
+
+    @field_validator("name")
+    @classmethod
+    def _norm_name(cls, v):
+        return _folder_name(v)
+
 
 class UpdateFolderRequest(BaseModel):
     """Update-folder request model."""
-    name: Optional[str] = None
-    description: Optional[str] = None
+    name: Optional[str] = Field(None, description="New name (1-255 characters, NFC-normalised)")
+    description: Optional[str] = Field(None, max_length=10000)
+
+    @field_validator("name")
+    @classmethod
+    def _norm_name(cls, v):
+        return _folder_name(v)
 
 # RAG Response Models
 
@@ -77,7 +103,9 @@ class QueryRequest(BaseModel):
     This way an ops change to config immediately affects the API's default behavior, eliminating
     the "hardcoded Pydantic values drift out of sync with config" problem.
     """
-    query: str = Field(..., examples=["What is the core conclusion of this document?"], description="Query string")
+    query: str = Field(..., max_length=MAX_QUERY_CHARS,
+                       examples=["What is the core conclusion of this document?"],
+                       description=f"Query string (at most {MAX_QUERY_CHARS} characters)")
     folder_name: str = Field(..., examples=["my-folder"], description="Folder name")
     # The 4 tuning fields below — example values match config.rag.retrieval.default_*.
     # When omitted they take the config value, so using the config's current values as examples is the most intuitive.
