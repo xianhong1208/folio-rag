@@ -239,8 +239,8 @@ def create_app(config: BaseModel, transport: str) -> FastAPI:
 
     # Serve the built React console SPA at /admin (index.html + hashed assets), with a
     # client-route fallback so deep links like /admin/folders return index.html. Must be
-    # registered before the catch-all FastMCP mount below. Falls back silently to the
-    # legacy single-file console at /admin-classic when the SPA has not been built.
+    # registered before the catch-all FastMCP mount below. When the SPA has not been
+    # built, /admin is simply not served (run `cd frontend && npm run build`).
     try:
         from fastapi.staticfiles import StaticFiles
         from starlette.exceptions import HTTPException as _StarletteHTTPException
@@ -259,7 +259,7 @@ def create_app(config: BaseModel, transport: str) -> FastAPI:
             fastapi_app.mount("/admin", _SPAStaticFiles(directory=str(_console_dir), html=True), name="console")
             api_logger.info(f"React console SPA mounted at /admin (dir={_console_dir})")
         else:
-            api_logger.info("React console not built (static/console/index.html missing); /admin-classic serves the legacy console")
+            api_logger.warning("React console not built (static/console/index.html missing); /admin is not served")
     except Exception as e:
         api_logger.warning(f"Console SPA mount skipped: {e}")
 

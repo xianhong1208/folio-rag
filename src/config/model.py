@@ -4,7 +4,7 @@
 All Pydantic config models are collected here for reuse across the project.
 """
 
-from typing import List, Optional
+from typing import List, Literal, Optional, Union
 from pydantic import BaseModel, ConfigDict, Field
 
 # Secrets are excluded from repr()/str() (repr=False), so logging a whole config
@@ -42,6 +42,25 @@ class DynamicToolsConfig(BaseModel):
     enabled: bool = False
 
 
+class ConsoleAuthConfig(BaseModel):
+    """Admin-console login (``auth.console``). Every field has a default, so existing
+    config files need no edits.
+
+    The console signs in by pasting an MCP Gate access token (a PAT) issued for this
+    service; the server verifies it once and sets a stateless, HS256-signed session
+    cookie carrying only the token's identity (jti / sub / scopes), never the token.
+    """
+    # Session lifetime cap; a session never outlives the token it was created from.
+    session_hours: float = Field(8, gt=0)
+    # HMAC key for the session cookie (supports ${ENV_VAR}). Empty -> a random key is
+    # generated once and persisted under storage/ so sessions survive restarts.
+    session_secret: Optional[str] = Field(None, repr=False)
+    # Cookie Secure flag: "auto" = only when the request arrived over https.
+    secure_cookie: Union[bool, Literal["auto"]] = "auto"
+    # Scope that unlocks global changes (runtime settings, connectivity probes, audit log).
+    admin_scope: str = "rag:admin"
+
+
 class AuthConfig(BaseModel):
     """Bearer-token verification against an OAuth 2.1 authorization server (MCP Gate).
 
@@ -66,6 +85,8 @@ class AuthConfig(BaseModel):
     request_timeout: float = 5.0  # HTTP request timeout (seconds); e.g. JWKS fetch
     retry_count: int = 2  # Retry count (legacy; unused by the offline verifier)
     dynamic_tools: Optional[DynamicToolsConfig] = None
+    # Admin-console login (session cookie, admin scope). Defaults apply when omitted.
+    console: ConsoleAuthConfig = Field(default_factory=ConsoleAuthConfig)
 
 
 class LoggingConfig(BaseModel):
@@ -290,6 +311,7 @@ __all__ = [
     "ServerConfig",
     "DatabaseConfig",
     "DynamicToolsConfig",
+    "ConsoleAuthConfig",
     "AuthConfig",
     "LoggingConfig",
     "AppConfig",

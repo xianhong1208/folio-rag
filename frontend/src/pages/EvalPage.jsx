@@ -136,7 +136,7 @@ export default function EvalPage() {
               <input type="checkbox" checked={judge} onChange={(e) => setJudge(e.target.checked)} /> Grade answer quality (LLM-judged faithfulness + relevance — slower)
             </label>
           </div>
-          {status && <div className="sec" style={{ marginBottom: 12 }}>{status.error ? 'Error: ' + status.error : (status.message || `Evaluating… ${status.done || 0}/${status.total || '?'}`)}</div>}
+          {status && <div className="sec" style={{ marginBottom: 12 }}>{status.error ? 'Error: ' + status.error : status.busy ? 'Another evaluation is running…' : (status.message || `Evaluating… ${status.done || 0}/${status.total || '?'}`)}</div>}
           {report?.regenerate_reason && (
             <div className="sec" style={{ marginBottom: 12, color: 'var(--signal-hi)' }}>⚠ {report.regenerate_reason}</div>
           )}

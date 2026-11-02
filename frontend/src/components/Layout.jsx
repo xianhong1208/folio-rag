@@ -2,8 +2,10 @@ import { NavLink, Outlet, useLocation } from 'react-router-dom'
 import { useState } from 'react'
 import {
   Home, Folder, Zap, Search, BarChart3, FlaskConical, Layers, Sparkles,
-  ListTree, ArrowDownUp, Mic, SlidersHorizontal, Activity, ScrollText, Sun, Moon,
+  ListTree, ArrowDownUp, Mic, SlidersHorizontal, Activity, ScrollText, Sun, Moon, LogOut,
 } from 'lucide-react'
+import { useSession } from '../contexts/SessionContext'
+import { sessionLabel, expiresIn } from '../lib/session'
 
 const NAV = [
   { group: 'Console', items: [
@@ -31,6 +33,30 @@ const NAV = [
 ]
 
 const ALL = NAV.flatMap((g) => g.items)
+
+function UserBadge() {
+  const { session, isAdmin, logout } = useSession()
+  if (!session) return null
+  if (session.mode === 'open') {
+    return (
+      <div className="user-badge" title="auth.enabled is false — anyone who can reach this port has full access">
+        <span className="pill warn">Open mode</span>
+        <span className="ub-meta">no sign-in</span>
+      </div>
+    )
+  }
+  const scopes = (session.scopes || []).join(' ') || 'no scopes'
+  const tip = `Token ${session.jti_prefix || '?'} · ${scopes} · expires ${expiresIn(session.expires_at)}`
+  return (
+    <div className="user-badge" title={tip}>
+      <span className="dot ok" />
+      <span className="ub-name">{sessionLabel(session)}</span>
+      {session.sub && session.jti_prefix && <span className="ub-meta">{session.jti_prefix}</span>}
+      {isAdmin && <span className="pill run">admin</span>}
+      <button className="theme-btn" onClick={logout} title="Sign out"><LogOut size={13} />Sign out</button>
+    </div>
+  )
+}
 
 export default function Layout() {
   const loc = useLocation()
@@ -88,7 +114,7 @@ export default function Layout() {
         <header className="top">
           <div className="title">{title}</div>
           <div className="grow" />
-          <div className="statusline"><span className="dot ok" /> Connected</div>
+          <UserBadge />
         </header>
         <div className="content">
           <Outlet />

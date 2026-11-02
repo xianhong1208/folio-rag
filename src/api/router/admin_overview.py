@@ -2,27 +2,37 @@
 """Control Center data-plane API (read-only aggregates; mounted on the admin module router).
 
 - GET /api/admin/overview            — overview KPIs (folder/file/index/job)
-- GET /api/admin/folders             — all folders + index aggregates
+- GET /api/admin/folders             — your folders + index aggregates
 - GET /api/admin/folders/{id}/files  — per-file index status for one folder
 - GET /api/admin/jobs                — recent index jobs
+- /api/admin/eval/*                  — retrieval evaluation for one of your folders
 
-Auth semantics match the settings API (unauthenticated by product decision — see admin_settings.py).
-Everything is read-only and triggers no indexing/deletion actions.
+Auth: every endpoint needs a console session (or a bearer PAT). Per-folder data is
+limited to folders owned by the session's token (jti); cross-folder aggregates cover
+the whole server only for admins (``rag:admin``). The settings audit log and system
+resources are admin-only. See src/api/router/admin_scope.py.
 """
 
 from __future__ import annotations
 
-from fastapi import APIRouter, Body, HTTPException, Query
+from fastapi import APIRouter, Body, Depends, HTTPException, Query
 
+from src.api.router.admin_scope import aggregate_owner, owned_folder, owned_folder_ids
+from src.auth.console_session import (
+    ConsoleIdentity,
+    require_console_admin,
+    require_console_session,
+)
 from src.log import get_api_logger
 
 logger = get_api_logger()
 
-router = APIRouter(tags=["Admin: Overview"])
+router = APIRouter(tags=["Admin: Overview"], dependencies=[Depends(require_console_session)])
 
 # Retrieval evaluation (harness) background run state — a single in-memory slot (evaluation is infrequent).
+# "owner" is the owner key of the folder being evaluated; it is kept out of status responses.
 _EVAL: dict = {"running": False, "folder": None, "done": 0, "total": 0,
-               "result": None, "error": None, "started_at": None}
+               "result": None, "error": None, "started_at": None, "owner": None}
 
 
 def _load_eval_mod():
@@ -59,7 +69,10 @@ async def _run_eval_bg(folder_ref: str, n: int, k: int, regenerate: bool, judge:
 
 
 @router.post("/api/admin/eval/run")
-async def eval_run(body: dict = Body(default={}, example={"folder_id": 1, "n": 15})):
+async def eval_run(
+    body: dict = Body(default={}, examples=[{"folder_id": 1, "n": 15}]),
+    ident: ConsoleIdentity = Depends(require_console_session),
+):
     """Start one retrieval evaluation (background task on the main loop; generate synthetic
     questions -> three-way retrieval -> nDCG/Recall/MRR).
 
@@ -69,9 +82,14 @@ async def eval_run(body: dict = Body(default={}, example={"folder_id": 1, "n": 1
     global _EVAL_TASK
     if _EVAL["running"]:
         raise HTTPException(409, "An evaluation is already running")
-    folder_ref = str(body.get("folder_id") or body.get("folder") or "").strip()
-    if not folder_ref:
-        raise HTTPException(422, "folder_id (or folder name) is required")
+    try:
+        folder_id = int(body.get("folder_id"))
+    except (TypeError, ValueError):
+        raise HTTPException(422, "folder_id is required")
+    # Only your own folders; the run is then addressed by id (names are not unique
+    # across owners).
+    folder = owned_folder(folder_id, ident)
+    folder_ref = str(folder.id)
     # Bound n/k: each question is one LLM generation + retrieval across four modes,
     # and there is a single global run slot, so an unbounded n (e.g. 5000) would
     # monopolize evaluation for every folder. Reject non-numeric / out-of-range
@@ -101,29 +119,36 @@ async def eval_run(body: dict = Body(default={}, example={"folder_id": 1, "n": 1
     if _EVAL["running"]:  # another request started a run while we were checking
         raise HTTPException(409, "An evaluation is already running")
     _EVAL.update(running=True, folder=folder_ref, done=0, total=n,
-                 result=None, error=None, started_at=time.time())
+                 result=None, error=None, started_at=time.time(),
+                 owner=folder.user_token)
     # Run on the main loop (no new thread/loop) so the shared asyncpg connection pool stays on one loop
     _EVAL_TASK = asyncio.create_task(_run_eval_bg(folder_ref, n, k, regen, judge))
     return {"data": {"started": True}, "message": "evaluation started"}
 
 
 @router.get("/api/admin/eval/status")
-async def eval_status():
-    """Evaluation progress / results (polled by the frontend)."""
-    return {"data": dict(_EVAL), "message": "ok"}
+async def eval_status(ident: ConsoleIdentity = Depends(require_console_session)):
+    """Evaluation progress / results (polled by the frontend).
+
+    There is one global run slot. Someone else's run is reported only as "busy":
+    its folder, progress and results stay private to the folder's owner.
+    """
+    data = {k: v for k, v in _EVAL.items() if k != "owner"}
+    if _EVAL["folder"] is not None and not ident.owns(_EVAL["owner"]):
+        data = {"running": _EVAL["running"], "folder": None, "done": 0, "total": 0,
+                "result": None, "error": None, "started_at": None, "busy": True}
+    return {"data": data, "message": "ok"}
 
 
 @router.get("/api/admin/eval/report")
-async def eval_report(folder_id: int = Query(...)):
-    """Read the folder's most recent evaluation report (reports/rag_eval_<name>.json); returns null if none."""
+async def eval_report(folder_id: int = Query(...),
+                      ident: ConsoleIdentity = Depends(require_console_session)):
+    """Read the folder's most recent evaluation report (reports/rag_eval_<id>_<name>.json); returns null if none."""
     import json
     import os
-    from db.cached_folderdb import CachedFolderDB
-    folder = CachedFolderDB.get_by_id(folder_id)
-    if not folder:
-        raise HTTPException(404, f"Folder {folder_id} not found")
-    slug = str(folder.name).replace("/", "_")
-    path = os.path.join("reports", f"rag_eval_{slug}.json")
+    from src.domain.rag.eval_paths import report_path, report_slug
+    folder = owned_folder(folder_id, ident)
+    path = report_path(report_slug(folder))
     if not os.path.exists(path):
         return {"data": None, "message": "no report yet"}
     with open(path, encoding="utf-8") as f:
@@ -131,16 +156,14 @@ async def eval_report(folder_id: int = Query(...)):
 
 
 @router.get("/api/admin/eval/history")
-async def eval_history(folder_id: int = Query(...), limit: int = Query(30, ge=1, le=200)):
+async def eval_history(folder_id: int = Query(...), limit: int = Query(30, ge=1, le=200),
+                       ident: ConsoleIdentity = Depends(require_console_session)):
     """The folder's past evaluation runs (oldest first) for baseline comparison / trend."""
     import json
     import os
-    from db.cached_folderdb import CachedFolderDB
-    folder = CachedFolderDB.get_by_id(folder_id)
-    if not folder:
-        raise HTTPException(404, f"Folder {folder_id} not found")
-    slug = str(folder.name).replace("/", "_")
-    path = os.path.join("reports", f"rag_eval_history_{slug}.jsonl")
+    from src.domain.rag.eval_paths import history_path, report_slug
+    folder = owned_folder(folder_id, ident)
+    path = history_path(report_slug(folder))
     entries = []
     if os.path.exists(path):
         with open(path, encoding="utf-8") as f:
@@ -154,15 +177,20 @@ async def eval_history(folder_id: int = Query(...), limit: int = Query(30, ge=1,
 
 
 @router.get("/api/admin/overview")
-async def get_overview():
-    """Overview KPIs + in-progress jobs + a summary of the current model configuration."""
+async def get_overview(ident: ConsoleIdentity = Depends(require_console_session)):
+    """Overview KPIs + in-progress jobs + a summary of the current model configuration.
+
+    KPIs cover your own folders, or the whole server for admins (``scope``).
+    """
     from db import admin_stats
     from src.config import runtime_overrides as ro
     from src.config.config_manager import Config
 
-    data = admin_stats.overview()
+    owner = aggregate_owner(ident)
+    data = admin_stats.overview(owner=owner)
+    data["scope"] = "own" if owner is not None else "all"
     try:
-        data["trend"] = admin_stats.indexing_trend(7)
+        data["trend"] = admin_stats.indexing_trend(7, owner=owner)
     except Exception:
         data["trend"] = []
     # Model configuration summary (for the overview page's service cards; reuses the settings whitelist's masking semantics)
@@ -200,69 +228,90 @@ def _asr_available(cfg) -> bool:
 
 
 @router.get("/api/admin/folders")
-async def list_folders():
-    """All folders + per-folder index aggregates (file count / indexed / failed / chunks / vector table)."""
+async def list_folders(ident: ConsoleIdentity = Depends(require_console_session)):
+    """Your folders + per-folder index aggregates (file count / indexed / failed / chunks / vector table)."""
     from db import admin_stats
-    return {"data": {"folders": admin_stats.folders_with_index_stats()}, "message": "ok"}
+    return {"data": {"folders": admin_stats.folders_with_index_stats(owner=ident.owner_key)},
+            "message": "ok"}
 
 
 @router.get("/api/admin/folders/{folder_id}/files")
-async def list_folder_files(folder_id: int):
+async def list_folder_files(folder_id: int,
+                            ident: ConsoleIdentity = Depends(require_console_session)):
     """Per-file index status for a single folder (with truncated failure reasons)."""
     from db import admin_stats
+    owned_folder(folder_id, ident)
     files = admin_stats.files_with_index_status(folder_id)
     return {"data": {"folder_id": folder_id, "files": files}, "message": "ok"}
 
 
 @router.get("/api/admin/active-stages")
-async def active_stages():
+async def active_stages(ident: ConsoleIdentity = Depends(require_console_session)):
     """Which stage each currently-indexing file is at ({file_id: {stage,done,total,eta}}) —
-    used by the file list to show "parse / generate context / vectorize / write" in real time."""
+    used by the file list to show "parse / generate context / vectorize / write" in real time.
+    Limited to files in your own folders."""
     from src.domain.rag.index_job_manager import IndexingJobManager
-    return {"data": {"stages": IndexingJobManager.get_instance().active_file_stages()},
-            "message": "ok"}
+    stages = IndexingJobManager.get_instance().active_file_stages()
+    allowed = owned_folder_ids(ident)
+    if allowed is not None:
+        stages = {fid: st for fid, st in stages.items() if st.get("folder_id") in allowed}
+    return {"data": {"stages": stages}, "message": "ok"}
 
 
 @router.get("/api/admin/folders/{folder_id}/files/{file_id}/chunks")
 async def list_file_chunks(folder_id: int, file_id: str,
-                           limit: int = Query(500, ge=1, le=2000)):
+                           limit: int = Query(500, ge=1, le=2000),
+                           ident: ConsoleIdentity = Depends(require_console_session)):
     """The leaf chunks a file was split into (lets the customer inspect what the index looks like)."""
     from db import admin_stats
+    owned_folder(folder_id, ident)
     return {"data": admin_stats.chunks_for_file(folder_id, file_id, limit), "message": "ok"}
 
 
-@router.get("/api/admin/audit")
+@router.get("/api/admin/audit", dependencies=[Depends(require_console_admin)])
 async def settings_audit(limit: int = Query(100, ge=1, le=500)):
-    """Settings-change audit log (who changed what to what, and when)."""
+    """Settings-change audit log (who changed what to what, and when). Admin only."""
     from src.adapter import runtime_settings_service as svc
     return {"data": {"entries": svc.audit_log(limit)}, "message": "ok"}
 
 
-@router.get("/api/admin/resources")
+@router.get("/api/admin/resources", dependencies=[Depends(require_console_admin)])
 async def system_resources_endpoint():
-    """System resources: DB size / vector table size / disk."""
+    """System resources: DB size / vector table size / disk. Admin only (server-wide)."""
     from db import admin_stats
     return {"data": admin_stats.system_resources(), "message": "ok"}
 
 
 @router.get("/api/admin/jobs")
-async def list_jobs(limit: int = Query(20, ge=1, le=100)):
-    """Recent index jobs (ordered by last update)."""
+async def list_jobs(limit: int = Query(20, ge=1, le=100),
+                    ident: ConsoleIdentity = Depends(require_console_session)):
+    """Recent index jobs (ordered by last update): your folders', or every folder's for admins.
+
+    Each job carries ``owned`` (whether you can act on it, e.g. cancel)."""
     from db import admin_stats
-    return {"data": {"jobs": admin_stats.recent_jobs(limit)}, "message": "ok"}
+    jobs = admin_stats.recent_jobs(limit, owner=aggregate_owner(ident), viewer=ident.owner_key)
+    return {"data": {"jobs": jobs}, "message": "ok"}
 
 
 @router.get("/api/admin/analytics")
 async def query_analytics(
     folder_id: int | None = Query(None),
     days: int = Query(30, ge=1, le=365),
+    ident: ConsoleIdentity = Depends(require_console_session),
 ):
     """Query analytics: query volume / average latency / zero-result rate / top queries / daily trend.
 
-    Omitting folder_id = all folders; days = the statistics window. The data source is QueryLog
+    folder_id must be one of your folders; omitting it = all your folders (every folder
+    for admins); days = the statistics window. The data source is QueryLog
     (best-effort one record per /query retrieval)."""
     from db.query_log_db import QueryLogDB
-    return {"data": QueryLogDB.analytics(folder_id=folder_id, days=days), "message": "ok"}
+    scope_ids = None
+    if folder_id is not None:
+        owned_folder(folder_id, ident)
+    elif aggregate_owner(ident) is not None:
+        scope_ids = owned_folder_ids(ident)
+    return {"data": QueryLogDB.analytics(folder_id=folder_id, days=days, folder_ids=scope_ids),
+            "message": "ok"}
 
 
 async def _probe_endpoint_health(base_url: str, api_key: str | None):
@@ -314,7 +363,7 @@ def _probe_db_health():
 
 
 @router.get("/api/admin/health")
-async def health_check():
+async def health_check():  # read-only status; any console session may view it
     """Live health of external dependencies: DB / Embedding / LLM / Reranker / Speech-to-Text.
 
     Lets operators spot connection/endpoint problems at a glance (instead of digging through logs

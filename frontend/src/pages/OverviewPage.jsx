@@ -1,7 +1,9 @@
 import { useEffect, useState, useCallback } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { get, post } from '../services/api'
+import { get } from '../services/api'
 import { fmtNum, fmtBytes, shortModel } from '../lib/format'
+import { serviceStates } from '../lib/health'
+import { useSession } from '../contexts/SessionContext'
 
 const Svg = ({ children }) => <svg viewBox="0 0 24 24">{children}</svg>
 
@@ -27,6 +29,7 @@ function Pill({ state }) {
 
 export default function OverviewPage() {
   const nav = useNavigate()
+  const { isAdmin } = useSession()
   const [d, setD] = useState(null)
   const [res, setRes] = useState(null)
   const [health, setHealth] = useState({})
@@ -34,19 +37,12 @@ export default function OverviewPage() {
   const load = useCallback(async () => {
     const r = await get('/api/admin/overview')
     setD(r.data)
-    const m = r.data.models
-    const probe = async (id, url) => {
-      if (!url) { setHealth((h) => ({ ...h, [id]: 'unset' })); return }
-      try {
-        const p = await post('/api/admin/probe', { base_url: url })
-        setHealth((h) => ({ ...h, [id]: p.data && p.data.reachable ? 'online' : 'offline' }))
-      } catch { setHealth((h) => ({ ...h, [id]: 'offline' })) }
-    }
-    probe('embed', m.embedding.base_url)
-    probe('llm', m.llm.base_url)
-    if (m.rerank.enabled) probe('rerank', m.rerank.base_url)
-    try { const rr = await get('/api/admin/resources'); setRes(rr.data) } catch { /* ignore */ }
-  }, [])
+    // Service status comes from the server-side health check of the configured endpoints.
+    get('/api/admin/health').then((h) => setHealth(serviceStates(h.data && h.data.checks)))
+      .catch(() => setHealth({ embed: 'offline', llm: 'offline', rerank: 'offline' }))
+    // Server-wide storage figures are admin-only.
+    if (isAdmin) { try { const rr = await get('/api/admin/resources'); setRes(rr.data) } catch { /* ignore */ } }
+  }, [isAdmin])
 
   useEffect(() => {
     let alive = true
@@ -80,7 +76,7 @@ export default function OverviewPage() {
   }
 
   const ribbon = [
-    { k: 'Folders', v: fmtNum(d.folders), cls: 'cy', d: 'token-scoped', nav: '/folders' },
+    { k: 'Folders', v: fmtNum(d.folders), cls: 'cy', d: d.scope === 'all' ? 'all owners' : 'owned by your token', nav: '/folders' },
     { k: 'Files', v: fmtNum(d.files), cls: '', d: fmtBytes(d.total_size_bytes) + ' indexed' },
     { k: 'Chunks', v: fmtNum(ix.total_chunks), cls: 'am', d: 'vectors in store' },
     { k: 'Active Jobs', v: fmtNum(d.jobs.active.length), cls: 'gr', d: jobsFoot, nav: '/jobs' },
@@ -161,7 +157,7 @@ export default function OverviewPage() {
                 <div className="svc"><div className="grow"><div className="name">Vector storage · {res.vector_tables} table(s)</div><div className="val">{fmtBytes(res.vector_bytes)}</div></div></div>
                 <div className="svc"><div className="grow"><div className="name">Disk usage</div><div className="val">{fmtBytes(res.disk_used_bytes)} / {fmtBytes(res.disk_total_bytes)}</div></div></div>
               </>
-            ) : <div className="svc"><div className="grow"><div className="val">…</div></div></div>}
+            ) : <div className="svc"><div className="grow"><div className="val">{isAdmin ? '…' : 'Storage figures are visible to admins (rag:admin)'}</div></div></div>}
           </div>
         </div>
       </div>

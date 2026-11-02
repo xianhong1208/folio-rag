@@ -1,11 +1,12 @@
 
-"""Control Center management-plane API contract (act-as-owner mode).
+"""Control Center management-plane API contract.
 
-Pins down: (1) existing endpoint functions are always called with the folder
-owner's token (bypassing none of the existing security/cleanup logic);
-(2) an ownerless folder cannot be managed (409); (3) a nonexistent folder is
-404; (4) creating a folder requires owner_token. The underlying endpoint
-functions are mocked -- their behavior is guarded by their own tests.
+Pins down: (1) existing endpoint functions are always called with the signed-in
+token's owner key (bypassing none of the existing security/cleanup logic);
+(2) an ownerless or foreign folder is 404 (409 for ownerless in open mode);
+(3) a nonexistent folder is 404; (4) a created folder is owned by the session.
+The underlying endpoint functions are mocked -- their behavior is guarded by
+their own tests.
 """
 
 from types import SimpleNamespace
@@ -19,10 +20,11 @@ from src.api.router.admin_settings import router
 
 
 @pytest.fixture()
-def client():
+def client(as_identity, make_identity):
+    # Signed in as the owner of the folders the tests use ("owner-tok").
     app = FastAPI()
     app.include_router(router)
-    return TestClient(app)
+    return TestClient(as_identity(app, make_identity("owner-tok", admin=False)))
 
 
 def _folder(token="owner-tok"):
@@ -45,25 +47,41 @@ class TestActAsOwner:
         with patch(_DB, return_value=None):
             assert client.delete("/api/admin/manage/folders/999").status_code == 404
 
-    def test_unowned_folder_409(self, client):
+    def test_unowned_folder_is_404(self, client):
+        # Fail-closed: an ownerless folder is nobody's, so a token session cannot see it.
         with patch(_DB, return_value=_folder(token=None)):
             r = client.delete("/api/admin/manage/folders/7")
+        assert r.status_code == 404
+
+    def test_unowned_folder_409_in_open_mode(self, as_identity):
+        from src.auth.console_session import ConsoleIdentity
+        app = FastAPI()
+        app.include_router(router)
+        c = TestClient(as_identity(app, ConsoleIdentity(mode="open", via="open", is_admin=True)))
+        with patch(_DB, return_value=_folder(token=None)):
+            r = c.delete("/api/admin/manage/folders/7")
         assert r.status_code == 409
         assert "owner token" in r.json()["detail"]
 
-    def test_create_requires_owner_token(self, client):
-        r = client.post("/api/admin/manage/folders", json={"name": "x"})
-        assert r.status_code == 422
-        assert "owner_token" in r.json()["detail"]
-
-    def test_create_passes_token_through(self, client):
+    def test_create_is_owned_by_the_session(self, client):
+        # Any owner_token in the body is ignored: the owner is always the session's jti.
         with patch("src.api.router.folder_api.create_folder",
                    new=AsyncMock(return_value={"id": 1})) as ep:
             r = client.post("/api/admin/manage/folders",
                             json={"name": "docs", "owner_token": "tok-a"})
         assert r.status_code == 200
-        assert ep.await_args.kwargs["user_token"] == "tok-a"
+        assert ep.await_args.kwargs["user_token"] == "owner-tok"
         assert ep.await_args.args[0].name == "docs"
+
+    def test_create_in_open_mode_uses_console_owner(self, as_identity):
+        from src.auth.console_session import ConsoleIdentity
+        app = FastAPI()
+        app.include_router(router)
+        c = TestClient(as_identity(app, ConsoleIdentity(mode="open", via="open", is_admin=True)))
+        with patch("src.api.router.folder_api.create_folder",
+                   new=AsyncMock(return_value={"id": 1})) as ep:
+            assert c.post("/api/admin/manage/folders", json={"name": "docs"}).status_code == 200
+        assert ep.await_args.kwargs["user_token"] == "console"
 
     def test_incremental_index_uses_index_endpoint(self, client):
         f = _folder()
@@ -223,6 +241,26 @@ class TestAnswerAndRetry:
             r = client.post("/api/admin/manage/folders/7/files/9e68c18e-3209-4111-8111-000000000001/retry")
         assert r.status_code == 200
         assert adapter.index_document.await_args.kwargs["force"] is True
+        assert adapter.index_document.await_args.kwargs["token"] == "owner-tok"
+
+    def test_retry_rejects_file_from_another_folder(self, client):
+        # Folder 7 is owned by the session, but the file lives in folder 8 (someone else's).
+        frow = SimpleNamespace(id="9e68c18e-3209-4111-8111-000000000001", file_name="a.pdf",
+                               file_path="p", folder_id=8, mime_type="x", file_size=1,
+                               content_hash="h")
+        adapter = MagicMock()
+        adapter.index_document = AsyncMock()
+        with patch(_DB, return_value=_folder()), \
+             patch("db.filedb.FileDB.get", return_value=[frow]), \
+             patch("src.adapter.rag.get_rag_adapter", return_value=adapter):
+            r = client.post("/api/admin/manage/folders/7/files/9e68c18e-3209-4111-8111-000000000001/retry")
+        assert r.status_code == 404
+        adapter.index_document.assert_not_awaited()
+
+    def test_retry_missing_file_404(self, client):
+        with patch(_DB, return_value=_folder()), patch("db.filedb.FileDB.get", return_value=[]):
+            r = client.post("/api/admin/manage/folders/7/files/9e68c18e-3209-4111-8111-000000000001/retry")
+        assert r.status_code == 404
 
 
 class TestGenerateAnswer:
