@@ -114,8 +114,11 @@ async def rerank(reranker, query: str, nodes: List[Any], top_n: int) -> RerankOu
     """Score, sort, apply ``score_threshold``, keep ``top_n``.
 
     Uses the reranker's raw ``ascore`` when it has one (so the pre-threshold top
-    score is known); otherwise its ``arerank``.
+    score is known); otherwise its ``arerank``. Either way the reranker sees each
+    chunk's retrieval text (chunk_identity.node_retrieval_text).
     """
+    from src.domain.rag.chunk_identity import node_retrieval_text
+
     if not nodes:
         return RerankOutcome(nodes=[])
     score_fn = getattr(reranker, "ascore", None)
@@ -124,7 +127,9 @@ async def rerank(reranker, query: str, nodes: List[Any], top_n: int) -> RerankOu
             ranked = list(await reranker.arerank(query, list(nodes), top_n=top_n))[:top_n]
             top = ranked[0].score if ranked else None
             return RerankOutcome(nodes=ranked, top_score=top)
-        scores = list(await score_fn(query, [n.text for n in nodes]))
+        # Score what the chunk is retrieved by (prefix + breadcrumb + original text),
+        # like embedding and BM25; the node keeps its original text for display.
+        scores = list(await score_fn(query, [node_retrieval_text(n) for n in nodes]))
         if len(scores) != len(nodes):
             raise ValueError(f"reranker returned {len(scores)} scores for {len(nodes)} texts")
     except Exception as e:  # noqa: BLE001 — degrade, never fail the query
