@@ -35,7 +35,7 @@ async def test_with_timeout_raises_TimeoutError_and_cancels_inner():
         await _with_timeout(slow(), timeout_seconds=1, filename="big.pdf")
     # Let the cancelled coroutine finish winding down
     await asyncio.sleep(0.05)
-    assert cancelled["v"], "逾時應真的 cancel 內層 coroutine"
+    assert cancelled["v"], "the timeout should really cancel the inner coroutine"
 
 
 def test_cancellederror_is_not_caught_by_except_exception():

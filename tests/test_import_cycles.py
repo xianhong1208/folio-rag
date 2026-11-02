@@ -103,7 +103,7 @@ def _src_cycles(include_lazy: bool) -> list:
 def test_cycle_detector_catches_planted_cycle():
     graph = {"a": {"b"}, "b": {"c"}, "c": {"a"}, "d": {"a"}}
     cycles = _find_cycles(graph)
-    assert cycles, "偵測器抓不到自捏的 a→b→c→a 環"
+    assert cycles, "the detector missed the constructed a→b→c→a cycle"
 
 
 def test_cycle_detector_clean_dag_passes():
@@ -113,19 +113,19 @@ def test_cycle_detector_clean_dag_passes():
 def test_no_import_time_cycles():
     """Zero top-level import cycles — a cycle crashes at startup; the hardest invariant."""
     cycles = _src_cycles(include_lazy=False)
-    assert not cycles, "import-time 環:\n" + "\n".join(" → ".join(c) for c in cycles)
+    assert not cycles, "import-time cycles:\n" + "\n".join(" → ".join(c) for c in cycles)
 
 
 def test_no_runtime_lazy_import_cycles():
     """Zero cycles including lazy imports — lazy is not a license to work around a cycle, only to hide A↔B inside a function."""
     cycles = _src_cycles(include_lazy=True)
-    assert not cycles, "執行期(lazy)環:\n" + "\n".join(" → ".join(c) for c in cycles)
+    assert not cycles, "runtime (lazy) cycles:\n" + "\n".join(" → ".join(c) for c in cycles)
 
 
 def test_graph_is_nontrivial():
     """Sanity guard: the graph must actually resolve many modules and edges (not scan nothing)."""
     mods = _modules()
-    assert len(mods) > 30, f"只解析到 {len(mods)} 個模組,src 掃描可能壞了"
+    assert len(mods) > 30, f"only {len(mods)} modules parsed; the src scan may be broken"
     graph = {m: _edges_of(p, m, mods, True) for m, p in mods.items()}
     n_edges = sum(len(v) for v in graph.values())
-    assert n_edges > 50, f"只解析到 {n_edges} 條邊,import 解析可能壞了"
+    assert n_edges > 50, f"only {n_edges} edges parsed; import parsing may be broken"

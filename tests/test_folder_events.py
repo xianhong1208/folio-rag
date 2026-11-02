@@ -60,7 +60,7 @@ def test_renamed_unregisters_old_then_registers_new():
     unreg.side_effect = lambda *a, **k: calls.append("unreg")
     reg.side_effect = lambda *a, **k: calls.append("reg")
     assert fe.notify_folder_renamed("old", "new", "d2", "tokA") is True
-    assert calls == ["unreg", "reg"], "必須先卸舊再掛新"
+    assert calls == ["unreg", "reg"], "must unregister the old tool before registering the new one"
     unreg.assert_called_once_with("old", user_token="tokA")
     reg.assert_called_once_with("new", "d2", "tokA")
 

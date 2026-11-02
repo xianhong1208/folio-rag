@@ -82,10 +82,10 @@ async def test_index_document_writes_leaves_and_parents(vsm, indexer, folder, fi
 
     result = await indexer.index_document(_doc(fid), store)
 
-    assert result["leaves"] > 1, f"應切出多個 leaf,實得 {result}"
+    assert result["leaves"] > 1, f"expected several leaves, got {result}"
     assert result["parents"] >= 1
     rows = _table_rows(vsm, folder)
-    assert len(rows) == result["leaves"] + result["parents"], "表 rows 應 = leaves + parents"
+    assert len(rows) == result["leaves"] + result["parents"], "table rows should equal leaves + parents"
     # file_id metadata all correct (file-level deletion / read mode both rely on it)
     assert all(r[0].get("file_id") == fid for r in rows)
     roles = {r[0].get("node_role") for r in rows}
@@ -111,8 +111,8 @@ async def test_leaves_have_real_vectors_parents_zero(vsm, indexer, folder, file_
             f'SELECT count(*) FROM "{table}" '
             f"WHERE metadata_->>'node_role' = 'parent' AND embedding <-> :z > 0"
         ), {"z": zero}).scalar()
-    assert leaf_zero == 0, "leaf 不得是零向量(否則檢索全失效)"
-    assert parent_nonzero == 0, "parent 應為零向量(query 靠 node_role 過濾)"
+    assert leaf_zero == 0, "a leaf must not be a zero vector (retrieval would break entirely)"
+    assert parent_nonzero == 0, "a parent should be a zero vector (queries filter on node_role)"
 
 
 async def test_fetch_file_full_reassembles_content(vsm, indexer, folder, file_row):
@@ -137,7 +137,7 @@ async def test_delete_chunks_by_file_real_db(vsm, indexer, folder, file_row):
 
     table = vsm.physical_table_name(folder.id, folder.vector_table_uuid)
     deleted = VectorStoreManager.delete_chunks_by_file(table, fid)
-    assert deleted == total, f"應刪掉該檔全部 {total} 個 node,實刪 {deleted}"
+    assert deleted == total, f"expected all {total} nodes of the file deleted, deleted {deleted}"
     assert _table_rows(vsm, folder) == []
 
 
@@ -156,7 +156,7 @@ async def test_abort_before_embed_leaves_no_residue(vsm, indexer, folder, file_r
     from sqlalchemy.exc import ProgrammingError
     try:
         rows = _table_rows(vsm, folder, "WHERE metadata_->>'file_id' = :fid", {"fid": fid})
-        assert rows == [], "abort 於寫入前 — 不得留任何 chunk"
+        assert rows == [], "aborted before the write: no chunk may remain"
     except ProgrammingError:
         pass  # UndefinedTable -- the table was never even created, zero residue
 
@@ -193,7 +193,7 @@ async def test_e2e_traceability_real_md_to_store_and_back(
     doc = DocumentConverter().convert(str(md)).document
     records = _refine_chunks_for_token_budget(
         list(HierarchicalChunker().chunk(doc)), _LenTok(), 200)
-    assert any(r["headings"] for r in records), "docling 記錄應帶 headings"
+    assert any(r["headings"] for r in records), "docling records should carry headings"
 
     # -- 2. Production split chain: leaf_splitter (_docling_chunks) -> index_document
     file_id = str(file_row.id)
@@ -224,7 +224,7 @@ async def test_e2e_traceability_real_md_to_store_and_back(
         assert m.get("file_id") == file_id
         assert isinstance(m.get("chunk_index"), int)
         assert m.get("parent_node_id")  # every leaf attaches to a parent
-    assert any(m.get("headings") for m in leaf_metas), "溯源 headings 應入庫"
+    assert any(m.get("headings") for m in leaf_metas), "provenance headings should be stored"
 
     # -- 4a. node_id reverse-lookup of a single chunk
     from src.domain.rag.chunk_lookup import ChunkLookup
@@ -236,13 +236,13 @@ async def test_e2e_traceability_real_md_to_store_and_back(
             f'SELECT node_id FROM "{table}"')).fetchall()]
     for nid in node_ids:
         node = ChunkLookup.fetch_node(vector_store, nid)
-        assert node is not None, f"node_id={nid} 反查不到"
+        assert node is not None, f"node_id={nid} not found"
 
     # -- 4b. parent <-> children bidirectional links are complete
     leaf_ids = {r[1] for r in _id_role_rows(vsm, folder) if r[0] == "leaf"}
     for pm in parent_metas:
         for child in pm.get("children_node_ids", []):
-            assert child in leaf_ids, "parent 指向不存在的 leaf"
+            assert child in leaf_ids, "a parent points at a leaf that does not exist"
 
     # -- 4c. file_id reassembles the full text
     full = ChunkLookup.fetch_file_full(vector_store, file_id)
@@ -276,7 +276,7 @@ async def test_reindex_same_file_purges_stale_chunks(vsm, indexer, folder, file_
 
     r2 = await indexer.index_document(_doc(fid), store)  # simulate a re-run
     n2 = len(_table_rows(vsm, folder))
-    assert n2 == r2["leaves"] + r2["parents"], f"重跑後應等於單份({n2} vs {r2})"
+    assert n2 == r2["leaves"] + r2["parents"], f"after a re-run the count should equal one copy ({n2} vs {r2})"
     assert n2 == n1  # no doubling
 
 

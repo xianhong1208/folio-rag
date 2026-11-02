@@ -1,7 +1,6 @@
 """Unit tests for src/domain/rag/context_generator.py Contextual Retrieval logic.
 
 The LLM call path is covered by pytest-mock stubs (no real requests).
-Related docs: docs/testing/specs/SPEC-context-generator.md, docs/testing/test-cases/TC-context-generator.md
 """
 
 import asyncio
@@ -27,18 +26,18 @@ def _make_generator(**overrides) -> ContextGenerator:
 # _detect_scripts
 
 def test_detect_scripts_latin():
-    """Pure English (including Latin Extended accented letters) returns {'Latin'} (TC-ctxgen-01)"""
+    """Pure English (including Latin Extended accented letters) returns {'Latin'}"""
     assert _detect_scripts("Hello world") == {"Latin"}
     assert _detect_scripts("café résumé") == {"Latin"}
 
 
 def test_detect_scripts_cjk():
-    """Pure Chinese returns {'CJK'} (TC-ctxgen-02)"""
+    """Pure Chinese returns {'CJK'}"""
     assert _detect_scripts("這是一段中文") == {"CJK"}
 
 
 def test_detect_scripts_japanese_kana_and_kanji():
-    """Japanese hiragana/katakana/kanji are detected as Hiragana / Katakana / CJK respectively (TC-ctxgen-03)"""
+    """Japanese hiragana/katakana/kanji are detected as Hiragana / Katakana / CJK respectively"""
     assert _detect_scripts("こんにちは") == {"Hiragana"}
     assert _detect_scripts("カタカナ") == {"Katakana"}
     assert _detect_scripts("日本語のテスト") == {"CJK", "Hiragana", "Katakana"}
@@ -57,60 +56,60 @@ def test_detect_scripts_japanese_kana_and_kanji():
     ids=["hangul", "cyrillic", "arabic", "hebrew", "thai", "devanagari"],
 )
 def test_detect_scripts_other_major_scripts(text, expected_script):
-    """Korean/Russian/Arabic/Hebrew/Thai/Devanagari are each classified correctly (TC-ctxgen-04)"""
+    """Korean/Russian/Arabic/Hebrew/Thai/Devanagari are each classified correctly"""
     assert expected_script in _detect_scripts(text)
 
 
 def test_detect_scripts_ignores_non_alpha():
-    """Digits, punctuation, and whitespace are not counted; an empty string returns an empty set (TC-ctxgen-05)"""
+    """Digits, punctuation, and whitespace are not counted; an empty string returns an empty set"""
     assert _detect_scripts("12345 !?,.()") == set()
     assert _detect_scripts("") == set()
 
 
 def test_detect_scripts_mixed_text():
-    """Mixed Chinese-English returns two scripts (TC-ctxgen-06)"""
+    """Mixed Chinese-English returns two scripts"""
     assert _detect_scripts("公司 Q3 revenue 成長") == {"CJK", "Latin"}
 
 
 # _is_script_mismatch
 
 def test_mismatch_cjk_chunk_latin_prefix():
-    """Chinese chunk with a pure-English prefix -> mismatch=True (TC-ctxgen-07)"""
+    """Chinese chunk with a pure-English prefix -> mismatch=True"""
     assert _is_script_mismatch("這是中文段落", "This chunk describes something") is True
 
 
 def test_no_mismatch_cjk_chunk_cjk_prefix():
-    """Chinese chunk with a Chinese prefix (may include Latin/digits) -> False (TC-ctxgen-08)"""
+    """Chinese chunk with a Chinese prefix (may include Latin/digits) -> False"""
     assert _is_script_mismatch("這是中文段落", "本段說明 Q3 財報重點") is False
 
 
 def test_no_mismatch_pure_latin_chunk():
-    """A pure-English chunk is always False regardless of prefix language (Latin tolerance) (TC-ctxgen-09)"""
+    """A pure-English chunk is always False regardless of prefix language (Latin tolerance)"""
     assert _is_script_mismatch("English chunk text", "English prefix") is False
     assert _is_script_mismatch("English chunk text", "中文前綴") is False
 
 
 def test_mismatch_cjk_chunk_empty_or_numeric_prefix():
-    """Chinese chunk with an empty or numeric-only prefix (no non-Latin script) -> True (TC-ctxgen-10)"""
+    """Chinese chunk with an empty or numeric-only prefix (no non-Latin script) -> True"""
     assert _is_script_mismatch("中文內容", "") is True
     assert _is_script_mismatch("中文內容", "12345") is True
 
 
 def test_mismatch_mixed_chunk_uses_non_latin_main_script():
-    """A mixed Chinese-English chunk is judged by its dominant non-Latin script: pure-English prefix -> True, Chinese prefix -> False (TC-ctxgen-11)"""
+    """A mixed Chinese-English chunk is judged by its dominant non-Latin script: pure-English prefix -> True, Chinese prefix -> False"""
     assert _is_script_mismatch("中文 mixed with English", "english only prefix") is True
     assert _is_script_mismatch("中文 mixed with English", "中文前綴") is False
 
 
 def test_mismatch_hangul_chunk_latin_prefix():
-    """A non-Chinese non-Latin script (Korean) is protected the same way -> True (TC-ctxgen-12)"""
+    """A non-Chinese non-Latin script (Korean) is protected the same way -> True"""
     assert _is_script_mismatch("안녕하세요 문서입니다", "English prefix") is True
 
 
 # ContextGenerator construction / from_config
 
 def test_init_stores_params_and_defaults():
-    """__init__ stores the required parameters and applies defaults (TC-ctxgen-14)"""
+    """__init__ stores the required parameters and applies defaults"""
     gen = _make_generator()
     assert gen._model == "test-model"
     assert gen._max_context_length == 150
@@ -121,14 +120,14 @@ def test_init_stores_params_and_defaults():
 
 
 def test_from_config_disabled_returns_none():
-    """Returns None when unset or enabled=False (TC-ctxgen-15)"""
+    """Returns None when unset or enabled=False"""
     assert ContextGenerator.from_config(SimpleNamespace()) is None
     cfg = SimpleNamespace(contextual_retrieval=SimpleNamespace(enabled=False))
     assert ContextGenerator.from_config(cfg) is None
 
 
 def test_from_config_missing_llm_returns_none():
-    """enabled=True but missing llm config returns None (TC-ctxgen-16)"""
+    """enabled=True but missing llm config returns None"""
     cfg = SimpleNamespace(
         contextual_retrieval=SimpleNamespace(enabled=True, max_context_length=100),
         llm=None,
@@ -137,7 +136,7 @@ def test_from_config_missing_llm_returns_none():
 
 
 def test_from_config_success_prefers_azure_deployment():
-    """A normal config returns an instance; model prefers azure_deployment (TC-ctxgen-17)"""
+    """A normal config returns an instance; model prefers azure_deployment"""
     cfg = SimpleNamespace(
         contextual_retrieval=SimpleNamespace(
             enabled=True,
@@ -160,7 +159,7 @@ def test_from_config_success_prefers_azure_deployment():
 
 
 def test_from_config_model_fallback_and_optional_defaults():
-    """When azure_deployment is None, fall back to model; missing optional fields use defaults (TC-ctxgen-18)"""
+    """When azure_deployment is None, fall back to model; missing optional fields use defaults"""
     cfg = SimpleNamespace(
         contextual_retrieval=SimpleNamespace(enabled=True, max_context_length=100),
         llm=SimpleNamespace(azure_deployment=None, model="qwen3"),
@@ -174,7 +173,7 @@ def test_from_config_model_fallback_and_optional_defaults():
 
 
 def test_from_config_missing_required_field_returns_none():
-    """A missing required field (max_context_length) has its internal exception swallowed and returns None (TC-ctxgen-19)"""
+    """A missing required field (max_context_length) has its internal exception swallowed and returns None"""
     cfg = SimpleNamespace(
         contextual_retrieval=SimpleNamespace(enabled=True),
         llm=SimpleNamespace(azure_deployment=None, model="m"),
@@ -185,21 +184,21 @@ def test_from_config_missing_required_field_returns_none():
 # _create_sync_client (only tests the error and parameter paths that need no network)
 
 def test_create_sync_client_unsupported_provider():
-    """An unsupported provider raises ValueError (TC-ctxgen-20)"""
+    """An unsupported provider raises ValueError"""
     llm = SimpleNamespace(provider="groq")
     with pytest.raises(ValueError, match="Unsupported LLM provider"):
         ContextGenerator._create_sync_client(llm)
 
 
 def test_create_sync_client_vllm_requires_base_url():
-    """vllm without base_url raises ValueError (TC-ctxgen-21)"""
+    """vllm without base_url raises ValueError"""
     llm = SimpleNamespace(provider="vllm", base_url=None, api_key=None)
     with pytest.raises(ValueError, match="requires base_url"):
         ContextGenerator._create_sync_client(llm)
 
 
 def test_create_sync_client_vllm_builds_openai_client():
-    """vllm with base_url builds an OpenAI client pointing at that URL (a placeholder is used when there is no api_key) (TC-ctxgen-22)"""
+    """vllm with base_url builds an OpenAI client pointing at that URL (a placeholder is used when there is no api_key)"""
     llm = SimpleNamespace(provider="vllm", base_url="http://localhost:8000/v1", api_key=None)
     client = ContextGenerator._create_sync_client(llm)
     assert str(client.base_url).startswith("http://localhost:8000/v1")
@@ -222,7 +221,7 @@ class _StubClient:
 
 
 def test_call_llm_sync_returns_content_and_request_params():
-    """Returns message.content, passing model / max_tokens / temperature=0 (TC-ctxgen-23)"""
+    """Returns message.content, passing model / max_tokens / temperature=0"""
     stub = _StubClient(SimpleNamespace(content="生成的上下文"))
     gen = _make_generator(max_tokens=256)
 
@@ -236,7 +235,7 @@ def test_call_llm_sync_returns_content_and_request_params():
 
 
 def test_call_llm_sync_reasoning_content_fallback_and_effort_param():
-    """When content is empty, fall back to reasoning_content; reasoning_effort is passed when set (TC-ctxgen-24)"""
+    """When content is empty, fall back to reasoning_content; reasoning_effort is passed when set"""
     stub = _StubClient(SimpleNamespace(content="", reasoning_content="推理輸出"))
     gen = _make_generator(reasoning_effort="low")
 
@@ -249,7 +248,7 @@ def test_call_llm_sync_reasoning_content_fallback_and_effort_param():
 # _generate_one / generate_prefixes (LLM replaced by a mock)
 
 async def test_generate_one_success(mocker: MockerFixture):
-    """A normal LLM response -> the prefix alone; the chunk text is stored separately (TC-ctxgen-25)"""
+    """A normal LLM response -> the prefix alone; the chunk text is stored separately"""
     gen = _make_generator()
     mocker.patch.object(gen, "_call_llm_sync", return_value="本段說明差旅費核銷規定")
 
@@ -262,7 +261,7 @@ async def test_generate_one_success(mocker: MockerFixture):
 
 
 async def test_generate_one_truncates_long_context(mocker: MockerFixture):
-    """When context exceeds max_context_length, it is truncated before concatenation (TC-ctxgen-26)"""
+    """When context exceeds max_context_length, it is truncated before concatenation"""
     gen = _make_generator(max_context_length=5)
     mocker.patch.object(gen, "_call_llm_sync", return_value="A" * 20)
 
@@ -274,7 +273,7 @@ async def test_generate_one_truncates_long_context(mocker: MockerFixture):
 
 
 async def test_generate_one_empty_llm_response_falls_back(mocker: MockerFixture):
-    """LLM returns an empty string -> None (no prefix; retried on the next re-index) (TC-ctxgen-27)"""
+    """LLM returns an empty string -> None (no prefix; retried on the next re-index)"""
     gen = _make_generator()
     mocker.patch.object(gen, "_call_llm_sync", return_value="")
 
@@ -286,7 +285,7 @@ async def test_generate_one_empty_llm_response_falls_back(mocker: MockerFixture)
 
 
 async def test_generate_one_script_mismatch_falls_back(mocker: MockerFixture):
-    """A Chinese chunk that gets a pure-English prefix -> discarded: empty prefix (TC-ctxgen-28)"""
+    """A Chinese chunk that gets a pure-English prefix -> discarded: empty prefix"""
     gen = _make_generator()
     mocker.patch.object(gen, "_call_llm_sync", return_value="This chunk is about travel policy")
 
@@ -298,7 +297,7 @@ async def test_generate_one_script_mismatch_falls_back(mocker: MockerFixture):
 
 
 async def test_generate_one_llm_exception_falls_back(mocker: MockerFixture):
-    """LLM raises an exception -> not leaked, returns None (TC-ctxgen-29)"""
+    """LLM raises an exception -> not leaked, returns None"""
     gen = _make_generator()
     mocker.patch.object(gen, "_call_llm_sync", side_effect=RuntimeError("connection refused"))
 
@@ -310,7 +309,7 @@ async def test_generate_one_llm_exception_falls_back(mocker: MockerFixture):
 
 
 async def test_generate_one_truncates_long_document_in_prompt(mocker: MockerFixture):
-    """Document context longer than max_doc_chars is cut to a window, marked with an ellipsis (TC-ctxgen-30)"""
+    """Document context longer than max_doc_chars is cut to a window, marked with an ellipsis"""
     gen = _make_generator(max_doc_chars=10)
     mock_call = mocker.patch.object(gen, "_call_llm_sync", return_value="ctx")
 
@@ -324,7 +323,7 @@ async def test_generate_one_truncates_long_document_in_prompt(mocker: MockerFixt
 
 
 async def test_generate_batch_order_and_length(mocker: MockerFixture):
-    """generate_prefixes returns a list the same length as chunks, matching order one-to-one (TC-ctxgen-31)"""
+    """generate_prefixes returns a list the same length as chunks, matching order one-to-one"""
     gen = _make_generator()
     mocker.patch.object(ContextGenerator, "_create_sync_client", return_value=None)
     mocker.patch.object(gen, "_call_llm_sync", return_value="CTX")

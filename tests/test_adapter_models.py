@@ -35,7 +35,7 @@ def _file_config_kwargs(**overrides):
 
 
 def test_file_config_data_coercion():
-    """FileConfigData auto-coerces string UUID and ISO string into UUID/datetime (TC-adapter-01)"""
+    """FileConfigData auto-coerces string UUID and ISO string into UUID/datetime"""
     data = FileConfigData(**_file_config_kwargs())
     assert data.id == UUID(FILE_UUID)
     assert isinstance(data.upload_time, datetime)
@@ -43,7 +43,7 @@ def test_file_config_data_coercion():
 
 
 def test_file_config_data_missing_required():
-    """FileConfigData missing required fields -> ValidationError (TC-adapter-02)"""
+    """FileConfigData missing required fields -> ValidationError"""
     with pytest.raises(ValidationError) as exc_info:
         FileConfigData(id=FILE_UUID, folder_id=1)
     missing = {e["loc"][0] for e in exc_info.value.errors()}
@@ -51,7 +51,7 @@ def test_file_config_data_missing_required():
 
 
 def test_file_config_data_optional_defaults():
-    """FileConfigData mime_type/description/tags default to None (TC-adapter-03)"""
+    """FileConfigData mime_type/description/tags default to None"""
     data = FileConfigData(**_file_config_kwargs())
     assert data.mime_type is None
     assert data.description is None
@@ -59,7 +59,7 @@ def test_file_config_data_optional_defaults():
 
 
 def test_file_download_data_bytes_content():
-    """FileDownloadData carries bytes file content (TC-adapter-04)"""
+    """FileDownloadData carries bytes file content"""
     data = FileDownloadData(
         id=FILE_UUID, folder_id=1, file_name="a.bin",
         file_content=b"\x00\x01binary", file_size=8,
@@ -70,7 +70,7 @@ def test_file_download_data_bytes_content():
 
 
 def test_folder_config_data_defaults():
-    """FolderConfigData defaults file_count=0, total_size=0, user_token=None (TC-adapter-05)"""
+    """FolderConfigData defaults file_count=0, total_size=0, user_token=None"""
     data = FolderConfigData(
         id=1, name="my-folder", created_at=ISO_TIME, updated_at=ISO_TIME,
     )
@@ -81,14 +81,14 @@ def test_folder_config_data_defaults():
 
 
 def test_rag_chunk_metadata_optional_folder():
-    """RAGChunkMetadata requires node_id/mcp_file_id/file_name; folder_name is optional (TC-adapter-06)"""
+    """RAGChunkMetadata requires node_id/mcp_file_id/file_name; folder_name is optional"""
     meta = RAGChunkMetadata(node_id=FILE_UUID, mcp_file_id="f-1", file_name="a.txt")
     assert meta.node_id == UUID(FILE_UUID)
     assert meta.folder_name is None
 
 
 def test_rag_search_result_nested_assembly():
-    """RAGSearchResult nested metadata can be assembled directly from a dict (TC-adapter-07)"""
+    """RAGSearchResult nested metadata can be assembled directly from a dict"""
     result = RAGSearchResult(
         text="命中片段",
         score=0.87,
@@ -99,7 +99,7 @@ def test_rag_search_result_nested_assembly():
 
 
 def test_rag_query_result_defaults_and_list():
-    """RAGQueryResult carries a results list; retrieval_time_ms defaults to None (TC-adapter-08)"""
+    """RAGQueryResult carries a results list; retrieval_time_ms defaults to None"""
     result = RAGQueryResult(
         query="q",
         results=[
@@ -116,7 +116,7 @@ def test_rag_query_result_defaults_and_list():
 
 
 def test_file_index_data_json_serialization():
-    """FileIndexData json-mode serialization: UUID->str, datetime->ISO string (TC-adapter-09)"""
+    """FileIndexData json-mode serialization: UUID->str, datetime->ISO string"""
     data = FileIndexData(
         file_id=FILE_UUID, file_name="a.txt", folder_id=1, num_chunks=5,
         indexed_at=ISO_TIME, status="indexed", embedding_model="bge-m3",
@@ -128,7 +128,7 @@ def test_file_index_data_json_serialization():
 
 
 def test_rag_search_result_invalid_score_type():
-    """RAGSearchResult score given a non-number -> ValidationError (TC-adapter-10)"""
+    """RAGSearchResult score given a non-number -> ValidationError"""
     with pytest.raises(ValidationError):
         RAGSearchResult(
             text="t", score="not-a-number",

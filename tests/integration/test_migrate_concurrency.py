@@ -15,7 +15,7 @@ def test_concurrent_upgrade_serialized_by_advisory_lock(itest_db):
     """After a one-step downgrade, two threads upgrade('head') concurrently: both succeed, version converges."""
     m0 = DatabaseMigrator()
     head = m0._get_head_revision()
-    assert m0.downgrade("-1"), "前置:先退一步製造『有 migration 要套』的狀態"
+    assert m0.downgrade("-1"), "setup: step back one revision so there is a migration to apply"
 
     results = {}
 
@@ -31,8 +31,8 @@ def test_concurrent_upgrade_serialized_by_advisory_lock(itest_db):
     t1.start(); t2.start()
     t1.join(timeout=60); t2.join(timeout=60)
 
-    assert results.get("a") is True and results.get("b") is True, f"並發 upgrade 有一方失敗:{results}"
-    assert m0._get_current_revision() == head, "版本必須收斂到 head"
+    assert results.get("a") is True and results.get("b") is True, f"one of the concurrent upgrades failed: {results}"
+    assert m0._get_current_revision() == head, "the revision must converge on head"
 
 
 def test_real_chain_passes_new_guards(itest_db):

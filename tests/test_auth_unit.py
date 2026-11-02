@@ -51,7 +51,7 @@ def _install_mock_client(verifier: RemoteTokenVerifier) -> MagicMock:
 # auth/model.py -- Pydantic models
 
 def test_token_create_request_defaults():
-    """TokenCreateRequest built with no arguments uses all defaults (TC-auth-01)"""
+    """TokenCreateRequest built with no arguments uses all defaults"""
     req = TokenCreateRequest()
     assert req.user_name == "generated_user"
     assert req.scopes == ["read", "write", "admin"]
@@ -60,7 +60,7 @@ def test_token_create_request_defaults():
 
 
 def test_token_create_request_explicit_none_rejected():
-    """Explicitly passing None for expires_in_days -> ValidationError (the field type is int, not Optional[int]) (TC-auth-02)
+    """Explicitly passing None for expires_in_days -> ValidationError (the field type is int, not Optional[int])
 
     Note: the default None bypasses validation so TokenCreateRequest() passes,
     but explicitly passing None fails. This is the current behavior; the field
@@ -71,7 +71,7 @@ def test_token_create_request_explicit_none_rejected():
 
 
 def test_token_response_required_fields():
-    """TokenResponse all six fields required; a missing field -> ValidationError (TC-auth-03)"""
+    """TokenResponse all six fields required; a missing field -> ValidationError"""
     resp = TokenResponse(
         token="tok-abc", user_name="u1", scopes=["read"],
         expires_at=1780000000, expires_at_readable="2026-06-01 00:00:00",
@@ -85,7 +85,7 @@ def test_token_response_required_fields():
 
 
 def test_token_info_roundtrip():
-    """After building TokenInfo, model_dump preserves all field values (TC-auth-04)"""
+    """After building TokenInfo, model_dump preserves all field values"""
     info = TokenInfo(
         user_name="u1", scopes=["read"], expires_at=1780000000,
         expires_at_readable="2026-06-01 00:00:00", module=["rag"],
@@ -96,7 +96,7 @@ def test_token_info_roundtrip():
 
 
 def test_token_list_response_nested_coercion():
-    """TokenListResponse.tokens nested dicts are auto-coerced into TokenInfo (TC-auth-05)"""
+    """TokenListResponse.tokens nested dicts are auto-coerced into TokenInfo"""
     resp = TokenListResponse(
         tokens={
             "tok-1": {
@@ -113,7 +113,7 @@ def test_token_list_response_nested_coercion():
 # remote_auth.py -- cache key
 
 def test_get_cache_key_is_sha256():
-    """_get_cache_key returns the token's SHA-256 hexdigest (64 hex, deterministic) (TC-auth-06)"""
+    """_get_cache_key returns the token's SHA-256 hexdigest (64 hex, deterministic)"""
     verifier = _make_verifier()
     key = verifier._get_cache_key("my-secret-token")
     assert key == hashlib.sha256(b"my-secret-token").hexdigest()
@@ -122,7 +122,7 @@ def test_get_cache_key_is_sha256():
 
 
 def test_get_cache_key_no_plaintext_and_distinct():
-    """Different token -> different key; the key does not contain the plaintext token (TC-auth-07)"""
+    """Different token -> different key; the key does not contain the plaintext token"""
     verifier = _make_verifier()
     key_a = verifier._get_cache_key("token-aaaa")
     key_b = verifier._get_cache_key("token-bbbb")
@@ -143,7 +143,7 @@ def fake_clock(monkeypatch):
 
 
 def test_cache_hit_within_ttl(fake_clock):
-    """Within TTL, _get_from_cache hits and returns the original TokenVerifyResult (TC-auth-08)"""
+    """Within TTL, _get_from_cache hits and returns the original TokenVerifyResult"""
     verifier = _make_verifier(cache_ttl=60)
     result = TokenVerifyResult(valid=True, user_name="u1")
     verifier._set_cache("key1", result)
@@ -152,7 +152,7 @@ def test_cache_hit_within_ttl(fake_clock):
 
 
 def test_cache_expired_after_ttl(fake_clock):
-    """Past TTL -> returns None and the expired entry is removed (TC-auth-09)"""
+    """Past TTL -> returns None and the expired entry is removed"""
     verifier = _make_verifier(cache_ttl=60)
     verifier._set_cache("key1", TokenVerifyResult(valid=True))
     fake_clock.now += 61  # expired
@@ -161,7 +161,7 @@ def test_cache_expired_after_ttl(fake_clock):
 
 
 def test_clear_cache(fake_clock):
-    """clear_cache empties all cache entries (TC-auth-10)"""
+    """clear_cache empties all cache entries"""
     verifier = _make_verifier()
     verifier._set_cache("k1", TokenVerifyResult(valid=True))
     verifier._set_cache("k2", TokenVerifyResult(valid=True))
@@ -172,7 +172,7 @@ def test_clear_cache(fake_clock):
 # remote_auth.py -- verify() across HTTP paths (mock httpx, no network)
 
 async def test_verify_success_and_cached(fake_clock):
-    """200 + valid:true -> success result cached, so a second verify does not call the API (TC-auth-11)"""
+    """200 + valid:true -> success result cached, so a second verify does not call the API"""
     verifier = _make_verifier()
     client = _install_mock_client(verifier)
     client.post.return_value = _mock_response(
@@ -194,7 +194,7 @@ async def test_verify_success_and_cached(fake_clock):
 
 
 async def test_verify_invalid_result_not_cached():
-    """200 + valid:false -> not cached, so a second verify still calls the API (TC-auth-12)"""
+    """200 + valid:false -> not cached, so a second verify still calls the API"""
     verifier = _make_verifier()
     client = _install_mock_client(verifier)
     client.post.return_value = _mock_response(200, {"valid": False, "error": "expired"})
@@ -208,7 +208,7 @@ async def test_verify_invalid_result_not_cached():
 
 
 async def test_verify_401_no_retry():
-    """4xx client error -> fail immediately without retry, error carries the status code (TC-auth-13)"""
+    """4xx client error -> fail immediately without retry, error carries the status code"""
     verifier = _make_verifier(retry_count=2)
     client = _install_mock_client(verifier)
     client.post.return_value = _mock_response(401)
@@ -220,7 +220,7 @@ async def test_verify_401_no_retry():
 
 
 async def test_verify_timeout_retries_then_fails():
-    """timeout -> retried retry_count+1 times then fails, error='timeout' (TC-auth-14)"""
+    """timeout -> retried retry_count+1 times then fails, error='timeout'"""
     verifier = _make_verifier(retry_count=2)
     client = _install_mock_client(verifier)
     client.post.side_effect = httpx.TimeoutException("boom")
@@ -232,7 +232,7 @@ async def test_verify_timeout_retries_then_fails():
 
 
 async def test_verify_5xx_retries_then_fails():
-    """5xx server error -> fails after retries are exhausted, error carries the status code (TC-auth-15)"""
+    """5xx server error -> fails after retries are exhausted, error carries the status code"""
     verifier = _make_verifier(retry_count=1)
     client = _install_mock_client(verifier)
     client.post.return_value = _mock_response(503)
@@ -244,7 +244,7 @@ async def test_verify_5xx_retries_then_fails():
 
 
 async def test_verify_connect_error():
-    """Connection failure (ConnectError) -> error='connection_error' (TC-auth-16)"""
+    """Connection failure (ConnectError) -> error='connection_error'"""
     verifier = _make_verifier(retry_count=0)
     client = _install_mock_client(verifier)
     client.post.side_effect = httpx.ConnectError("refused")
@@ -255,8 +255,8 @@ async def test_verify_connect_error():
 
 
 def test_verify_sync_success_with_service_identity():
-    """verify_sync synchronous path succeeds, payload carries token and service host/port (TC-auth-17)"""
-    verifier = _make_verifier(service_host="10.0.0.1", service_port=8080)
+    """verify_sync synchronous path succeeds, payload carries token and service host/port"""
+    verifier = _make_verifier(service_host="192.0.2.1", service_port=8080)
     client = _install_mock_client(verifier)
     client.post.return_value = _mock_response(200, {"valid": True, "user_name": "u1"})
 
@@ -265,13 +265,13 @@ def test_verify_sync_success_with_service_identity():
     payload = client.post.call_args.kwargs["json"]
     assert payload == {
         "token": "sync-token",
-        "service_host": "10.0.0.1",
+        "service_host": "192.0.2.1",
         "service_port": 8080,
     }
 
 
 def test_get_remote_verifier_singleton_lifecycle():
-    """get_remote_verifier on first call without a URL -> ValueError; with a URL returns a singleton (TC-auth-18)"""
+    """get_remote_verifier on first call without a URL -> ValueError; with a URL returns a singleton"""
     reset_remote_verifier()
     try:
         with pytest.raises(ValueError, match="token_server_url is required"):

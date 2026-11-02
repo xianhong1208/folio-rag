@@ -53,7 +53,7 @@ def test_unified_json_500_when_exception_before_response_start():
     assert body["error"] == "INTERNAL_SERVER_ERROR"
     assert "message" in body and "timestamp" in body
     assert body["path"] == "/api/some/path"
-    assert "middleware bug" not in r.text, "內部錯誤細節不得外洩"
+    assert "middleware bug" not in r.text, "internal error details must not leak"
 
 
 def test_reraise_when_response_already_started():

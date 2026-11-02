@@ -1,7 +1,6 @@
 """Unit tests for hierarchy.build_hierarchy
 
 No dependency on the DB / vLLM / any external service — pure logic tests.
-Related docs: docs/testing/specs/SPEC-hierarchy.md, docs/testing/test-cases/TC-hierarchy.md
 """
 
 from llama_index.core import Document
@@ -10,22 +9,22 @@ from src.domain.rag.hierarchy import build_hierarchy, estimate_tokens
 
 
 def test_estimate_tokens_chinese():
-    """CJK characters are estimated at 1.5 token/char (TC-hierarchy-01)."""
+    """CJK characters are estimated at 1.5 token/char."""
     assert estimate_tokens("公司財報") == int(4 * 1.5)
 
 
 def test_estimate_tokens_english():
-    """English is estimated at 0.3 token/char (rough) (TC-hierarchy-02)."""
+    """English is estimated at 0.3 token/char (rough)."""
     assert estimate_tokens("hello") == int(5 * 0.3)
 
 
 def test_estimate_tokens_empty():
-    """An empty string returns 0 (TC-hierarchy-03)."""
+    """An empty string returns 0."""
     assert estimate_tokens("") == 0
 
 
 def test_build_hierarchy_single_small_doc():
-    """One small leaf → one parent wrapping one leaf (TC-hierarchy-04)."""
+    """One small leaf → one parent wrapping one leaf."""
     leaves = [Document(text="短短的內容", metadata={"file_id": "f1", "file_name": "a.txt"})]
 
     leaf_nodes, parent_nodes = build_hierarchy(
@@ -52,7 +51,7 @@ def test_build_hierarchy_single_small_doc():
 
 
 def test_build_hierarchy_multiple_leaves_in_one_parent():
-    """Three leaves, total tokens < parent_target_tokens → all under one parent (TC-hierarchy-05)."""
+    """Three leaves, total tokens < parent_target_tokens → all under one parent."""
     leaves = [
         Document(text="leaf one short text"),
         Document(text="leaf two short text"),
@@ -78,7 +77,7 @@ def test_build_hierarchy_multiple_leaves_in_one_parent():
 
 
 def test_build_hierarchy_splits_when_token_budget_exceeded():
-    """Total leaf tokens exceed parent_target → split into multiple parents (TC-hierarchy-06)."""
+    """Total leaf tokens exceed parent_target → split into multiple parents."""
     # Each Chinese segment is ~30 chars → ~45 tokens; with budget=100 → ~2 leaves per group
     leaves = [
         Document(text="這是測試段落數字一" * 5),  # ~45 chars * 1.5 = ~67 tokens
@@ -104,7 +103,7 @@ def test_build_hierarchy_splits_when_token_budget_exceeded():
 
 
 def test_build_hierarchy_parent_text_concatenation():
-    """parent.text should be the ordered join of its children leaves (TC-hierarchy-07)."""
+    """parent.text should be the ordered join of its children leaves."""
     leaves = [
         Document(text="第一段"),
         Document(text="第二段"),
@@ -125,7 +124,7 @@ def test_build_hierarchy_parent_text_concatenation():
 
 
 def test_build_hierarchy_metadata_propagation():
-    """base_metadata should be copied onto every leaf and parent (TC-hierarchy-08)."""
+    """base_metadata should be copied onto every leaf and parent."""
     leaves = [Document(text="x", metadata={"existing_key": "preserve_me"})]
 
     base = {"file_id": "f1", "file_name": "report.pdf", "folder_name": "公司"}
@@ -145,7 +144,7 @@ def test_build_hierarchy_metadata_propagation():
 
 
 def test_build_hierarchy_empty_input():
-    """Empty input returns ([], []) (TC-hierarchy-09)."""
+    """Empty input returns ([], [])."""
     leaf_nodes, parent_nodes = build_hierarchy(
         leaf_documents=[],
         parent_target_tokens=1024,
@@ -156,20 +155,20 @@ def test_build_hierarchy_empty_input():
 
 
 def test_estimate_tokens_mixed_chinese_english():
-    """Mixed Chinese/English is summed by each coefficient, then truncated to int (TC-hierarchy-10)."""
+    """Mixed Chinese/English is summed by each coefficient, then truncated to int."""
     # "公司ABC" = 2 Chinese * 1.5 + 3 English * 0.3
     assert estimate_tokens("公司ABC") == int(2 * 1.5 + 3 * 0.3)
 
 
 def test_estimate_tokens_non_cjk_range_counts_as_other():
-    """Digits and Japanese kana fall outside the CJK range ('一'~'鿿') and are counted at 0.3/char (TC-hierarchy-11)."""
+    """Digits and Japanese kana fall outside the CJK range ('一'~'鿿') and are counted at 0.3/char."""
     assert estimate_tokens("12345") == int(5 * 0.3)
     # Hiragana (from U+3042) < U+4E00, not counted as Chinese → 3 * 0.3 = 0.9 → 0
     assert estimate_tokens("あいう") == 0
 
 
 def test_build_hierarchy_oversized_leaf_gets_own_parent():
-    """Every leaf exceeds the token budget → one leaf per parent, none dropped (TC-hierarchy-12)."""
+    """Every leaf exceeds the token budget → one leaf per parent, none dropped."""
     leaves = [
         Document(text="這是超過預算的長段落之一" * 3),
         Document(text="這是超過預算的長段落之二" * 3),
@@ -189,7 +188,7 @@ def test_build_hierarchy_oversized_leaf_gets_own_parent():
 
 
 def test_build_hierarchy_filters_none_metadata_values():
-    """Keys with a None value in the leaf's existing metadata are not copied into the leaf node (TC-hierarchy-13)."""
+    """Keys with a None value in the leaf's existing metadata are not copied into the leaf node."""
     leaves = [Document(text="內容", metadata={"keep_me": "v", "drop_me": None})]
 
     leaf_nodes, _ = build_hierarchy(
@@ -203,7 +202,7 @@ def test_build_hierarchy_filters_none_metadata_values():
 
 
 def test_build_hierarchy_chunk_index_and_total_chunks_across_parents():
-    """When split across parents, chunk_index stays globally contiguous and total_chunks is the total leaf count (TC-hierarchy-14)."""
+    """When split across parents, chunk_index stays globally contiguous and total_chunks is the total leaf count."""
     leaves = [Document(text="這是測試段落內容編號" * 5) for _ in range(4)]
 
     leaf_nodes, parent_nodes = build_hierarchy(
@@ -218,7 +217,7 @@ def test_build_hierarchy_chunk_index_and_total_chunks_across_parents():
 
 
 def test_build_hierarchy_default_base_metadata():
-    """Building works fine without base_metadata (None) (TC-hierarchy-15)."""
+    """Building works fine without base_metadata (None)."""
     leaf_nodes, parent_nodes = build_hierarchy(
         leaf_documents=[Document(text="內容")],
         parent_target_tokens=1024,
@@ -230,7 +229,7 @@ def test_build_hierarchy_default_base_metadata():
 
 
 def test_build_hierarchy_leaf_metadata_overrides_base():
-    """On a key shared between the leaf's own metadata and base_metadata, the leaf wins; the parent uses base (TC-hierarchy-16)."""
+    """On a key shared between the leaf's own metadata and base_metadata, the leaf wins; the parent uses base."""
     leaves = [Document(text="內容", metadata={"file_name": "leaf-level.txt"})]
 
     leaf_nodes, parent_nodes = build_hierarchy(
