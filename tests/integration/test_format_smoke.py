@@ -106,7 +106,17 @@ _LEGACY_EXTS = ["doc", "dot", "xls", "xlt", "ppt", "pot", "pps",
                 "pptx", "ppsx", "pptm", "potm", "ppsm"]
 
 
-@pytest.mark.parametrize("ext", _PURE_PARSER_EXTS)
+# Known bug, tracked separately: the installed docling decodes an HTML file that has no
+# <meta charset> as a legacy codepage, so UTF-8 CJK text comes back garbled. Non-strict,
+# so the cases simply XPASS once HTML decoding is fixed (then drop this marker).
+_HTML_CHARSET_BUG = pytest.mark.xfail(
+    reason="docling mis-decodes UTF-8 HTML without <meta charset> (CJK mojibake)", strict=False)
+
+
+@pytest.mark.parametrize("ext", [
+    pytest.param(e, marks=_HTML_CHARSET_BUG) if e in ("html", "htm", "xhtml") else e
+    for e in _PURE_PARSER_EXTS
+])
 def test_pure_parser_format(samples, converter, ext):
     text = converter.convert(str(samples / f"t.{ext}")).document.export_to_markdown()
     assert SENT in text, f".{ext} 解析結果不含哨兵內容"
