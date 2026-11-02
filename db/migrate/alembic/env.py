@@ -28,16 +28,14 @@ os.chdir(_project_root)
 
 from db.db import Base
 from src.config.config_manager import Config
+from src.utils.db_url import alembic_safe_url, resolve_db_url
 
 config = context.config
 
 # Take the DB URL from config so credentials never live in the migrate folder.
+# Resolved the same way as every other connection (database.port applied).
 db_conf = Config.get_database_config()
-db_url = getattr(db_conf, 'url')
-config.set_main_option(
-    "sqlalchemy.url", 
-    db_url
-)
+config.set_main_option("sqlalchemy.url", alembic_safe_url(resolve_db_url(db_conf)))
 
 # Use an absolute path for alembic.ini since the working directory was changed above.
 if config.config_file_name is not None:

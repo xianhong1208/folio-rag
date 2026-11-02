@@ -24,6 +24,7 @@ sys.path.insert(0, str(project_root))
 from src.log import get_server_logger
 from src.config.config_manager import Config
 from src.utils.runtime_paths import resolve_external_dir
+from src.utils.db_url import alembic_safe_url, resolve_db_url
 
 logger = get_server_logger()
 
@@ -84,7 +85,7 @@ class DatabaseMigrator:
         self.versions_dir = get_versions_dir()
 
         self.db_conf = Config.get_database_config()
-        self.db_url = getattr(self.db_conf, 'url')
+        self.db_url = resolve_db_url(self.db_conf)
         self._engine = create_engine(self.db_url)
 
         logger.debug(f"External base directory: {self.external_base}")
@@ -635,7 +636,7 @@ class DatabaseMigrator:
 
             # Alembic must use the external versions dir and the configured DB URL
             alembic_cfg.set_main_option("version_locations", str(self.versions_dir))
-            alembic_cfg.set_main_option("sqlalchemy.url", str(self.db_url))
+            alembic_cfg.set_main_option("sqlalchemy.url", alembic_safe_url(self.db_url))
 
             command.revision(alembic_cfg, message=message, autogenerate=True)
 
