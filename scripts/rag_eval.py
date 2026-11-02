@@ -21,6 +21,23 @@ import sys
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 
+class EvalError(Exception):
+    """The evaluation cannot run as requested.
+
+    This module is also loaded in-process by the server (POST /api/admin/eval/run),
+    so it must never raise SystemExit: inside the event loop that would stop the
+    whole server. Only the CLI entry point (main) turns these into a process exit.
+    """
+
+
+class FolderNotFound(EvalError):
+    """No folder matches the given name or id."""
+
+
+class NoIndexedChunks(EvalError):
+    """The folder has no indexed leaf chunks to build questions from."""
+
+
 def _resolve_folder(folder_arg: str):
     from db.folderdb import FolderDB
     if folder_arg.isdigit():
@@ -28,22 +45,65 @@ def _resolve_folder(folder_arg: str):
     else:
         rows = FolderDB.get(name=folder_arg)
     if not rows:
-        raise SystemExit(f"folder not found: {folder_arg}")
+        raise FolderNotFound(f"folder not found: {folder_arg}")
     return rows[0]
+
+
+_NO_CHUNKS_MSG = "no indexed leaf chunks found — index some files first"
+
+# Leaf chunks long enough to generate a meaningful question from.
+_LEAF_FILTER = "COALESCE(metadata_->>'node_role','leaf')='leaf' AND length(text) > 80"
+
+# PostgreSQL SQLSTATE for "undefined_table".
+_PG_UNDEFINED_TABLE = "42P01"
+
+
+def _query_vector_table(folder, sql: str, params: dict) -> list:
+    """Run a statement against the folder's vector table and return the rows.
+
+    ``sql`` names the table as ``{table}``. A folder that was never indexed has no
+    vector table yet: that is reported as "no rows" rather than as a raw SQL error.
+    """
+    from sqlalchemy import text
+    from sqlalchemy.exc import ProgrammingError
+    from db.db import get_engine
+    from src.domain.rag.vector_store_manager import VectorStoreManager
+    table = VectorStoreManager.physical_table_name(folder.id, folder.vector_table_uuid)
+    try:
+        with get_engine().connect() as c:
+            return c.execute(text(sql.format(table=f'"{table}"')), params).fetchall()
+    except ProgrammingError as e:
+        if getattr(getattr(e, "orig", None), "pgcode", None) == _PG_UNDEFINED_TABLE:
+            return []
+        raise
 
 
 def _sample_chunks(folder, n: int):
     """Randomly sample n leaf chunks (node_id, text) from the folder's pgvector physical table."""
-    from sqlalchemy import text
-    from db.db import get_engine
-    from src.domain.rag.vector_store_manager import VectorStoreManager
-    table = VectorStoreManager.physical_table_name(folder.id, folder.vector_table_uuid)
-    with get_engine().connect() as c:
-        rows = c.execute(text(
-            f"SELECT node_id, text FROM \"{table}\" "
-            f"WHERE COALESCE(metadata_->>'node_role','leaf')='leaf' "
-            f"AND length(text) > 80 ORDER BY random() LIMIT :n"), {"n": n}).fetchall()
+    rows = _query_vector_table(
+        folder,
+        f"SELECT node_id, text FROM {{table}} WHERE {_LEAF_FILTER} "
+        "ORDER BY random() LIMIT :n", {"n": n})
     return [(r[0], r[1]) for r in rows]
+
+
+def has_indexed_chunks(folder) -> bool:
+    """True when the folder has at least one leaf chunk the eval can sample."""
+    return bool(_query_vector_table(
+        folder, f"SELECT 1 FROM {{table}} WHERE {_LEAF_FILTER} LIMIT 1", {}))
+
+
+def check_ready(folder_ref: str):
+    """Resolve the folder and confirm it can be evaluated; return the folder.
+
+    Raises FolderNotFound or NoIndexedChunks. The server calls this before it
+    schedules a background run, so those cases become an HTTP error instead of a
+    failed run.
+    """
+    folder = _resolve_folder(folder_ref)
+    if not has_indexed_chunks(folder):
+        raise NoIndexedChunks(_NO_CHUNKS_MSG)
+    return folder
 
 
 def _gen_question(client, model: str, chunk_text: str) -> str:
@@ -67,7 +127,7 @@ def generate_eval_set(folder, n: int, out_path: str):
     model = getattr(llm, "azure_deployment", None) or llm.model
     samples = _sample_chunks(folder, n)
     if not samples:
-        raise SystemExit("no indexed leaf chunks found — index some files first")
+        raise NoIndexedChunks(_NO_CHUNKS_MSG)
     items = []
     for i, (nid, txt) in enumerate(samples):
         try:
@@ -256,16 +316,11 @@ def _existing_gold_ids(folder, items: list) -> set:
     into an all-zero run; a single-file reindex quietly drags scores down. Callers
     drop stale items (recording how many) and regenerate only when none survive.
     """
-    from sqlalchemy import text
-    from db.db import get_engine
-    from src.domain.rag.vector_store_manager import VectorStoreManager
     ids = [it["gold_node_id"] for it in items if it.get("gold_node_id")]
     if not ids:
         return set()
-    table = VectorStoreManager.physical_table_name(folder.id, folder.vector_table_uuid)
-    with get_engine().connect() as c:
-        rows = c.execute(text(f'SELECT node_id FROM "{table}" WHERE node_id = ANY(:ids)'),
-                         {"ids": ids}).fetchall()
+    rows = _query_vector_table(
+        folder, "SELECT node_id FROM {table} WHERE node_id = ANY(:ids)", {"ids": ids})
     return {r[0] for r in rows}
 
 
@@ -502,9 +557,13 @@ def main():
     from db.runtime_settings_db import RuntimeSettingsDB
     RuntimeSettingsDB.ensure_table()
 
-    rep = run_eval(args.folder, n=args.n, k=args.k, regenerate=args.regenerate,
-                   judge=args.judge,
-                   progress=lambda d, t: print(f"  [{d}/{t}]", end="\r", flush=True))
+    try:
+        rep = run_eval(args.folder, n=args.n, k=args.k, regenerate=args.regenerate,
+                       judge=args.judge,
+                       progress=lambda d, t: print(f"  [{d}/{t}]", end="\r", flush=True))
+    except EvalError as e:
+        # CLI only: exit non-zero with the message on stderr.
+        raise SystemExit(f"error: {e}")
     _print_report(rep)
     print(f"→ wrote report to reports/rag_eval_{str(rep['folder']).replace('/', '_')}.json")
 
