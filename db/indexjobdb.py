@@ -23,7 +23,7 @@ _PERSISTED_FIELDS = {
     "current_index", "current_file_id", "current_file_name",
     "last_file_status", "last_message", "message", "error",
     "skip_existing", "started_at", "completed_at", "last_updated_at",
-    "result_summary", "scope_file_ids", "file_timings",
+    "result_summary", "scope_file_ids", "file_timings", "kind",
 }
 
 
@@ -149,7 +149,7 @@ class IndexJobDB(BaseDB):
                 deleted = (
                     session.query(orm)
                     .filter(orm.status.in_(
-                        ["succeeded", "partial_success", "failed", "cancelled"]
+                        ["succeeded", "partial_success", "failed", "cancelled", "interrupted"]
                     ))
                     .filter(orm.last_updated_at < cutoff)
                     .delete(synchronize_session=False)

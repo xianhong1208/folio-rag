@@ -416,7 +416,7 @@ async def list_index_jobs(
 
 # Statuses that mean "nothing more will happen on this job"
 _TERMINAL_JOB_STATUSES = {
-    "succeeded", "partial_success", "failed", "cancelled",
+    "succeeded", "partial_success", "failed", "cancelled", "interrupted",
 }
 
 
@@ -539,7 +539,8 @@ async def cancel_index_job(
         raise HTTPException(status_code=500, detail=f"Failed to cancel job: {str(e)}")
 
 
-# Response = {data: FileIndexStatusResponse, message} — status ∈ indexed / indexing / queued / failed / not_indexed
+# Response = {data: FileIndexStatusResponse, message} — status ∈ indexed / indexing / queued /
+# failed / interrupted / cancelled / not_indexed
 @router.get(
     "/file/{file_id}/index/status",
     tags=[_TAG_STATUS],
@@ -581,18 +582,23 @@ async def get_file_index_status(
                 error=None,
             )
             return {"data": payload.model_dump(), "message": "File is indexed"}
-        if record and getattr(record, "status", None) == "failed":
+        rec_status = getattr(record, "status", None) if record else None
+        if rec_status in ("failed", "interrupted", "cancelled"):
             payload = FileIndexStatusResponse(
                 file_id=str(file_id),
                 file_name=file.file_name,
-                status="failed",
+                status=rec_status,
                 num_chunks=None,
                 indexed_at=None,
                 job_id=None,
                 progress=None,
                 error=getattr(record, "error_message", None),
             )
-            return {"data": payload.model_dump(), "message": "Indexing previously failed"}
+            return {"data": payload.model_dump(), "message": {
+                "failed": "Indexing previously failed",
+                "interrupted": "Indexing was interrupted by a server restart",
+                "cancelled": "Indexing was cancelled",
+            }[rec_status]}
 
         # Not in DB (or not in a terminal state) — check live running jobs
         file_id_str = str(file_id)

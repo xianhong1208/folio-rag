@@ -168,8 +168,9 @@ class RAGAdapter:
         chunk_size: Optional[int] = None,
         chunk_overlap: Optional[int] = None,
         progress_tracker: Optional["IndexProgressTracker"] = None,
+        force: bool = False,
     ) -> IndexFolderResponse:
-        """Delegates to RAGIndexingService — index a specified list of files (used by upload auto-index)."""
+        """Delegates to RAGIndexingService — index a specified list of files (upload auto-index, console Retry)."""
         return await self._indexing.index_files(
             file_ids=file_ids,
             folder_id=folder_id,
@@ -177,6 +178,7 @@ class RAGAdapter:
             chunk_size=chunk_size,
             chunk_overlap=chunk_overlap,
             progress_tracker=progress_tracker,
+            force=force,
         )
 
     async def query_rag(
