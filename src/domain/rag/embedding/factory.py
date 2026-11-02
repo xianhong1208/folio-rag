@@ -112,7 +112,11 @@ class EmbeddingProviderFactory:
         dimension = embedding_config.dimension
         base_url = getattr(embedding_config, 'base_url', None)
         api_key = getattr(embedding_config, 'api_key', None)
-        logger.debug(f"Embedding config: {embedding_config}")
+        # Never log the config object or the key itself, only whether a key is set.
+        logger.debug(
+            f"Embedding config: provider={provider_type} model={model_name} "
+            f"dimension={dimension} base_url={base_url} "
+            f"api_key={'set' if api_key else 'unset'}")
         kwargs = {}
 
         # Add provider-specific parameters

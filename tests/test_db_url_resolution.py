@@ -1,34 +1,112 @@
+"""Every database connection path resolves the URL the same way.
 
-"""Injection of the database.port field.
-
-create_engine/create_async_engine only read the URL and ignore a separately
-configured port field; when the URL omits the port it defaults to 5432,
-connecting to the wrong instance. _resolve_db_url fills in the field port when
-the URL carries none.
+SQLAlchemy, psycopg2 and Alembic only read the URL; when it omits the port they
+default to 5432 and ignore the separate `database.port` field. resolve_db_url
+injects that port, and every connection path (runtime engines, startup bootstrap,
+migrations, Alembic, the vector store, the integration-test harness) must use it.
+Before this, only the runtime engines did: with `port: 5444` and a portless URL
+the server's startup bootstrap connected to 5432 and failed authentication.
 """
 
+import re
+from pathlib import Path
 from types import SimpleNamespace
+from unittest.mock import MagicMock, patch
 
-from db.db import _resolve_db_url
+import pytest
+
+from src.utils.db_url import alembic_safe_url, db_url_from_config_file, resolve_db_url
+
+_REPO = Path(__file__).resolve().parents[1]
 
 
 def _cfg(url, port):
     return SimpleNamespace(url=url, port=port)
 
 
-def test_injects_field_port_when_url_has_none():
-    r = _resolve_db_url(_cfg("postgresql://postgres:pw@localhost/db", 5444))
-    assert ":5444/" in r
+class TestResolveDbUrl:
+    def test_injects_field_port_when_url_has_none(self):
+        r = resolve_db_url(_cfg("postgresql://postgres:pw@localhost/db", 5444))
+        assert ":5444/" in r
 
-def test_url_port_takes_precedence_over_field():
-    r = _resolve_db_url(_cfg("postgresql://postgres:pw@localhost:5432/db", 5444))
-    assert ":5432/" in r and ":5444" not in r
+    def test_url_port_takes_precedence_over_field(self):
+        r = resolve_db_url(_cfg("postgresql://postgres:pw@localhost:5432/db", 5444))
+        assert ":5432/" in r and ":5444" not in r
 
-def test_no_port_anywhere_left_untouched():
-    r = _resolve_db_url(_cfg("postgresql://postgres:pw@localhost/db", None))
-    assert "localhost/db" in r and ":54" not in r
+    def test_no_port_anywhere_left_untouched(self):
+        r = resolve_db_url(_cfg("postgresql://postgres:pw@localhost/db", None))
+        assert "localhost/db" in r and ":54" not in r
 
-def test_password_preserved():
-    # render_as_string(hide_password=False) — used for connecting, must not be masked
-    r = _resolve_db_url(_cfg("postgresql://postgres:secret@localhost/db", 5444))
-    assert "secret" in r
+    def test_password_preserved(self):
+        # Used for connecting, so the password must not be masked.
+        r = resolve_db_url(_cfg("postgresql://postgres:secret@localhost/db", 5444))
+        assert "secret" in r
+
+
+def test_alembic_safe_url_escapes_percent():
+    url = "postgresql://u:p%40ss@h:5444/db"
+    assert alembic_safe_url(url) == "postgresql://u:p%%40ss@h:5444/db"
+
+
+class TestFromConfigFile:
+    def test_applies_port_field(self, tmp_path):
+        p = tmp_path / "c.yaml"
+        p.write_text("database:\n  url: postgresql://u:pw@localhost/rag\n  port: 5444\n")
+        assert ":5444/rag" in db_url_from_config_file(p)
+
+    def test_expands_env_placeholder(self, tmp_path, monkeypatch):
+        monkeypatch.setenv("ITEST_DB_URL_X", "postgresql://u:pw@dbhost/other")
+        p = tmp_path / "c.yaml"
+        p.write_text('database:\n  url: "${ITEST_DB_URL_X:-postgresql://u:pw@localhost/rag}"\n'
+                     "  port: 5444\n")
+        r = db_url_from_config_file(p)
+        assert "dbhost:5444/other" in r
+
+    def test_missing_url_raises(self, tmp_path):
+        p = tmp_path / "c.yaml"
+        p.write_text("database:\n  port: 5444\n")
+        with pytest.raises(RuntimeError, match="no database.url"):
+            db_url_from_config_file(p)
+
+
+def test_migrator_engine_uses_resolved_url():
+    from db import migrate
+    conf = _cfg("postgresql://postgres:pw@localhost/rag", 5444)
+    with patch.object(migrate.Config, "get_database_config", return_value=conf), \
+         patch.object(migrate, "create_engine") as create_engine:
+        m = migrate.DatabaseMigrator()
+    assert ":5444/rag" in create_engine.call_args.args[0]
+    assert ":5444/rag" in m.db_url
+
+
+def test_vector_store_uses_resolved_port():
+    from src.domain.rag import vector_store_manager as vsm_mod
+    fake_cfg = MagicMock()
+    fake_cfg.database = _cfg("postgresql://postgres:pw@localhost/rag", 5444)
+    with patch.object(vsm_mod.Config, "get_config_model", return_value=fake_cfg):
+        vsm = vsm_mod.VectorStoreManager(embed_dim=8)
+    with patch.object(vsm_mod.PGVectorStore, "from_params") as from_params:
+        vsm._create_vector_store("1_abc")
+    assert from_params.call_args.kwargs["port"] == 5444
+    assert from_params.call_args.kwargs["database"] == "rag"
+
+
+# Files that open database connections outside db/db.py's engines.
+_CONNECTION_PATHS = [
+    "main.py",
+    "db/db.py",
+    "db/migrate.py",
+    "db/migrate/alembic/env.py",
+    "src/domain/rag/vector_store_manager.py",
+    "src/utils/db_bootstrap.py",
+    "tests/integration/conftest.py",
+]
+_RAW_URL = re.compile(r"\b(?:db_conf|database|db_config)\.url\b|getattr\([^)]*['\"]url['\"]\)")
+
+
+@pytest.mark.parametrize("rel", _CONNECTION_PATHS)
+def test_no_connection_path_reads_the_raw_url(rel):
+    """Guard: reading database.url directly bypasses the port rule."""
+    src = (_REPO / rel).read_text(encoding="utf-8")
+    code = "\n".join(line for line in src.splitlines() if not line.lstrip().startswith("#"))
+    assert not _RAW_URL.search(code), f"{rel} reads database.url directly; use resolve_db_url"

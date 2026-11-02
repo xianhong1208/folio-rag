@@ -165,9 +165,12 @@ def main():
             db_conf = Config.get_database_config()
             if not db_conf:
                 raise RuntimeError("Database config missing")
+            # Resolved URL (database.port applied), same as every other connection path.
+            from src.utils.db_url import resolve_db_url
+            db_url = resolve_db_url(db_conf)
             try:
                 from src.utils.db_bootstrap import ensure_database_ready
-                ensure_database_ready(db_conf.url, logger)
+                ensure_database_ready(db_url, logger)
             except Exception as e:
                 logger.error(f"❌ DB bootstrap failed: {e}")
                 logger.error("   Check Postgres is running and credentials in config.yaml are correct")
@@ -180,7 +183,7 @@ def main():
                 rag_conf = getattr(cfg_model, "rag", None)
                 if rag_conf and rag_conf.embedding:
                     from src.utils.db_bootstrap import check_vector_dims
-                    check_vector_dims(db_conf.url, rag_conf.embedding.dimension, logger)
+                    check_vector_dims(db_url, rag_conf.embedding.dimension, logger)
             except Exception as e:
                 logger.warning(f"⚠️ Vector dim startup check failed (continuing): {e}")
 
