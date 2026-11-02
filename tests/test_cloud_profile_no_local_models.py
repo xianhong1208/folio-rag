@@ -104,7 +104,10 @@ def test_core_install_runs_the_whole_cloud_pipeline(core_site_packages, tmp_path
     assert steps["pdf_page_no"] == 1          # page provenance survives the cloud path
     assert steps["contextualized"] > 0 and steps["embedded"] > 0
     assert steps["query_dim"] == 8
-    assert steps["segmented"] == "差旅需要主管核准"  # CKIP not loaded: unsegmented fallback
+    # Chinese keyword search works without CKIP: profile: cloud defaults to bigram.
+    assert steps["segmenter"] == "bigram"
+    assert steps["segmented"] == "差旅 旅需 需要 要主 主管 管核 核准"
+    assert steps["query_lexemes"] == ["主管", "管核", "核准"]
     assert steps["reranked"] == ["first", "second"]
     assert steps["answer"] == "An answer [1]."
 
@@ -115,6 +118,7 @@ def test_core_install_runs_the_whole_cloud_pipeline(core_site_packages, tmp_path
 def test_everything_installed_cloud_boot_and_query_load_nothing_local(tmp_path):
     result = _run(["query"], str(REPO), tmp_path)
     assert result["steps"]["warmup_skipped"] is True
+    assert result["steps"]["segmenter"] == "bigram"
     assert result["steps"]["answer"] == "An answer [1]."
     assert result["attempts"] == []
     assert result["loaded"] == []

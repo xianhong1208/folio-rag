@@ -9,7 +9,8 @@ and which ended up in sys.modules.
 full  — boot (config + create_app + startup decisions + RAGContext), index-time work for a
         .docx (docling Office backend), a PDF and a PNG (cloud vision), a WAV (cloud STT),
         leaf split, contextual prefixes and embeddings; then the query-time work.
-query — boot + query-time work only (query embedding, BM25 segmentation, rerank, answer).
+query — boot + query-time work only (query embedding, BM25 segmentation with the cloud
+        default bigram segmenter, rerank, answer).
 
 The pgvector write/read itself is not exercised (it needs Postgres); it is SQL through
 psycopg2 and imports no model library.
@@ -155,8 +156,13 @@ def main(workdir: str, mode: str) -> dict:
 
         # ---- query-time work
         steps["query_dim"] = len(indexer._embed_model.get_query_embedding("travel approval"))
-        from src.domain.rag.ckip_segmenter import get_segmenter
+        # Keyword search: the profile's default segmenter (bigram under cloud — no model),
+        # the same call indexing, Rebuild FTS and the BM25 query side make.
+        from src.domain.rag.text_segmenter import configured_segmenter_name, get_segmenter
+        from src.domain.rag.hybrid_search import query_lexemes
+        steps["segmenter"] = configured_segmenter_name()
         steps["segmented"] = get_segmenter().segment("差旅需要主管核准")
+        steps["query_lexemes"] = query_lexemes(get_segmenter().segment("主管核准"))
         nodes = [SimpleNamespace(text=t, score=0.0) for t in ("first", "second")]
         steps["reranked"] = [n.text for n in asyncio.run(ctx.reranker.arerank("q", nodes))]
         from src.api.router.admin_manage import _generate_answer

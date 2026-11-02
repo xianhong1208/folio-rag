@@ -128,9 +128,11 @@ Your folder is indexed once, then every query runs through the pipeline:
 
 | `segmenter` | Notes |
 |---|---|
-| `ckip` *(default)* | Academia Sinica CKIP BERT model — most accurate on Traditional Chinese; needs torch and a model download on first use. |
-| `jieba` | Dictionary-based, pure Python, no GPU. Optional extra: `uv pip install jieba` (or the `jieba` extra in `pyproject.toml`). |
-| `bigram` | Overlapping CJK character pairs + Latin/digit words. No model, no dependency; bigger index. |
+| `ckip` *(default)* | Academia Sinica CKIP BERT model — most accurate on Traditional Chinese; needs torch (`uv sync --extra local`) and a model download on first use. Not allowed under `profile: cloud`. |
+| `jieba` | Dictionary-based, pure Python, no GPU. Optional extra: `uv sync --extra jieba`. |
+| `bigram` | Overlapping CJK character pairs + Latin/digit words. No model, no dependency; bigger index. The default under `profile: cloud`. |
+
+Left unset, `segmenter` follows the profile: `ckip`, or `bigram` under `profile: cloud`.
 
 Each folder's table records which segmenter built its keyword index. After changing `segmenter` (live, from Settings), the console marks folders whose index was built with another one (**FTS rebuild needed**); *Rebuild FTS* re-segments them with the configured segmenter — no re-embedding.
 
@@ -161,7 +163,7 @@ Settings live in `config/config.yaml`; secrets come from environment variables (
 | `rag.rerank.score_threshold` / `auto_template` | `0.0` / `true` | Drop results scoring below the threshold (0.5 suits mxbai-rerank-v2); apply mxbai-v2's chat prompt automatically. |
 | `rag.rerank.gap_threshold` | `0.5` | Knowledge-gap analytics: best rerank score below this counts as "no good match". |
 | `rag.asr.provider` | `fireredasr` | Audio transcription: `fireredasr` (local zh-TW) · `docling-whisper` · `openai-compatible`. `rag.asr.enabled: false` fails audio files with a clear message (nothing is transcribed). |
-| `rag.retrieval.segmenter` | `ckip` | Chinese segmenter for keyword search: `ckip` · `jieba` · `bigram` (see *Chinese segmentation*). |
+| `rag.retrieval.segmenter` | `ckip` (`bigram` under `profile: cloud`) | Chinese segmenter for keyword search: `ckip` · `jieba` · `bigram` (see *Chinese segmentation*). |
 | `rag.docling.ocr_enabled` | `true` | OCR for scanned PDFs and images. `false` really skips it (restart to apply); a scan with no text layer then fails with a clear message. |
 | `rag.contextual_retrieval.max_doc_chars` | `60000` | Upper bound on the document text the LLM reads per chunk. It reads the outline plus the chunk's own section, windowed to at most 12,000 characters. |
 | `rag.retrieval.*` | — | Top-K, similarity cutoff, BM25 candidates, `hybrid_fusion` (`rrf`/`concat`), auto-merging. Tunable live from the console, or via the **High Precision / Balanced / High Recall** presets. |
@@ -235,7 +237,7 @@ rag:
 
   retrieval:
     hybrid_search: true
-    # segmenter: bigram     # model-free Chinese BM25 segmentation (CKIP is not loaded in cloud)
+    # segmenter: bigram     # the cloud default (no model); jieba also works, ckip is rejected
 ```
 
 What the profile does:
@@ -243,7 +245,7 @@ What the profile does:
 - **Validation.** `cloud` refuses in-process providers (`huggingface` embedding, `fireredasr` /
   `docling-whisper` ASR, local PDF/image parsing) and **rejects API keys that are not `${ENV}`
   references** — a cloud key is a billable credential and config.yaml is the file that gets
-  copied around. Startup fails with the offending paths. `hybrid` only warns about literal keys;
+  copied around. An explicit `rag.retrieval.segmenter: ckip` is rejected too. Startup fails with the offending paths. `hybrid` only warns about literal keys;
   `local` (the default — existing configs are unchanged) checks nothing new.
 - **Nothing local is imported.** The HuggingFace embedding provider, docling's layout/OCR
   models, Whisper, FireRedASR and CKIP are imported only when selected; startup skips the docling
@@ -261,9 +263,10 @@ What the profile does:
   speech or loops.
 - **Retries and timeouts per role** (`timeout`, `max_retries`): 429 / 5xx / timeouts back off
   exponentially with jitter and honour `Retry-After`.
-- **Chinese BM25.** CKIP is a local torch model, so the cloud profile does not load it and Chinese
-  text is indexed unsegmented until a model-free segmenter is selected
-  (`rag.retrieval.segmenter: bigram`).
+- **Chinese BM25.** CKIP is a local torch model, so the cloud profile segments Chinese with the
+  model-free `bigram` segmenter by default; `jieba` (`uv sync --extra jieba`) is the other choice.
+  An explicit `rag.retrieval.segmenter: ckip` is rejected — keep CKIP with `profile: hybrid` and
+  `uv sync --extra local`.
 
 **Console.** *Settings* opens with a **Model Roles** panel: where each role runs, its provider,
 model and endpoint, whether a key is set and which environment variable it comes from (keys are

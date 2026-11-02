@@ -127,7 +127,9 @@ _RANGES: Dict[str, Tuple[float, float]] = {
     "rag.retrieval.expand_context_neighbors": (0, 10),
     "rag.retrieval.auto_merging.merge_threshold": (0.0, 1.0),
 }
-_NULLABLE = {"rag.rerank.top_n", "rag.contextual_retrieval.reasoning_effort"}
+_NULLABLE = {"rag.rerank.top_n", "rag.contextual_retrieval.reasoning_effort",
+             # unset = the profile's default (ckip; bigram under profile: cloud)
+             "rag.retrieval.segmenter"}
 
 # Choice lists. Providers are lower-cased and trimmed before the check (the factories
 # compare lower-case names). Embedding providers come from the factory itself.
