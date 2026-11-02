@@ -54,6 +54,44 @@ def detach_generated_tsv(conn, table: str) -> bool:
     return False
 
 
+def fetch_reusable(vector_store: Any, file_id: str, engine: Any = None,
+                   table: Optional[str] = None) -> Dict[str, Dict[str, Any]]:
+    """Existing leaves of a file keyed by chunk_hash, with what can be reused on re-index:
+    ``{hash: {"context_prefix", "ctx_key", "emb_key", "embedding"}}``.
+
+    Rows indexed before chunk hashes existed are ignored (nothing to match). A missing
+    table (first index) or any read error returns {} — reuse is an optimisation only.
+    """
+    from src.domain.rag.chunk_lookup import ChunkLookup
+
+    try:
+        engine = engine or ChunkLookup._get_engine(vector_store)
+        table = table or ChunkLookup._get_table_name(vector_store)
+        with engine.connect() as conn:
+            rows = conn.execute(
+                text(
+                    "SELECT metadata_->>'chunk_hash', metadata_->>'context_prefix', "
+                    "metadata_->>'ctx_key', metadata_->>'emb_key', embedding::text "
+                    f'FROM "{table}" WHERE metadata_->>\'file_id\' = :fid '
+                    "AND metadata_->>'node_role' = 'leaf' "
+                    "AND metadata_->>'chunk_hash' IS NOT NULL"
+                ),
+                {"fid": str(file_id)},
+            ).fetchall()
+    except Exception as e:
+        logger.debug(f"[CHUNK_STORE] nothing reusable for file {file_id}: {e}")
+        return {}
+    out: Dict[str, Dict[str, Any]] = {}
+    for chash, prefix, ctx_key, emb_key, emb_text in rows:
+        try:
+            embedding = json.loads(emb_text) if emb_text else None
+        except ValueError:
+            embedding = None
+        out[chash] = {"context_prefix": prefix or "", "ctx_key": ctx_key,
+                      "emb_key": emb_key, "embedding": embedding}
+    return out
+
+
 def _vector_literal(embedding: Sequence[float]) -> str:
     return "[" + ",".join(repr(float(x)) for x in embedding) + "]"
 

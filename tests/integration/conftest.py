@@ -16,7 +16,8 @@ from pathlib import Path
 import pytest
 from sqlalchemy.engine import make_url
 
-_ITEST_DB = "agentic_rag_itest"
+# Overridable so parallel checkouts can each use their own throwaway database.
+_ITEST_DB = os.getenv("RAG_ITEST_DB", "agentic_rag_itest")
 _REPO = Path(__file__).resolve().parents[2]
 _TMP_CONFIG = _REPO / "config" / "_itest_config.yaml"
 

@@ -26,7 +26,7 @@ Metadata schema (written to LlamaIndex Node.metadata; the PGVector schema is unt
 
 from __future__ import annotations
 
-from typing import List, Optional, Tuple
+from typing import Callable, List, Optional, Sequence, Tuple
 from uuid import uuid4
 
 from llama_index.core import Document
@@ -51,6 +51,8 @@ def build_hierarchy(
     leaf_documents: List[Document],
     parent_target_tokens: int = 1024,
     base_metadata: Optional[dict] = None,
+    leaf_ids: Optional[Sequence[str]] = None,
+    parent_id_for: Optional[Callable[[List[int]], str]] = None,
 ) -> Tuple[List[TextNode], List[TextNode]]:
     """Aggregate leaf documents into two levels: (leaf_nodes, parent_nodes)
 
@@ -59,6 +61,9 @@ def build_hierarchy(
         parent_target_tokens: cap each parent once it accumulates this many tokens
             (default aligns with config.hierarchy_sizes[0])
         base_metadata: shared metadata (file_id, file_name, etc.) merged into every node
+        leaf_ids: optional node id per leaf (stable ids for incremental re-indexing);
+            random ids when omitted
+        parent_id_for: optional ``f(leaf indexes) -> parent id``; random when omitted
 
     Returns:
         (leaf_nodes, parent_nodes) — two lists
@@ -84,14 +89,15 @@ def build_hierarchy(
         if not current_group:
             return
 
-        parent_id = str(uuid4())
-        leaf_ids = []
+        group_indexes = [idx for idx, _ in current_group]
+        parent_id = parent_id_for(group_indexes) if parent_id_for else str(uuid4())
+        child_ids = []
         leaf_texts = []
         index_start = current_group[0][0]
         index_end = current_group[-1][0]
 
         for leaf_idx, leaf_doc in current_group:
-            leaf_id = str(uuid4())
+            leaf_id = leaf_ids[leaf_idx] if leaf_ids else str(uuid4())
             leaf_meta = {
                 **base_metadata,
                 **{k: v for k, v in leaf_doc.metadata.items() if v is not None},
@@ -106,7 +112,7 @@ def build_hierarchy(
                 metadata=leaf_meta,
             )
             leaf_nodes.append(leaf_node)
-            leaf_ids.append(leaf_id)
+            child_ids.append(leaf_id)
             leaf_texts.append(leaf_doc.text)
 
         # Create parent node — text is the children joined in order,
@@ -117,9 +123,9 @@ def build_hierarchy(
             **base_metadata,
             **({"headings": shared} if shared else {}),
             "node_role": "parent",
-            "children_node_ids": leaf_ids,
+            "children_node_ids": child_ids,
             "children_index_range": [index_start, index_end],
-            "chunk_count": len(leaf_ids),
+            "chunk_count": len(child_ids),
         }
         parent_node = TextNode(
             id_=parent_id,

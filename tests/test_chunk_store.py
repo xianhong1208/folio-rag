@@ -89,3 +89,25 @@ def test_empty_node_list_still_deletes_old_rows():
     assert cs.replace_file_chunks(store, "f", [], {}, engine=eng, table="t") == 0
     assert any(s.startswith("DELETE") for s, _ in eng.log)
     assert not any(s.startswith("INSERT") for s, _ in eng.log)
+
+
+def test_fetch_reusable_parses_rows_and_vectors():
+    class _C(_Conn):
+        def execute(self, stmt, params=None):
+            self.log.append((str(stmt), params))
+            return SimpleNamespace(fetchall=lambda: [
+                ("h1", "ctx", "k1", "e1", "[0.5,0.25]"),
+                ("h2", None, None, "e1", "not a vector"),
+            ])
+
+    eng = SimpleNamespace(connect=lambda: _C([]))
+    out = cs.fetch_reusable(None, "f", engine=eng, table="t")
+    assert out["h1"] == {"context_prefix": "ctx", "ctx_key": "k1", "emb_key": "e1", "embedding": [0.5, 0.25]}
+    assert out["h2"]["embedding"] is None and out["h2"]["context_prefix"] == ""
+
+
+def test_fetch_reusable_missing_table_is_empty():
+    def _boom():
+        raise RuntimeError('relation "t" does not exist')
+
+    assert cs.fetch_reusable(None, "f", engine=SimpleNamespace(connect=_boom), table="t") == {}
