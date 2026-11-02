@@ -17,7 +17,7 @@ from typing import Any, Dict, Optional
 
 import httpx
 from fastapi import APIRouter, Body, HTTPException, Request
-from fastapi.responses import HTMLResponse, RedirectResponse
+from fastapi.responses import RedirectResponse
 
 from src.log import get_api_logger, mask_token
 
@@ -134,16 +134,3 @@ async def root_redirect():
     from hard-caching the redirect while the console front door is still settling.
     """
     return RedirectResponse("/admin/", status_code=302)
-
-
-@router.get("/admin-classic", response_class=HTMLResponse, include_in_schema=False)
-async def admin_page_classic():
-    """Legacy single-file console — retired from the front door, kept as a temporary
-    escape hatch while the React console (/admin) is validated in real use. Slated
-    for removal per ROADMAP; the token is entered in-page and stored only in the
-    browser's localStorage.
-    """
-    from src.api.router.admin_page_html import ADMIN_PAGE_HTML
-    from src.api.router.index import _logo_data_uri
-    html = ADMIN_PAGE_HTML.replace("%%LOGO%%", _logo_data_uri() or "")
-    return HTMLResponse(html)
