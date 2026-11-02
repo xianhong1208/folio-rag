@@ -271,179 +271,93 @@ async def admin_query_folder(folder_id: int, body: dict = Body(..., examples=[{"
             gen = _generate_answer(q, resp["data"].get("results", []))
             resp["data"]["answer"] = gen.get("answer")
             resp["data"]["rag_gate"] = {k: gen[k] for k in
-                                        ("confidence", "kept", "dropped", "note") if k in gen}
+                                        ("confidence", "kept", "dropped", "note", "citations",
+                                         "invalid_citations", "grading_error") if k in gen}
         except Exception as e:
             logger.warning(f"[ADMIN] answer generation failed: {e}")
             resp["data"]["answer"] = None
     return resp
 
 
-def _generate_answer(query: str, results: list) -> dict:
-    """CRAG (Corrective RAG) answer generation: grade each retrieved chunk for
-    relevance, generate from the relevant ones only, and decline to answer when
-    none are relevant (avoids hallucinating on irrelevant content).
-
-    Returns {answer, confidence (high/medium/low/none), kept, dropped, note}.
-    """
-    if not results:
-        return {"answer": None, "confidence": "none", "kept": 0, "dropped": 0,
-                "note": "No chunks retrieved"}
-    import json
-    import re
+def _llm():
+    """(client, model) for the configured LLM (rag.llm)."""
     from src.config.config_manager import Config
     from src.domain.rag.context_generator import ContextGenerator
     llm_cfg = Config.get_config_model().rag.llm
     client = ContextGenerator._create_sync_client(llm_cfg)
-    model = getattr(llm_cfg, "azure_deployment", None) or llm_cfg.model
-    top = results[:6]
+    return client, getattr(llm_cfg, "azure_deployment", None) or llm_cfg.model
 
-    # CRAG step 1: relevance grading (single LLM call returning a boolean array)
-    grades = [True] * len(top)
-    try:
-        gprompt = (
-            "Grade whether each numbered context can help answer the question. "
-            "Reply ONLY a JSON array of booleans (one per context, true = relevant).\n\n"
-            + "\n\n".join(f"[{i+1}] {r['text'][:600]}" for i, r in enumerate(top))
-            + f"\n\nQuestion: {query}\n\nJSON:")
-        gr = client.chat.completions.create(
-            model=model, messages=[{"role": "user", "content": gprompt}],
-            max_tokens=1024, temperature=0)
-        m = re.search(r"\[.*?\]", (gr.choices[0].message.content or ""), re.S)
-        if m:
-            arr = json.loads(m.group(0))
-            grades = [bool(x) for x in arr][:len(top)] + [False] * (len(top) - len(arr))
-    except Exception as e:
-        logger.debug(f"[CRAG] grading skipped, using all context: {e}")
 
-    kept = [r for r, g in zip(top, grades) if g]
-    dropped = len(top) - len(kept)
-
-    # CRAG gate: all irrelevant -> don't force an answer
-    if not kept:
-        try:
-            client.close()
-        except Exception:
-            pass
-        return {"answer": "The currently indexed content has no sufficient basis "
-                          "to answer this question. Consider adding relevant "
-                          "documents or rephrasing the question.",
-                "confidence": "low", "kept": 0, "dropped": dropped,
-                "note": "CRAG gate: no retrieved chunk graded relevant"}
-
-    # CRAG step 2: generate from relevant chunks only (citations marked as [n])
-    ctx = "\n\n".join(f"[{i+1}] {r['text'][:1200]}" for i, r in enumerate(kept))
-    prompt = (
-        "You are a helpful assistant. Answer the question using ONLY the context "
-        "below. Cite sources inline as [n]. If the context lacks the answer, say so.\n\n"
-        f"Context:\n{ctx}\n\nQuestion: {query}\n\nAnswer:")
-    # Reasoning models (e.g. gpt-oss): reasoning tokens consume max_tokens; too
-    # small a budget returns content None (finish_reason=length) and the answer
-    # silently becomes empty. Allow 2048.
-    r = client.chat.completions.create(
-        model=model, messages=[{"role": "user", "content": prompt}],
-        max_tokens=2048, temperature=0.2)
-    ans = r.choices[0].message.content
-    finish = getattr(r.choices[0], "finish_reason", None)
-    if not (ans or "").strip():
-        # Still empty (usually reasoning exhausted the budget) -> return a clear message rather than silently empty.
-        logger.warning(f"[CRAG] empty generation (finish={finish}) for query={query!r}")
-        try:
-            client.close()
-        except Exception:
-            pass
-        return {"answer": "Relevant content was found, but answer generation did "
-                          "not complete (model output was truncated). Please try "
-                          "again or use a more specific question.",
-                "confidence": "low", "kept": len(kept), "dropped": dropped,
-                "note": f"generation returned empty (finish={finish})"}
-    # gpt-oss emits OpenAI-style citations 【n†...】 that the UI can't render;
-    # normalize to [n] to match the result cards.
-    ans = re.sub(r"【\s*(\d+)\s*†[^】]*】", r"[\1]", ans)
+def _close(client) -> None:
     try:
         client.close()
-    except Exception:
+    except Exception:  # noqa: BLE001
         pass
-    return {"answer": ans,
-            "confidence": "high" if len(kept) >= 2 else "medium",
-            "kept": len(kept), "dropped": dropped,
-            "note": f"Answered from {len(kept)} relevant chunk(s)"}
+
+
+def _generate_answer(query: str, results: list) -> dict:
+    """CRAG (Corrective RAG) answer generation — see src/domain/rag/answer.py.
+
+    Returns {answer, confidence (high/medium/low/none/unverified), kept, dropped,
+    note, citations, invalid_citations}.
+    """
+    from src.domain.rag import answer as crag
+    if not results:
+        return crag.answer(None, "", query, results)
+    client, model = _llm()
+    try:
+        return crag.answer(client, model, query, results)
+    finally:
+        _close(client)
 
 
 def _crag_grade(query: str, results: list) -> dict:
-    """CRAG relevance grading (one LLM call): return {top, kept, dropped}.
+    """CRAG relevance grading for the streaming path (one LLM call).
 
-    Shared by the streaming answer path. `kept` are the chunks graded relevant to
-    the question; on any grading error every chunk is kept (fail-open, same as the
-    non-streaming path).
+    Returns {top, contexts, kept, dropped, grading}: ``contexts`` are the kept
+    chunks with their original result numbers. A grading failure keeps every
+    chunk but is reported (the answer is then labelled unverified).
     """
-    import json
-    import re
-    from src.config.config_manager import Config
-    from src.domain.rag.context_generator import ContextGenerator
-    top = results[:6]
+    from src.domain.rag import answer as crag
+    top = list(results[:crag.MAX_CONTEXTS])
     if not top:
-        return {"top": [], "kept": [], "dropped": 0}
-    llm_cfg = Config.get_config_model().rag.llm
-    client = ContextGenerator._create_sync_client(llm_cfg)
-    model = getattr(llm_cfg, "azure_deployment", None) or llm_cfg.model
-    grades = [True] * len(top)
+        return {"top": [], "contexts": [], "kept": [], "dropped": 0,
+                "grading": crag.Grading([])}
+    client, model = _llm()
     try:
-        gprompt = (
-            "Grade whether each numbered context can help answer the question. "
-            "Reply ONLY a JSON array of booleans (one per context, true = relevant).\n\n"
-            + "\n\n".join(f"[{i+1}] {r['text'][:600]}" for i, r in enumerate(top))
-            + f"\n\nQuestion: {query}\n\nJSON:")
-        gr = client.chat.completions.create(
-            model=model, messages=[{"role": "user", "content": gprompt}],
-            max_tokens=1024, temperature=0)
-        m = re.search(r"\[.*?\]", (gr.choices[0].message.content or ""), re.S)
-        if m:
-            arr = json.loads(m.group(0))
-            grades = [bool(x) for x in arr][:len(top)] + [False] * (len(top) - len(arr))
-    except Exception as e:
-        logger.debug(f"[CRAG] grading skipped, using all context: {e}")
+        grading = crag.grade(client, model, query, [r.get("text") or "" for r in top])
     finally:
-        try:
-            client.close()
-        except Exception:
-            pass
-    kept = [r for r, g in zip(top, grades) if g]
-    return {"top": top, "kept": kept, "dropped": len(top) - len(kept)}
+        _close(client)
+    if not grading.ok:
+        logger.warning(f"[CRAG] relevance grading failed ({grading.reason}); answer unverified")
+    contexts = crag.contexts_for(top, grading.grades)
+    kept = [r for r, g in zip(top, grading.grades) if g]
+    return {"top": top, "contexts": contexts, "kept": kept,
+            "dropped": len(top) - len(contexts), "grading": grading}
 
 
-def _generate_stream(query: str, kept: list):
+def _generate_stream(query: str, contexts: list):
     """Blocking generator yielding answer text pieces from the LLM (stream=True).
 
     Runs in a worker thread; the async endpoint bridges it to the event loop.
-    Citations are normalized [n] on the fly (gpt-oss emits 【n†…】).
+    Full-width citations are normalised per piece where possible; the final
+    cleaned answer is sent on the ``done`` frame.
     """
-    import re
-    from src.config.config_manager import Config
-    from src.domain.rag.context_generator import ContextGenerator
-    llm_cfg = Config.get_config_model().rag.llm
-    client = ContextGenerator._create_sync_client(llm_cfg)
-    model = getattr(llm_cfg, "azure_deployment", None) or llm_cfg.model
-    ctx = "\n\n".join(f"[{i+1}] {r['text'][:1200]}" for i, r in enumerate(kept))
-    prompt = (
-        "You are a helpful assistant. Answer the question using ONLY the context "
-        "below. Cite sources inline as [n]. If the context lacks the answer, say so.\n\n"
-        f"Context:\n{ctx}\n\nQuestion: {query}\n\nAnswer:")
+    from src.domain.rag import answer as crag
+    client, model = _llm()
     try:
         stream = client.chat.completions.create(
-            model=model, messages=[{"role": "user", "content": prompt}],
+            model=model,
+            messages=[{"role": "user", "content": crag.answer_prompt(query, contexts)}],
             max_tokens=2048, temperature=0.2, stream=True)
         for chunk in stream:
             if not chunk.choices:
                 continue
             delta = getattr(chunk.choices[0].delta, "content", None)
             if delta:
-                # Normalize gpt-oss citations to [n]; safe on partial fragments.
-                yield re.sub(r"【\s*(\d+)\s*†[^】]*】", r"[\1]", delta)
+                yield crag.normalise_citations(delta)
     finally:
-        try:
-            client.close()
-        except Exception:
-            pass
+        _close(client)
 
 
 async def _stream_answer_events(query: str, results: list):
@@ -451,31 +365,35 @@ async def _stream_answer_events(query: str, results: list):
 
     Frames: {type: meta|token|done|error}. Retrieval already happened; this grades
     the chunks, gates on relevance, then streams the generation token by token.
+    The ``done`` frame carries the cleaned final answer (citations normalised and
+    validated, bold markers removed) and replaces what the tokens built up.
     """
     import asyncio
     import json
     from starlette.concurrency import run_in_threadpool
+    from src.domain.rag import answer as crag
 
     def _sse(obj) -> str:
         # default=str: result metadata carries non-JSON types (UUID node_id).
         return f"data: {json.dumps(obj, ensure_ascii=False, default=str)}\n\n"
 
     if not results:
-        yield _sse({"type": "meta", "confidence": "none", "kept": 0, "dropped": 0,
+        yield _sse({"type": "meta", "confidence": crag.CONF_NONE, "kept": 0, "dropped": 0,
                     "note": "No chunks retrieved"})
         yield _sse({"type": "done", "answer": None})
         return
 
     graded = await run_in_threadpool(_crag_grade, query, results)
-    kept, dropped = graded["kept"], graded["dropped"]
-    yield _sse({"type": "meta", "kept": len(kept), "dropped": dropped,
-                "confidence": "high" if len(kept) >= 2 else ("medium" if kept else "low")})
+    contexts, dropped, grading = graded["contexts"], graded["dropped"], graded["grading"]
+    meta = {"type": "meta", "kept": len(contexts), "dropped": dropped,
+            "confidence": crag.confidence(grading, len(contexts))}
+    if not grading.ok:
+        meta["grading_error"] = grading.reason
+    yield _sse(meta)
 
-    if not kept:
-        msg = ("The currently indexed content has no sufficient basis to answer this "
-               "question. Consider adding relevant documents or rephrasing the question.")
-        yield _sse({"type": "token", "text": msg})
-        yield _sse({"type": "done", "answer": msg,
+    if not contexts:
+        yield _sse({"type": "token", "text": crag.NO_BASIS_MESSAGE})
+        yield _sse({"type": "done", "answer": crag.NO_BASIS_MESSAGE, "confidence": crag.CONF_LOW,
                     "note": "CRAG gate: no retrieved chunk graded relevant"})
         return
 
@@ -486,7 +404,7 @@ async def _stream_answer_events(query: str, results: list):
 
     def _produce():
         try:
-            for piece in _generate_stream(query, kept):
+            for piece in _generate_stream(query, contexts):
                 loop.call_soon_threadsafe(queue.put_nowait, piece)
         except Exception as e:  # noqa: BLE001 - surface generation errors to the client
             loop.call_soon_threadsafe(queue.put_nowait, {"__err__": str(e)})
@@ -495,6 +413,7 @@ async def _stream_answer_events(query: str, results: list):
 
     task = asyncio.create_task(run_in_threadpool(_produce))
     full: list[str] = []
+    failed = False
     try:
         while True:
             item = await queue.get()
@@ -502,14 +421,15 @@ async def _stream_answer_events(query: str, results: list):
                 break
             if isinstance(item, dict) and "__err__" in item:
                 yield _sse({"type": "error", "error": item["__err__"]})
+                failed = True
                 break
             full.append(item)
             yield _sse({"type": "token", "text": item})
     finally:
         await task
-    answer = "".join(full)
-    yield _sse({"type": "done", "answer": answer or None,
-                "note": f"Answered from {len(kept)} relevant chunk(s)"})
+    if failed:
+        return
+    yield _sse({"type": "done", **crag.finish_stream("".join(full), contexts, grading)})
 
 
 @router.post("/api/admin/manage/folders/{folder_id}/query/stream")

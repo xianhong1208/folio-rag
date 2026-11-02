@@ -135,6 +135,8 @@ Each folder's table records which segmenter built its keyword index. After chang
 
 **Knowledge gaps.** Every REST, console and MCP search is logged (masked token prefix only) with its result count and the reranker's best score. *Query Analytics* lists a question as a knowledge gap when its **latest** search in a folder returned nothing or its best score was below `rag.rerank.gap_threshold` (default `0.5`) — so a gap disappears once documents that answer it are added and the question is asked again.
 
+**Answers (console).** With *generate answer* on, the top chunks are graded for relevance in one LLM call, irrelevant ones are dropped (nothing relevant → no answer), and the answer is generated from the rest in the **question's language**. Each chunk keeps its result-card number, so `[3]` always means card #3 (citations are links in the console); citations of chunks the model was not given are removed, `【n†…】` markers become `[n]` and Markdown bold markers are stripped — on the streaming path too, where the final `done` frame carries the cleaned answer. If the grader's reply cannot be parsed the answer is labelled **unverified** instead of `high`.
+
 **Auth.** Agentic RAG is a *resource server*. FastMCP publishes `/.well-known/oauth-protected-resource/mcp`, which points clients at MCP Gate; the server fetches MCP Gate's JWKS once and verifies every bearer token offline (RS256 — signature, issuer, audience, expiry, scopes). MCP Gate is never on the request path.
 
 ## Configuration

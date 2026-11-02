@@ -109,9 +109,11 @@ def check_ready(folder_ref: str):
 
 def _gen_question(client, model: str, chunk_text: str) -> str:
     prompt = (
-        "Below is a passage from a document. Write one question a user might ask whose answer is clearly in this passage, "
-        "in the passage's own language. Make it specific (proper nouns are fine); do not refer to 'this passage'."
-        "Output only the question itself, with no prefix.\n\nPassage:\n" + chunk_text[:1500] + "\n\nQuestion:")
+        "Below is an excerpt from a document. Write one question a user might ask whose "
+        "answer is clearly contained in this excerpt. Be specific (names and terms are "
+        "fine) and do not refer to \"the excerpt\" or \"this text\". Write the question in "
+        "the same language as the excerpt. Output only the question, with no prefix.\n\n"
+        "Excerpt:\n" + chunk_text[:1500] + "\n\nQuestion:")
     # Reasoning models (e.g. gpt-oss) spend reasoning tokens first; too small a
     # max_tokens leaves content None (no budget left for the answer) -> allow 1024.
     r = client.chat.completions.create(
@@ -191,7 +193,8 @@ def _answer_and_judge(client, model: str, query: str, contexts: list) -> dict:
     ctx = "\n\n".join(f"[{i+1}] {(t or '')[:1200]}" for i, t in enumerate(contexts))
     aprompt = (
         "Answer the question using ONLY the context below. Cite sources inline as "
-        "[n]. If the context lacks the answer, say so.\n\n"
+        "[n]. If the context lacks the answer, say so. Answer in the same language as "
+        "the question.\n\n"
         f"Context:\n{ctx}\n\nQuestion: {query}\n\nAnswer:")
     ar = client.chat.completions.create(
         model=model, messages=[{"role": "user", "content": aprompt}],

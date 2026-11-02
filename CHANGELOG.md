@@ -7,6 +7,8 @@ to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 ## [Unreleased]
 
 ### Added
+- **Clickable answer citations** in the Search Playground; the non-streaming
+  answer now shows its kept / dropped / confidence line too.
 - **Knowledge gaps judged on relevance.** Query logs record the reranker's best
   score (`QueryLogs.top_score`, Alembic migration `20261102a1b2c3`, which also
   adopts the `QueryLogs` table into Alembic). Analytics lists a question as a gap
@@ -69,6 +71,17 @@ to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   logs a warning at startup.
 
 ### Fixed
+- **Console answers (CRAG), both JSON and streaming:** citations kept their
+  chunk's position among the *kept* chunks, so `[n]` pointed at the wrong result
+  card once a chunk was dropped — chunks now keep their result-card number and
+  are labelled with their source; citations of chunks the model was not given
+  are removed and `[1, 3]` becomes `[1][3]`; a grader reply that is not a list
+  of booleans (or `"false"` read as true) no longer yields `high` confidence but
+  `unverified`; answers follow the question's language; `【n】` markers and
+  Markdown bold are cleaned; an empty streamed answer gets an explanatory
+  message instead of a blank card.
+- Eval question generation asked for Traditional Chinese questions regardless of
+  the document; questions now follow the excerpt's language.
 - MCP searches were not logged, so analytics and knowledge gaps ignored all
   agent traffic.
 - When the reranker failed, queries returned all 3 × `top_k` candidates; they
