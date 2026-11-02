@@ -7,6 +7,7 @@ from sqlalchemy.sql import func
 import uuid
 
 from src.config.config_manager import Config
+from src.utils.db_url import resolve_db_url
 
 # Lazy init: do not create the engine at import time, so the application can load
 # configuration (Config.set_config) before any DB connection is attempted.
@@ -198,22 +199,6 @@ class QueryLog(Base):
     )
 
 
-def _resolve_db_url(db_conf) -> str:
-    """Return the full connection URL, injecting the config `database.port` when the URL
-    omits one.
-
-    create_engine ignores the separate port field, so a portless URL silently defaults
-    to 5432 and a user who set the port would hit the wrong instance. Injecting it keeps
-    all connection paths (sync / async / vector store) consistent.
-    """
-    from sqlalchemy import make_url
-    url = make_url(db_conf.url)
-    port = getattr(db_conf, "port", None)
-    if url.port is None and port:
-        url = url.set(port=int(port))
-    return url.render_as_string(hide_password=False)
-
-
 def get_engine():
     """Return the configured SQLAlchemy engine, creating it from Config if not yet built.
 
@@ -225,7 +210,7 @@ def get_engine():
         db_conf = Config.get_database_config()
         if not db_conf:
             raise RuntimeError("Database configuration is missing in Pydantic ConfigModel.")
-        db_uri = _resolve_db_url(db_conf)
+        db_uri = resolve_db_url(db_conf)
         # Default False: echo=True prints every SQL statement to the log — high volume
         # and possibly containing data values. Set echo: true in config to debug SQL.
         echo_flag = getattr(db_conf, 'echo', False)
@@ -253,7 +238,7 @@ def get_async_engine():
         db_conf = Config.get_database_config()
         if not db_conf:
             raise RuntimeError("Database configuration is missing in Pydantic ConfigModel.")
-        async_uri = _resolve_db_url(db_conf).replace(
+        async_uri = resolve_db_url(db_conf).replace(
             "postgresql://", "postgresql+asyncpg://", 1)
         _async_engine = create_async_engine(
             async_uri,

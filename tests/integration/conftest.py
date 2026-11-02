@@ -22,13 +22,14 @@ _TMP_CONFIG = _REPO / "config" / "_itest_config.yaml"
 
 
 def _base_url():
-    """Read connection info from config/config.yaml (everything except dbname)."""
-    text = (_REPO / "config" / "config.yaml").read_text(encoding="utf-8")
-    for line in text.splitlines():
-        line = line.strip()
-        if line.startswith("url:"):
-            return make_url(line.split(":", 1)[1].strip().strip('"'))
-    raise RuntimeError("config.yaml 沒有 database url")
+    """Connection info from config/config.yaml (everything except dbname).
+
+    Resolved exactly like the server does it: ${VAR:-default} expanded and
+    database.port applied when the URL has no port. Reading only the raw url line
+    used to connect to 5432, find nothing and skip the whole group silently.
+    """
+    from src.utils.db_url import db_url_from_config_file
+    return make_url(db_url_from_config_file(_REPO / "config" / "config.yaml"))
 
 
 def _admin_conn():
@@ -53,13 +54,14 @@ def _db_available() -> bool:
 
 if os.getenv("RAG_RUN_DB_ITESTS") != "1":
     pytest.skip(
-        "整合測試需顯式 opt-in:RAG_RUN_DB_ITESTS=1(防止在碰巧有 postgres 的機器上擅自建庫)",
+        "integration tests are opt-in: set RAG_RUN_DB_ITESTS=1 (so a machine that happens "
+        "to run postgres never gets databases created without consent)",
         allow_module_level=True,
     )
 
 if not _db_available():
     pytest.skip(
-        "PostgreSQL 不可達 — 跳過整合測試(單元測試不受影響)",
+        "PostgreSQL is unreachable — skipping integration tests (unit tests unaffected)",
         allow_module_level=True,
     )
 
@@ -91,10 +93,15 @@ def itest_db():
 
     # 2. Temporary config (the config path safety check requires it to be
     # inside the repo) pointing at the throwaway DB
-    src = (_REPO / "config" / "config.yaml").read_text(encoding="utf-8")
-    u = _base_url()
-    old_db = u.database
-    _TMP_CONFIG.write_text(src.replace(f"/{old_db}", f"/{_ITEST_DB}"), encoding="utf-8")
+    # Write the resolved URL (port included) rather than patching the text: the
+    # url line may be a ${DATABASE_URL:-...} placeholder, and an env override
+    # would otherwise point the run at a real database.
+    import yaml
+    raw = yaml.safe_load((_REPO / "config" / "config.yaml").read_text(encoding="utf-8"))
+    raw["database"]["url"] = _base_url().set(database=_ITEST_DB).render_as_string(
+        hide_password=False)
+    _TMP_CONFIG.write_text(
+        yaml.safe_dump(raw, sort_keys=False, allow_unicode=True), encoding="utf-8")
 
     from src.config.config_manager import Config
     Config.set_config(str(_TMP_CONFIG))
@@ -102,7 +109,7 @@ def itest_db():
     # 3. Build the schema via the full alembic chain (revalidates the
     # migration chain on every integration round)
     from db.migrate import DatabaseMigrator
-    assert DatabaseMigrator().upgrade("head"), "alembic 全鏈套用失敗"
+    assert DatabaseMigrator().upgrade("head"), "applying the full alembic chain failed"
 
     # 4. Bind the Session factory (get_engine internally does
     #    Session.configure(bind=...); the migrator uses its own engine and
