@@ -101,6 +101,16 @@ def _get_loaded_whisper():
     return None
 
 
+def _cloud_parsing_selected(file_name: str) -> bool:
+    try:
+        from src.config.config_manager import Config
+        from src.domain.rag.cloud_parser import is_cloud_parsed
+        rag = getattr(Config.get_config_model(), "rag", None)
+        return bool(rag is not None and is_cloud_parsed(rag, file_name))
+    except Exception:
+        return False
+
+
 async def _save_upload_to_temp(file: UploadFile) -> tuple[str, int]:
     """Stream-write to a temp file, avoiding loading the whole audio into memory at once.
 
@@ -503,6 +513,12 @@ async def ocr(
     if ext not in _IMAGE_EXTS:
         logger.warning(f"[ocr] ✗ rejected unsupported ext={ext} for {file_name}")
         raise HTTPException(415, f"Unsupported format: {ext}. Allowed: {sorted(_IMAGE_EXTS)}")
+    if _cloud_parsing_selected(file_name):
+        # This endpoint is unauthenticated; forwarding anonymous uploads to the paid
+        # vision model would let anyone spend the parsing budget, so it is not offered.
+        raise HTTPException(
+            503, "Local OCR is not loaded: rag.parsing sends PDFs/images to a cloud vision "
+                 "model, which this unauthenticated endpoint does not expose")
 
     t_save = time.time()
     src_path, bytes_written = await _save_upload_to_temp(file)

@@ -1063,6 +1063,39 @@ def _refine_chunks_for_token_budget(
     return output
 
 
+def chunk_docling_document(
+    doc: Any,
+    file_name: str,
+    max_tokens: int = 512,
+    tokenizer: Optional[str] = None,
+) -> tuple[str, List[dict]]:
+    """Export a DoclingDocument to Markdown and chunk it into records.
+
+    The single chunking entry point for every parse path: docling_convert_once (local
+    models) and cloud_parser (vision-model Markdown re-assembled into one document, with
+    page provenance attached) both end here, so they produce the same record shape
+    ``[{"text", "headings", "page_no", "content_type"}, ...]``.
+    """
+    from docling.chunking import HierarchicalChunker
+
+    # Export full text as Markdown
+    full_text = doc.export_to_markdown()
+    logger.debug(f"Docling loaded {file_name}: {len(full_text)} chars")
+
+    # Chunk via HierarchicalChunker + per-chunk tokenizer refinement
+    # (see helpers above; we bypass HybridChunker for the large-table case).
+    hf_tok = get_hf_tokenizer(tokenizer)
+
+    raw_chunks = list(HierarchicalChunker().chunk(dl_doc=doc))
+    texts = _refine_chunks_for_token_budget(raw_chunks, hf_tok, max_tokens)
+
+    logger.info(
+        f"Docling processed {file_name}: {len(texts)} chunks "
+        f"(max_tokens={max_tokens})"
+    )
+    return full_text, texts
+
+
 def docling_convert_once(
     file_path: str,
     file_name: str,
@@ -1088,8 +1121,6 @@ def docling_convert_once(
         (full_text, chunk_records) — full Markdown text + chunk records
             ``[{"text", "headings", "page_no"}, ...]`` (citation provenance)
     """
-    from docling.chunking import HierarchicalChunker
-
     try:
         # 1. Convert once (using the singleton converter; models already preloaded)
         converter = get_converter()
@@ -1123,22 +1154,8 @@ def docling_convert_once(
                 result = converter.convert(source=file_path)
         doc = result.document
 
-        # 2. Export full text as Markdown
-        full_text = doc.export_to_markdown()
-        logger.debug(f"Docling loaded {file_name}: {len(full_text)} chars")
-
-        # 3. Chunk via HierarchicalChunker + per-chunk tokenizer refinement
-        #    (see helpers above; we bypass HybridChunker for the large-table case).
-        hf_tok = get_hf_tokenizer(tokenizer)
-
-        raw_chunks = list(HierarchicalChunker().chunk(dl_doc=doc))
-        texts = _refine_chunks_for_token_budget(raw_chunks, hf_tok, max_tokens)
-
-        logger.info(
-            f"Docling processed {file_name}: {len(texts)} chunks "
-            f"(max_tokens={max_tokens})"
-        )
-        return full_text, texts
+        # 2-3. Markdown export + chunking (shared with the cloud parser's documents)
+        return chunk_docling_document(doc, file_name, max_tokens=max_tokens, tokenizer=tokenizer)
 
     except Exception as e:
         # Detect common "the document itself is the problem" errors and give the user a clearer message.
