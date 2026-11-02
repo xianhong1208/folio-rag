@@ -29,6 +29,7 @@ from src.domain.rag.embedding.batch_exec import (
 )
 from src.domain.rag.hierarchy import build_hierarchy
 from src.domain.rag.chunk_identity import (
+    CHUNK_PIPELINE_VERSION,
     breadcrumb,
     chunk_hash,
     embedding_key,
@@ -250,7 +251,7 @@ class HierarchicalIndexer:
         their contextual prefix and embedding (see chunk_store.fetch_reusable), and the
         file's rows are swapped in one transaction.
 
-        Returns {"leaves", "parents", "llm_calls", "embedded", "warning"}.
+        Returns {"leaves", "parents", "llm_calls", "embedded", "pipeline_version", "warning"}.
         """
         file_name = document.metadata.get("file_name", "unknown")
 
@@ -467,6 +468,7 @@ class HierarchicalIndexer:
             "parents": len(parent_nodes),
             "llm_calls": len(need_llm),
             "embedded": n_leaves,
+            "pipeline_version": CHUNK_PIPELINE_VERSION,
             # Parse caveat from the loader (pages docling could not parse), for the file record.
             "warning": document.metadata.get("_parse_warning"),
         }

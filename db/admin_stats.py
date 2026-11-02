@@ -12,6 +12,7 @@ from typing import Any, Dict, List, Optional
 from sqlalchemy import func
 
 from db.db import File, FileIndex, Folder, IndexJob, Session
+from src.domain.rag.chunk_identity import reindex_recommended
 from src.log import get_db_logger
 
 log = get_db_logger()
@@ -138,6 +139,9 @@ def files_with_index_status(folder_id: int) -> List[Dict[str, Any]]:
                 "error": (err[:300] + ("…" if len(err) > 300 else "")) or None,
                 # Indexed with a caveat (e.g. pages that could not be parsed)
                 "warning": (getattr(ix, "index_warning", None) or None) if ix else None,
+                "pipeline_version": getattr(ix, "pipeline_version", None) if ix else None,
+                "reindex_recommended": reindex_recommended(
+                    ix.status if ix else None, getattr(ix, "pipeline_version", None) if ix else None),
             })
         return out
 

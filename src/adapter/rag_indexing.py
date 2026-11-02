@@ -594,6 +594,7 @@ class RAGIndexingService:
                 num_chunks=num_leaves,
                 content_hash=getattr(file_record, "content_hash", None),
                 index_warning=index_warning,
+                pipeline_version=index_stats.get("pipeline_version"),
             )
 
             await _run_db(ctx.indexing_service.invalidate_folder_caches, folder_id)
