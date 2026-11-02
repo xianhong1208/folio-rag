@@ -241,6 +241,26 @@ class TestAnswerAndRetry:
             r = client.post("/api/admin/manage/folders/7/files/9e68c18e-3209-4111-8111-000000000001/retry")
         assert r.status_code == 200
         assert adapter.index_document.await_args.kwargs["force"] is True
+        assert adapter.index_document.await_args.kwargs["token"] == "owner-tok"
+
+    def test_retry_rejects_file_from_another_folder(self, client):
+        # Folder 7 is owned by the session, but the file lives in folder 8 (someone else's).
+        frow = SimpleNamespace(id="9e68c18e-3209-4111-8111-000000000001", file_name="a.pdf",
+                               file_path="p", folder_id=8, mime_type="x", file_size=1,
+                               content_hash="h")
+        adapter = MagicMock()
+        adapter.index_document = AsyncMock()
+        with patch(_DB, return_value=_folder()), \
+             patch("db.filedb.FileDB.get", return_value=[frow]), \
+             patch("src.adapter.rag.get_rag_adapter", return_value=adapter):
+            r = client.post("/api/admin/manage/folders/7/files/9e68c18e-3209-4111-8111-000000000001/retry")
+        assert r.status_code == 404
+        adapter.index_document.assert_not_awaited()
+
+    def test_retry_missing_file_404(self, client):
+        with patch(_DB, return_value=_folder()), patch("db.filedb.FileDB.get", return_value=[]):
+            r = client.post("/api/admin/manage/folders/7/files/9e68c18e-3209-4111-8111-000000000001/retry")
+        assert r.status_code == 404
 
 
 class TestGenerateAnswer:

@@ -184,7 +184,9 @@ async def admin_retry_file(folder_id: int, file_id: UUID, ident: ConsoleIdentity
     from src.domain.rag.dto import FileRequest
     from src.adapter.rag import get_rag_adapter
     rows = FileDB.get(id=file_id)
-    if not rows:
+    # The file must live in this (owned) folder: otherwise a folder you own could be
+    # used to reindex a file in someone else's folder.
+    if not rows or rows[0].folder_id != folder_id:
         raise HTTPException(404, f"File {file_id} not found")
     f = rows[0]
     req = FileRequest(
