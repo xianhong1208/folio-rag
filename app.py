@@ -88,6 +88,13 @@ def create_app(config: BaseModel, transport: str) -> FastAPI:
     @asynccontextmanager
     async def lifespan(app: FastAPI):
         async with mcp_app.lifespan(app):
+            # Indexing's blocking work gets its own bounded thread pool so it cannot
+            # occupy the default executor the query path's to_thread calls rely on.
+            try:
+                from src.domain.rag import indexing_executor
+                indexing_executor.install()
+            except Exception as e:
+                api_logger.warning(f"Startup indexing thread pool install failed (continuing): {e}")
             manager = IndexingJobManager.get_instance()
             try:
                 flipped = manager.mark_interrupted_on_startup()
