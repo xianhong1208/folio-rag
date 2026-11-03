@@ -1,4 +1,4 @@
-import { useEffect, useState, useCallback, useRef } from 'react'
+import { useEffect, useState, useCallback, useMemo } from 'react'
 import { useLocation, useNavigate } from 'react-router-dom'
 import { Layers, Sparkles, List, ArrowDownUp, Mic, SlidersHorizontal, MessageSquare, FlaskConical, ScanText } from 'lucide-react'
 import { get, post, api } from '../services/api'
@@ -7,12 +7,12 @@ import { META, FIELDS, PRESETS, sectionOf, normalizeValue, keyIndicator, runsLab
 import { useModal } from '../contexts/ModalContext'
 import { useToast } from '../contexts/ToastContext'
 import { useSession } from '../contexts/SessionContext'
+import PageCap from '../components/PageCap'
+import { TABS, OVERRIDE_SECTIONS, tabFromParam, diffChanges, changesPerTab, stagePreset, needsReindex, showValue } from '../lib/settings-changes'
 
 const ICON = { layers: Layers, spark: Sparkles, list: List, sort: ArrowDownUp, mic: Mic, sliders: SlidersHorizontal, message: MessageSquare, flask: FlaskConical, scan: ScanText }
-const PARAM_TO_SEC = { embedding: 'rag.embedding', llm: 'rag.llm', 'contextual-llm': 'rag.contextual_llm', 'answer-llm': 'rag.answer_llm', 'eval-llm': 'rag.eval_llm', contextual: 'rag.contextual_retrieval', reranker: 'rag.rerank', parsing: 'rag.parsing', asr: 'rag.asr', retrieval: 'rag.retrieval' }
-const SEC_TO_PARAM = Object.fromEntries(Object.entries(PARAM_TO_SEC).map(([p, s]) => [s, p]))
 
-function Field({ path, f, value, entry, onChange, disabled }) {
+function Field({ path, f, value, entry, onChange, disabled, pending }) {
   const wide = f.type === 'textarea'
   const isBool = f.type === 'bool'
   const overridden = entry?.overridden
@@ -20,11 +20,12 @@ function Field({ path, f, value, entry, onChange, disabled }) {
   const key = f.type === 'secret' ? keyIndicator(entry) : null
 
   return (
-    <div className={'field' + (wide ? ' wide' : '')}>
+    <div className={'field' + (wide ? ' wide' : '') + (pending ? ' pending' : '')}>
       <div className="f-head">
         <label htmlFor={isBool ? undefined : path}>{f.label}</label>
         <div className="grow" />
         {key && <span className={'pill ' + key.cls} title="API keys are never shown; only whether one is set and which environment variable it comes from">{key.text}</span>}
+        {pending && <span className="pend" title="Changed here, not applied yet">pending</span>}
         {overridden && <span className="ovr" title="Differs from config.yaml">Overridden</span>}
         {isBool && (
           <label className="toggle"><input type="checkbox" aria-label={f.label} checked={!!value} disabled={disabled} onChange={(e) => setV(e.target.checked)} /><span /></label>
@@ -60,15 +61,8 @@ function RolesPanel({ view, readOnly, probes, onProbe }) {
   if (!view || !view.roles || !view.roles.length) return null
   const usage = view.usage || {}
   return (
-    <section className="card" id="model-roles">
-      <div className="card-head">
-        <div className="icon"><Layers size={16} /></div>
-        <div>
-          <h2>Model Roles · profile <code>{view.profile}</code></h2>
-          <div className="desc">Where each job runs and which model serves it. Keys are never shown — only whether one is set.</div>
-        </div>
-        <div className="grow" />
-      </div>
+    <section className="set-block" id="model-roles">
+      <div className="sec">Model roles <span className="r">profile {view.profile} · keys are never shown, only whether one is set</span></div>
       <div className="role-grid">
         {view.roles.map((r) => {
           const runs = runsLabel(r)
@@ -94,7 +88,7 @@ function RolesPanel({ view, readOnly, probes, onProbe }) {
         })}
       </div>
       {(usage.vision_pages || usage.prefix_tokens) ? (
-        <div className="card-foot"><span className="probe-result">Today (UTC): {fmtNum(usage.vision_pages || 0)} cloud-parsed page(s) · {fmtNum(usage.prefix_tokens || 0)} estimated prefix token(s) against daily caps</span></div>
+        <div className="set-foot"><span className="probe-result">Today (UTC): {fmtNum(usage.vision_pages || 0)} cloud-parsed page(s) · {fmtNum(usage.prefix_tokens || 0)} estimated prefix token(s) against daily caps</span></div>
       ) : null}
     </section>
   )
@@ -108,17 +102,18 @@ export default function SettingsPage() {
   const [state, setState] = useState(null) // path -> {value, overridden, is_set, env}
   const [view, setView] = useState(null) // {profile, roles, usage}
   const [roleProbe, setRoleProbe] = useState({}) // role -> probe result
-  const [dirty, setDirty] = useState({})
-  const [saving, setSaving] = useState('')
+  const [dirty, setDirty] = useState({}) // path -> pending value, across every tab
+  const [applying, setApplying] = useState(false)
+  const [review, setReview] = useState(false)
   const [probe, setProbe] = useState({}) // sec -> {cls,text}
 
   const loc = useLocation()
   const navigate = useNavigate()
-  const sectionParam = loc.pathname.split('/').filter(Boolean).pop()
-  // The section currently scrolled into view (kept in sync by the scrollspy below).
-  // Lets the click-to-scroll effect tell "user clicked a different section" apart
-  // from "the spy just synced the URL to where we already are".
-  const inViewRef = useRef(null)
+  const param = loc.pathname.split('/').filter(Boolean)[1]
+  const tabKey = tabFromParam(param)
+  const tab = TABS.find((t) => t.key === tabKey)
+  // Old /settings/<section> links (and bare /settings) settle on their tab's URL.
+  useEffect(() => { if (param !== tabKey) navigate('/settings/' + tabKey, { replace: true }) }, [param, tabKey, navigate])
 
   const loadSettings = useCallback(async () => {
     const r = await get('/api/admin/settings')
@@ -129,82 +124,51 @@ export default function SettingsPage() {
   }, [])
   useEffect(() => { loadSettings().catch(() => {}) }, [loadSettings])
 
-  // Scroll to the section chosen in the sidebar (/settings/<section>).
-  // Skip when the URL already matches the section in view — that means the
-  // scrollspy synced the URL to the user's scroll, and scrolling again would
-  // fight them. Only a genuine nav to a *different* section scrolls.
-  useEffect(() => {
-    if (state == null) return
-    if (sectionParam === inViewRef.current) return
-    const sec = PARAM_TO_SEC[sectionParam]
-    const t = setTimeout(() => {
-      if (!sec) { window.scrollTo({ top: 0 }); return }
-      const el = document.getElementById('sec-' + sec.replaceAll('.', '-'))
-      if (el) el.scrollIntoView({ block: 'start' })
-    }, 120)
-    return () => clearTimeout(t)
-  }, [sectionParam, state])
+  const changes = useMemo(() => diffChanges(dirty, state), [dirty, state])
+  const perTab = changesPerTab(changes)
+  const pendingPaths = new Set(changes.map((c) => c.path))
 
-  // Scrollspy: highlight the sidebar item for whichever section is near the top
-  // of the viewport as the user scrolls (updates the URL with replace, so the
-  // sidebar NavLink active state follows without adding history entries).
+  // Leaving the page with unapplied changes asks first (tab switches keep them).
   useEffect(() => {
-    if (state == null) return
-    const secs = Array.from(document.querySelectorAll('section[id^="sec-"]'))
-    if (!secs.length) return
-    const visible = new Set()
-    const io = new IntersectionObserver((entries) => {
-      for (const e of entries) {
-        if (e.isIntersecting) visible.add(e.target)
-        else visible.delete(e.target)
-      }
-      if (!visible.size) return
-      // Topmost currently-visible section wins (viewport-relative, container-agnostic).
-      const top = [...visible].sort(
-        (a, b) => a.getBoundingClientRect().top - b.getBoundingClientRect().top)[0]
-      const param = SEC_TO_PARAM[top.id.slice(4).replaceAll('-', '.')]
-      if (param && param !== inViewRef.current) {
-        inViewRef.current = param
-        navigate('/settings/' + param, { replace: true })
-      }
-    }, { rootMargin: '-72px 0px -60% 0px' })
-    secs.forEach((s) => io.observe(s))
-    return () => io.disconnect()
-  }, [state, navigate])
+    if (!changes.length) return
+    const onBefore = (e) => { e.preventDefault(); e.returnValue = '' }
+    window.addEventListener('beforeunload', onBefore)
+    return () => window.removeEventListener('beforeunload', onBefore)
+  }, [changes.length])
 
   const onChange = (path, v) => setDirty((d) => ({ ...d, [path]: v }))
   const valOf = (p) => (p in dirty ? dirty[p] : state?.[p]?.value)
 
-  const saveSection = async (sec) => {
-    const patch = {}
-    for (const p of Object.keys(dirty)) if (sectionOf(p) === sec) patch[p] = dirty[p]
-    if (!Object.keys(patch).length) return
-    if (META[sec].warn) {
+  const discard = () => { setDirty({}); setReview(false) }
+
+  const apply = async () => {
+    if (!changes.length) return
+    if (needsReindex(changes)) {
       let impact = 'Existing vectors become incompatible with the new model and must be rebuilt.'
       try {
         const o = (await get('/api/admin/overview')).data
-        impact = `${fmtNum(o.index.indexed_files)} indexed file(s) across ${fmtNum(o.folders)} folder(s) will need re-indexing to use the new settings.`
+        impact = `${fmtNum(o.index.indexed_files)} indexed file(s) across ${fmtNum(o.folders)} folder(s) will need re-indexing to use the new embedding settings.`
       } catch { /* ignore */ }
-      const ok = await confirm({ title: `Apply ${META[sec].title} change?`, danger: true, action: 'Apply & Save', note: impact + ' New uploads use the new settings immediately.' })
+      const ok = await confirm({ title: `Apply ${changes.length} change(s)?`, danger: true, action: 'Apply', note: impact + ' New uploads use the new settings immediately.' })
       if (!ok) return
     }
-    setSaving(sec)
+    const patch = Object.fromEntries(changes.map((c) => [c.path, c.to]))
+    setApplying(true)
     try {
       const r = await api('PUT', '/api/admin/settings', { settings: patch })
-      setDirty((d) => { const n = { ...d }; for (const p of Object.keys(patch)) delete n[p]; return n })
+      setDirty({})
+      setReview(false)
       await loadSettings()
       const warns = (r.data && r.data.warnings) || []
-      toast(warns.length ? 'Applied — note: ' + warns[0] : 'Settings applied', warns.length ? 'warn' : 'ok')
-    } catch (e) { toast('Save failed: ' + e.message, 'bad') }
-    setSaving('')
+      toast(warns.length ? 'Applied — note: ' + warns[0] : `Applied ${changes.length} change(s)`, warns.length ? 'warn' : 'ok')
+    } catch (e) { toast('Apply failed: ' + e.message, 'bad') }
+    setApplying(false)
   }
 
-  const applyPreset = async (key) => {
-    const p = PRESETS[key]
-    const ok = await confirm({ title: `Apply "${p.label}" preset?`, action: 'Apply', note: `Updates ${Object.keys(p.patch).length} retrieval & reranker settings. Takes effect immediately; fine-tune afterwards.` })
-    if (!ok) return
-    try { await api('PUT', '/api/admin/settings', { settings: p.patch }); await loadSettings(); toast(`Applied "${p.label}" preset`, 'ok') }
-    catch (e) { toast('Preset failed: ' + e.message, 'bad') }
+  // A preset only fills the form; it is reviewed and applied like any other change.
+  const usePreset = (key) => {
+    setDirty((d) => stagePreset(d, PRESETS[key].patch))
+    toast(`"${PRESETS[key].label}" staged — review and apply below`, 'ok')
   }
 
   // Per-role probe: one minimal real request with the *saved* settings (the key stays on the server).
@@ -222,57 +186,108 @@ export default function SettingsPage() {
   }
 
   const testConn = async (sec) => {
-    const dirtyHere = Object.keys(dirty).some((p) => sectionOf(p) === sec)
+    const pendingHere = changes.some((c) => c.section === sec)
     setProbe((p) => ({ ...p, [sec]: { cls: '', text: 'Testing…' } }))
     const res = probeText(await runProbe(META[sec].probe))
-    setProbe((p) => ({ ...p, [sec]: dirtyHere ? { ...res, text: res.text + ' (saved settings — save to test your edits)' } : res }))
+    setProbe((p) => ({ ...p, [sec]: pendingHere ? { ...res, text: res.text + ' (tests the applied settings — apply to test your edits)' } : res }))
   }
 
+  const block = (sec) => {
+    const meta = META[sec]
+    const paths = Object.keys(FIELDS).filter((p) => sectionOf(p) === sec && p in state)
+    if (!paths.length) return null
+    const Icon = ICON[meta.icon] || SlidersHorizontal
+    const pr = probe[sec]
+    return (
+      <section key={sec} id={'sec-' + sec.replaceAll('.', '-')} className={'set-block' + (meta.warn ? ' warnband' : '')}>
+        <div className="sec"><Icon size={12} className="sec-ico" />{meta.title} <span className="r">{meta.desc}</span></div>
+        {meta.warn && <div className="warnnote"><span>⚠</span><span>{meta.warn}</span></div>}
+        <div className="fields">
+          {paths.map((p) => (
+            <Field key={p} path={p} f={FIELDS[p]} value={valOf(p)} entry={state[p]} onChange={onChange} disabled={readOnly} pending={pendingPaths.has(p)} />
+          ))}
+        </div>
+        {meta.probe && !readOnly && (
+          <div className="set-foot">
+            <button className="btn-ghost sm" onClick={() => testConn(sec)}>Test connection</button>
+            {pr && <span className={'probe-result ' + pr.cls}>{pr.text}</span>}
+          </div>
+        )}
+      </section>
+    )
+  }
+
+  const main = tab.sections.filter((s) => !OVERRIDE_SECTIONS.includes(s))
+  const overrides = tab.sections.filter((s) => OVERRIDE_SECTIONS.includes(s))
+  const overridesPending = changes.some((c) => overrides.includes(c.section))
+
   return (
-    <div id="view-settings">
+    <div id="view-settings" className={changes.length ? 'has-savebar' : undefined}>
+      <PageCap title="Settings" query={tab.query} />
+      <nav className="subtabs" role="tablist" aria-label="Settings">
+        {TABS.map((t) => (
+          <button key={t.key} role="tab" aria-selected={t.key === tabKey} className={'subtab' + (t.key === tabKey ? ' active' : '')}
+            onClick={() => navigate('/settings/' + t.key)}>
+            {t.label}{perTab[t.key] ? <span className="tab-dot" title={`${perTab[t.key]} pending change(s)`}>{perTab[t.key]}</span> : null}
+          </button>
+        ))}
+      </nav>
       {readOnly && (
         <div className="ro-note" role="note">
           <span>🔒</span>
           <span>Read-only. Your token can view these settings but not change them — changing settings (and testing connections) needs a token with the <code>rag:admin</code> scope.</span>
         </div>
       )}
-      <p className="lede">Changes take effect <strong>immediately</strong> and persist across restarts. An <strong>Overridden</strong> badge means the value differs from config.yaml. Changes in the <span style={{ color: 'var(--signal-hi)' }}>amber section (Embedding)</span> require re-indexing existing folders. API keys are best given as <code>{'${ENV_VAR}'}</code> references — the server stores the reference, never the key (required under the cloud profile).</p>
-      <RolesPanel view={view} readOnly={readOnly} probes={roleProbe} onProbe={runProbe} />
-      <div className="preset-bar">
-        <span className="preset-label">Retrieval presets</span>
-        {Object.entries(PRESETS).map(([k, p]) => (
-          <button key={k} className="preset-btn" disabled={readOnly} title={readOnly ? 'Needs rag:admin' : undefined} onClick={() => applyPreset(k)}><b>{p.label}</b><span>{p.sub}</span></button>
-        ))}
-      </div>
+      {tabKey === 'models' && <p className="lede">Changes collect in the bar at the bottom and take effect <strong>when you apply them</strong>; they persist across restarts. <strong>Overridden</strong> marks a value that differs from config.yaml. API keys are best given as <code>{'${ENV_VAR}'}</code> references — the server stores the reference, never the key (required under the cloud profile).</p>}
+      {tabKey === 'models' && <RolesPanel view={view} readOnly={readOnly} probes={roleProbe} onProbe={runProbe} />}
+      {tabKey === 'retrieval' && (
+        <div className="preset-bar">
+          <span className="preset-label">start from</span>
+          {Object.entries(PRESETS).map(([k, p]) => (
+            <button key={k} className="preset-btn" disabled={readOnly} title={readOnly ? 'Needs rag:admin' : 'Fills the form; nothing is saved until you apply'} onClick={() => usePreset(k)}><b>{p.label}</b><span>{p.sub}</span></button>
+          ))}
+        </div>
+      )}
 
-      {state == null ? <div className="sec">loading…</div> : Object.entries(META).map(([sec, meta]) => {
-        const paths = Object.keys(FIELDS).filter((p) => sectionOf(p) === sec && p in state)
-        if (!paths.length) return null
-        const Icon = ICON[meta.icon] || SlidersHorizontal
-        const secDirty = paths.some((p) => p in dirty)
-        const pr = probe[sec]
-        return (
-          <section key={sec} id={'sec-' + sec.replaceAll('.', '-')} className={'card' + (meta.warn ? ' warnband' : '')}>
-            <div className="card-head">
-              <div className="icon"><Icon size={16} /></div>
-              <div><h2>{meta.title}</h2><div className="desc">{meta.desc}</div></div>
-              <div className="grow" />
-            </div>
-            {meta.warn && <div className="warnnote"><span>⚠</span><span>{meta.warn}</span></div>}
-            <div className="fields">
-              {paths.map((p) => (
-                <Field key={p} path={p} f={FIELDS[p]} value={valOf(p)} entry={state[p]} onChange={onChange} disabled={readOnly} />
+      {state == null ? <div className="sec">loading…</div> : (
+        <>
+          {main.map(block)}
+          {overrides.length > 0 && (
+            <details className="overrides" open={overridesPending || undefined}>
+              <summary><span className="sec">Per-role overrides <span className="r">optional · empty fields inherit the LLM above</span></span></summary>
+              {overrides.map(block)}
+            </details>
+          )}
+        </>
+      )}
+
+      {changes.length > 0 && (
+        <div className="savebar" role="region" aria-label="Pending changes">
+          {review && (
+            <div className="savebar-review">
+              {changes.map((c) => (
+                <div key={c.path} className="chg">
+                  <button className="chg-tab" onClick={() => navigate('/settings/' + c.tab)}>{c.tab}</button>
+                  <span className="chg-name" title={c.path}>{c.label}</span>
+                  <span className="chg-from">{showValue(c.from, c.secret)}</span>
+                  <span className="chg-arrow">→</span>
+                  <span className="chg-to">{showValue(c.to, c.secret)}</span>
+                  <button className="chg-undo" title="Undo this change" aria-label={'Undo ' + c.label}
+                    onClick={() => setDirty((d) => { const n = { ...d }; delete n[c.path]; return n })}>undo</button>
+                </div>
               ))}
             </div>
-            <div className="card-foot">
-              <button className="btn-cyber" disabled={readOnly || !secDirty || saving === sec} title={readOnly ? 'Needs rag:admin' : undefined} onClick={() => saveSection(sec)}>{saving === sec ? 'Saving…' : 'Save Changes'}</button>
-              {meta.probe && !readOnly && <button className="btn-ghost" onClick={() => testConn(sec)}>Test Connection</button>}
-              {pr && <span className={'probe-result ' + pr.cls}>{pr.text}</span>}
-              <div className="grow" />
-            </div>
-          </section>
-        )
-      })}
+          )}
+          <div className="savebar-row">
+            <span className="savebar-count"><span className="cursor blink">&#9613;</span> {changes.length} pending change{changes.length > 1 ? 's' : ''}</span>
+            <span className="savebar-peek">{changes.slice(0, 2).map((c) => `${c.label.split(' · ').pop()} ${showValue(c.from, c.secret)}→${showValue(c.to, c.secret)}`).join(' · ')}{changes.length > 2 ? ' …' : ''}</span>
+            <div className="grow" />
+            <button className="btn-ghost sm" onClick={() => setReview((r) => !r)} aria-expanded={review}>{review ? 'Hide' : 'Review'}</button>
+            <button className="btn-ghost sm" onClick={discard}>Discard</button>
+            <button className="btn-cyber sm" disabled={applying} onClick={apply}>{applying ? 'Applying…' : 'Apply'}</button>
+          </div>
+        </div>
+      )}
     </div>
   )
 }
