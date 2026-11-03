@@ -224,6 +224,14 @@ class HierarchicalIndexer:
         """
         return configured_text_search_config()
 
+    def _count_tokens(self, text: str) -> int:
+        """Tokens of ``text`` in the chunk tokenizer of the embedding model (the same
+        counter the leaf budgets use)."""
+        from src.domain.rag.docling_loader import get_hf_tokenizer
+
+        return len(get_hf_tokenizer(self._embedding_model_name).encode(
+            text or "", add_special_tokens=False))
+
     @staticmethod
     def _clean_text(text: str) -> str:
         return clean_text(text)
@@ -394,6 +402,7 @@ class HierarchicalIndexer:
             base_metadata=base_metadata,
             leaf_ids=leaf_ids,
             parent_id_for=lambda idxs: parent_node_id(file_id_meta, [hashes[i] for i in idxs]),
+            count_tokens=self._count_tokens,
         )
         search_texts = {n.node_id: retrieval_text(n.text, n.metadata) for n in leaf_nodes}
 

@@ -38,13 +38,16 @@ from src.domain.rag.chunk_identity import common_headings, section_key
 logger = get_api_logger()
 
 
-def estimate_tokens(text: str) -> int:
-    """Rough token estimate for hierarchy budget decisions (use tiktoken for accuracy)."""
+def estimate_tokens(text: str, model_name: Optional[str] = None) -> int:
+    """Token count of ``text`` with the chunk tokenizer (the one the leaf budgets use).
+
+    The old estimate charged 1.5 tokens per CJK character; multilingual-e5 / bge-m3
+    use ~0.7, so parents ended at about half their target (~1000 of 2048 tokens)."""
     if not text:
         return 0
-    chinese_chars = sum(1 for c in text if '一' <= c <= '鿿')
-    other_chars = len(text) - chinese_chars
-    return int(chinese_chars * 1.5 + other_chars * 0.3)
+    from src.domain.rag.chunk_tokenizer import get_chunk_tokenizer
+
+    return len(get_chunk_tokenizer(model_name).encode(text, add_special_tokens=False))
 
 
 def build_hierarchy(
@@ -53,6 +56,7 @@ def build_hierarchy(
     base_metadata: Optional[dict] = None,
     leaf_ids: Optional[Sequence[str]] = None,
     parent_id_for: Optional[Callable[[List[int]], str]] = None,
+    count_tokens: Optional[Callable[[str], int]] = None,
 ) -> Tuple[List[TextNode], List[TextNode]]:
     """Aggregate leaf documents into two levels: (leaf_nodes, parent_nodes)
 
@@ -64,6 +68,8 @@ def build_hierarchy(
         leaf_ids: optional node id per leaf (stable ids for incremental re-indexing);
             random ids when omitted
         parent_id_for: optional ``f(leaf indexes) -> parent id``; random when omitted
+        count_tokens: token counter for the budget (the indexer passes its embedding
+            model's chunk tokenizer); ``estimate_tokens`` when omitted
 
     Returns:
         (leaf_nodes, parent_nodes) — two lists
@@ -134,9 +140,10 @@ def build_hierarchy(
         )
         parent_nodes.append(parent_node)
 
+    count = count_tokens or estimate_tokens
     current_section = None
     for i, leaf_doc in enumerate(leaf_documents):
-        tokens = estimate_tokens(leaf_doc.text)
+        tokens = count(leaf_doc.text)
         section = section_key(leaf_doc.metadata.get("headings"))
 
         # A parent never spans two sections (auto-merge then returns a whole section,
