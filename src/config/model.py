@@ -83,6 +83,27 @@ class ConsoleAuthConfig(BaseModel):
     admin_scope: str = "rag:admin"
 
 
+class RevocationConfig(BaseModel):
+    """MCP Gate's revocation feed (``auth.revocation``).
+
+    Folio verifies tokens offline, so without this a token revoked in MCP Gate keeps
+    working until it expires. When enabled, a background task polls
+    ``<issuer>/oauth/revoked`` and every verification path rejects listed tokens.
+    The credentials belong to a confidential client registered in the MCP Gate
+    console and bound to this server as its resource server.
+    """
+    enabled: bool = False
+    client_id: Optional[str] = None
+    # Must be an ${ENV_VAR} reference; a literal secret in config.yaml is refused at startup.
+    client_secret: Optional[str] = Field(None, repr=False)
+    poll_interval_sec: float = Field(30, ge=5, le=3600)
+    # "open": keep accepting tokens when the feed is unreachable (logged loudly);
+    # "closed": reject every token once no poll has succeeded for
+    # stale_after_intervals x poll_interval_sec.
+    fail_mode: Literal["open", "closed"] = "open"
+    stale_after_intervals: int = Field(4, ge=2, le=100)
+
+
 class AuthConfig(BaseModel):
     """Bearer-token verification against an OAuth 2.1 authorization server (MCP Gate).
 
@@ -110,6 +131,8 @@ class AuthConfig(BaseModel):
     dynamic_tools: Optional[DynamicToolsConfig] = None
     # Admin-console login (session cookie, admin scope). Defaults apply when omitted.
     console: ConsoleAuthConfig = Field(default_factory=ConsoleAuthConfig)
+    # MCP Gate revocation feed (off by default; needs a resource-server client).
+    revocation: RevocationConfig = Field(default_factory=RevocationConfig)
 
 
 class LoggingConfig(BaseModel):

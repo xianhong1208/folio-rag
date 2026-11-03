@@ -161,6 +161,7 @@ Settings live in `config/config.yaml`; secrets come from environment variables (
 | `auth.console.session_secret` | *(generated)* | Key that signs the session cookie; `${ENV_VAR}` works. Unset → generated once into `storage/.console_session_secret` (gitignored), so sessions survive restarts. |
 | `auth.console.secure_cookie` | `auto` | Cookie `Secure` flag: `auto` = only over https; `true` behind a TLS-terminating proxy. |
 | `auth.console.admin_scope` | `rag:admin` | Scope that unlocks the console's global settings. |
+| `auth.revocation.*` | disabled | MCP Gate revocation feed, so revoked tokens stop working before they expire — see [Token revocation](#token-revocation). |
 | `rag.embedding.{model,dimension,base_url}` | `intfloat/multilingual-e5-large`, `1024`, `:7075/v1` | Embedding model; `dimension` **must** equal the model's real output dim. |
 | `rag.llm.{model,base_url}` | `openai/gpt-oss-120b`, `:5052/v1` | LLM for Contextual Retrieval and the `answer` path. |
 | `rag.rerank.{model,base_url}` | `mixedbread-ai/mxbai-rerank-base-v2`, `:8787` | Cross-encoder reranker. |
@@ -175,6 +176,34 @@ Settings live in `config/config.yaml`; secrets come from environment variables (
 | `rag.<role>.{timeout,max_retries}` | per role | Request timeout and retries (429 / 5xx / timeouts, with backoff) for each model role. |
 
 GPU selection is a `uv sync --extra local --group {rocm-r714|rocm-r713|cuda|cpu}` choice — see the top of `pyproject.toml`, where each group is mapped to its PyTorch index.
+
+### Token revocation
+
+Folio verifies MCP Gate tokens offline, so by default a token revoked in MCP Gate keeps working here until it expires — and a PAT can live up to a year. Enable the **revocation feed** and Folio polls MCP Gate's `POST /oauth/revoked` in the background (every `poll_interval_sec`, with jitter and error backoff), keeps the revoked-but-unexpired `jti`s in memory, and rejects them everywhere: `/mcp` (401 `invalid_token`), the REST API (401), console sign-in, and every request of an existing console session (the session ends with 401 `token_revoked`). A revocation takes effect within about one poll interval.
+
+| Setting | Default | Purpose |
+|---------|---------|---------|
+| `auth.revocation.enabled` | `false` (`FOLIO_REVOCATION_ENABLED`) | Turn the feed on. Off = the old behaviour, nothing is polled. |
+| `auth.revocation.client_id` | `${FOLIO_REVOCATION_CLIENT_ID}` | The resource-server client registered in MCP Gate (below). |
+| `auth.revocation.client_secret` | `${FOLIO_REVOCATION_CLIENT_SECRET}` | Its secret. **Must** be an `${ENV_VAR}` reference — a literal value refuses to start. |
+| `auth.revocation.poll_interval_sec` | `30` | How often the feed is polled (5–3600). |
+| `auth.revocation.fail_mode` | `open` | When MCP Gate is unreachable: `open` keeps accepting tokens and logs loudly; `closed` rejects every token (401 on `/mcp` and REST, 503 in the console) once no poll has succeeded for `stale_after_intervals` × `poll_interval_sec`, and until the first poll after startup succeeds. |
+| `auth.revocation.stale_after_intervals` | `4` | When the list counts as stale (`/health/detailed` reports `degraded`; `closed` starts rejecting). |
+
+The first poll fetches the whole list; later polls ask only for revocations since the previous one (with a 30 s overlap), and a full fetch repeats every hour. Entries are dropped once the token would have expired anyway. Startup logs whether the feed is enabled, and `GET /health/detailed` shows it under `checks.revocation` (`last_success`, `revoked_count`, `consecutive_failures`, `last_error`, `stale`).
+
+**Setting it up** (once per deployment):
+
+1. **Register a confidential client in MCP Gate.** Console → *OAuth Clients* → *Register trusted client*. Name it e.g. `Folio revocation feed`; leave *Redirect URIs* empty; under *Grant types* select only `client_credentials`; *Token endpoint authentication*: **Client secret (POST body)** (HTTP Basic works too — MCP Gate accepts either); *Resource server for*: **Folio**. Register, then copy the `client_id` (`mcpc_…`) and the client secret — the secret is shown once.
+2. **Bind it to Folio** — already done if you picked *Resource server for* in step 1. Otherwise, on the client's row click the server icon (*Resource server…*), choose the Folio service and *Save*; or call `PUT /api/oauth/clients/<client_id>/resource-server` with `{"service_id": "<Folio service id>"}` as a console admin. The row then reads *Resource server for Folio*. The feed lists only tokens whose audience is that service's audience, so it must equal Folio's `auth.audience`.
+3. **Give Folio the credentials** in its environment (or `.env`), then restart:
+   ```bash
+   FOLIO_REVOCATION_ENABLED=true
+   FOLIO_REVOCATION_CLIENT_ID=mcpc_...
+   FOLIO_REVOCATION_CLIENT_SECRET=...
+   ```
+   (If your `config/config.yaml` predates this feature, copy the `auth.revocation` block from the template first.)
+4. **Check it.** The startup log says `MCP Gate revocation feed: ENABLED …`; `curl -s localhost:5039/health/detailed | jq .checks.revocation` shows a recent `last_success`. Revoke a test PAT in MCP Gate; within `poll_interval_sec` a request with it gets 401. A `HTTP 401: invalid_client` in `last_error` means wrong credentials; `HTTP 403: unauthorized_client` means the client is not bound to a server.
 
 ## Cloud profile
 
@@ -296,7 +325,7 @@ You sign in by pasting an **MCP Gate access token issued for this service** — 
 
 - **The session is that token's identity.** You see and manage exactly the folders owned by the token (folders are keyed on its `jti`) — the same folders it reaches over REST and MCP. Folders you create in the console belong to it too. Folders owned by another token are invisible; to manage them, sign in with that token.
 - **Two tiers.** Any valid token can sign in and manage its own folders. Changing runtime **Settings**, testing arbitrary endpoints, and reading the settings **Audit Log** and server-wide storage figures need the **`rag:admin`** scope. Without it, Settings and System Health are read-only (secrets are always masked), and Overview / Index Jobs / Query Analytics cover only your own folders; with it they cover the whole server.
-- **Sessions** last `auth.console.session_hours` (8 h) or until the token expires, whichever is first. Revoking the token in MCP Gate does not end a running session (verification is offline) — it ends at expiry or on *Sign out*.
+- **Sessions** last `auth.console.session_hours` (8 h) or until the token expires, whichever is first. With the [revocation feed](#token-revocation) enabled, revoking the token in MCP Gate also ends its sessions within a poll interval; without it a running session lasts until expiry or *Sign out* (verification is offline).
 
 **Issuing tokens in MCP Gate.** No MCP Gate change is needed:
 
