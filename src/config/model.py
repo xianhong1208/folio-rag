@@ -316,7 +316,7 @@ class ContextualRetrievalConfig(BaseModel):
     # Cost guards (0 = unlimited). Chunks over a cap get the deterministic fallback prefix
     # (file name) instead of an LLM call, and a warning is logged.
     max_calls_per_file: int = Field(0, ge=0)
-    # Estimated tokens (prompt chars / 4 + max_tokens) per UTC day, process-wide.
+    # Estimated tokens (prompt: 1 per CJK char, 1 per 4 other chars; + max_tokens) per UTC day.
     max_tokens_per_day: int = Field(0, ge=0)
 
 

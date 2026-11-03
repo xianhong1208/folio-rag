@@ -26,6 +26,7 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import re
 import threading
 from typing import AsyncIterator, Callable, Dict, Optional, List
 
@@ -118,6 +119,38 @@ def _is_script_mismatch(chunk_text: str, candidate_prefix: str) -> bool:
     prefix_main = prefix_scripts - {"Latin"}
 
     return bool(chunk_main) and not prefix_main
+
+
+def estimate_llm_tokens(text: str) -> int:
+    """Cost estimate for the daily budget: one token per CJK / kana / hangul character,
+    one per four other characters. ``len(text) // 4`` undercounted Chinese ~3x."""
+    wide = sum(
+        1 for ch in text or ""
+        if "\u3040" <= ch <= "\u30ff" or "\u3400" <= ch <= "\u9fff"
+        or "\uac00" <= ch <= "\ud7af" or "\uf900" <= ch <= "\ufaff"
+    )
+    return wide + (len(text or "") - wide + 3) // 4
+
+
+_PREFIX_SENTENCE_END = re.compile(r"[。！？；]|[.!?](?=\s|$)")
+_PREFIX_SOFT_BREAK = re.compile(r"[，、：,;:]|\s")
+
+
+def trim_prefix(text: str, limit: int) -> str:
+    """Cut ``text`` to at most ``limit`` characters at the last sentence end, else at
+    the last clause / word break, else hard. A break in the first 40% is ignored (it
+    would throw most of the prefix away)."""
+    if len(text) <= limit:
+        return text
+    floor = int(limit * 0.4)
+    head = text[:limit + 1]  # a terminator right at the limit still counts
+    ends = [m.end() for m in _PREFIX_SENTENCE_END.finditer(head) if floor <= m.end() <= limit]
+    if ends:
+        return text[:ends[-1]].strip()
+    breaks = [m.start() for m in _PREFIX_SOFT_BREAK.finditer(head) if floor <= m.start() <= limit]
+    if breaks:
+        return text[:breaks[-1]].rstrip(" ，、：,;:")
+    return text[:limit]
 
 
 # Process-wide cap on in-flight prefix requests. The per-call semaphore only bounds
@@ -274,11 +307,11 @@ class ContextGenerator:
         return msg.content
 
     def _admit_tokens(self, prompt: str) -> bool:
-        """Charge an estimated cost (prompt chars / 4 + max_tokens) to today's prefix budget."""
+        """Charge an estimated cost (CJK-aware prompt estimate + max_tokens) to today's prefix budget."""
         limit = getattr(self, "_max_tokens_per_day", 0)
         if not limit:
             return True
-        estimate = len(prompt) // 4 + self._max_tokens
+        estimate = estimate_llm_tokens(prompt) + self._max_tokens
         if self._budget.try_consume("prefix_tokens", estimate, limit):
             return True
         if not getattr(self, "_budget_warned", False):
@@ -302,9 +335,7 @@ class ContextGenerator:
         # chunk's hit rate on same-language queries.
         if not context or _is_script_mismatch(chunk_text, context):
             return None
-        if len(context) > self._max_context_length:
-            context = context[:self._max_context_length]
-        return context
+        return trim_prefix(context, self._max_context_length) or None
 
     async def _generate_one(
         self,

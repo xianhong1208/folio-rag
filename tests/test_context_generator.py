@@ -462,3 +462,62 @@ def test_from_config_reads_global_cap():
     assert ContextGenerator.from_config(cfg)._max_concurrent_global == 7
     cfg.contextual_retrieval = SimpleNamespace(enabled=True, max_context_length=100)
     assert ContextGenerator.from_config(cfg)._max_concurrent_global == 16
+
+
+# Prefix trimming and the CJK-aware budget estimate (L3 / L4)
+
+def test_trim_prefix_ends_at_last_sentence_within_limit():
+    from src.domain.rag.context_generator import trim_prefix
+    text = "本段說明差旅費之核銷流程。另說明住宿費每日上限與超額部分之處理方式，以及膳雜費計算。"
+    out = trim_prefix(text, 30)
+    assert out == "本段說明差旅費之核銷流程。"
+    en = "This section covers travel claims. It also lists the nightly hotel cap and meals."
+    assert trim_prefix(en, 60) == "This section covers travel claims."
+
+
+def test_trim_prefix_falls_back_to_clause_or_word_break():
+    from src.domain.rag.context_generator import trim_prefix
+    text = "本段說明差旅費之核銷流程，另說明住宿費每日上限與超額部分之處理方式"
+    assert trim_prefix(text, 20) == "本段說明差旅費之核銷流程"
+    en = "Travel claim rules for domestic and overseas trips including hotel caps"
+    out = trim_prefix(en, 40)
+    assert len(out) <= 40 and en.startswith(out) and not out.endswith(" ")
+    assert en[len(out)] == " "  # cut at a word break
+
+
+def test_trim_prefix_short_text_and_hard_cut():
+    from src.domain.rag.context_generator import trim_prefix
+    assert trim_prefix("short.", 150) == "short."
+    assert trim_prefix("A" * 20, 5) == "AAAAA"
+    # a sentence end in the first 40% is not used
+    assert trim_prefix("Hi. " + "x" * 50, 20) == "Hi. " + "x" * 16
+
+
+async def test_generate_one_trims_at_sentence_end(mocker: MockerFixture):
+    gen = _make_generator(max_context_length=30)
+    mocker.patch.object(gen, "_call_llm_sync",
+                        return_value="本段說明差旅費之核銷流程。另說明住宿費每日上限與超額部分之處理方式。")
+    result = await gen._generate_one("住宿費上限。", "doc", "f.docx", client=None,
+                                     semaphore=asyncio.Semaphore(1))
+    assert result == "本段說明差旅費之核銷流程。"
+
+
+def test_estimate_llm_tokens_counts_cjk_per_char():
+    from src.domain.rag.context_generator import estimate_llm_tokens
+    assert estimate_llm_tokens("一二三四五六七八") == 8   # len // 4 would say 2
+    assert estimate_llm_tokens("abcdefgh") == 2
+    assert estimate_llm_tokens("中文abcd") == 3
+    assert estimate_llm_tokens("") == 0
+
+
+async def test_daily_budget_charges_cjk_prompts_fully(mocker: MockerFixture):
+    from src.domain.rag.context_generator import estimate_llm_tokens
+    from src.domain.rag.usage_budget import DailyBudget
+    budget = DailyBudget()
+    gen = _make_generator(max_tokens=0, max_tokens_per_day=10**9, budget=budget)
+    call = mocker.patch.object(gen, "_call_llm_sync", return_value="本段說明")
+    chunk = "住宿費每日以新臺幣二千元為上限。" * 20
+    await gen._generate_one(chunk, "doc", "f.docx", client=None, semaphore=asyncio.Semaphore(1))
+    prompt = call.call_args[0][0]
+    assert budget.used("prefix_tokens") == estimate_llm_tokens(prompt)
+    assert budget.used("prefix_tokens") > len(prompt) // 4 + len(chunk) // 2
