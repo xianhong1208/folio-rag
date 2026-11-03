@@ -411,3 +411,54 @@ def test_from_config_passes_cost_guards():
     )
     gen = ContextGenerator.from_config(cfg)
     assert gen._max_calls_per_file == 7 and gen._max_tokens_per_day == 9000
+
+
+# Process-wide LLM concurrency (rag.contextual_retrieval.max_concurrent_global)
+
+async def test_global_cap_bounds_concurrent_files(mocker: MockerFixture):
+    """Two files indexed at once, 5 per file allowed, but only 2 requests in flight overall"""
+    import threading
+    import time
+
+    lock = threading.Lock()
+    state = {"now": 0, "peak": 0}
+
+    def _slow_call(prompt, client):
+        with lock:
+            state["now"] += 1
+            state["peak"] = max(state["peak"], state["now"])
+        time.sleep(0.03)
+        with lock:
+            state["now"] -= 1
+        return "CTX"
+
+    mocker.patch.object(ContextGenerator, "_create_sync_client", return_value=None)
+    gens = []
+    for _ in range(2):
+        g = _make_generator(max_concurrent=5, max_concurrent_global=2)
+        mocker.patch.object(g, "_call_llm_sync", side_effect=_slow_call)
+        gens.append(g)
+    results = await asyncio.gather(*(g.generate_prefixes(["a", "b", "c", "d"], "doc", "f.txt")
+                                     for g in gens))
+    assert results == [["CTX"] * 4, ["CTX"] * 4]
+    assert state["peak"] == 2
+
+
+def test_global_semaphore_is_shared_and_replaced_on_change():
+    from src.domain.rag import context_generator as cg
+
+    a = cg._global_semaphore(3)
+    assert cg._global_semaphore(3) is a
+    b = cg._global_semaphore(4)
+    assert b is not a and cg._global_semaphore(4) is b
+
+
+def test_from_config_reads_global_cap():
+    cfg = SimpleNamespace(
+        contextual_retrieval=SimpleNamespace(enabled=True, max_context_length=100,
+                                             max_concurrent_global=7),
+        llm=SimpleNamespace(azure_deployment=None, model="m"),
+    )
+    assert ContextGenerator.from_config(cfg)._max_concurrent_global == 7
+    cfg.contextual_retrieval = SimpleNamespace(enabled=True, max_context_length=100)
+    assert ContextGenerator.from_config(cfg)._max_concurrent_global == 16
