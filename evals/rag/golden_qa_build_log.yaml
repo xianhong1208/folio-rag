@@ -1,0 +1,304 @@
+# Items dropped while building golden_qa.yaml (seed 42)
+kept:
+  zh_factual: 30
+  en_factual: 25
+  xling_zh2en: 20
+  xling_en2zh: 20
+  keyword: 25
+  paraphrase: 25
+  table: 20
+  multihop: 20
+  unanswerable: 20
+dropped_by_reason:
+  zh_factual:
+    span not found verbatim: 1
+  en_factual:
+    span not found verbatim: 8
+    question refers to the source: 1
+  xling_zh2en:
+    span not found verbatim: 5
+    question language is not zh: 1
+  xling_en2zh:
+    question language is not en: 1
+    span not found verbatim: 3
+  keyword:
+    keyword query is not 2-4 terms: 6
+    span not found verbatim: 4
+  paraphrase:
+    span not found verbatim: 5
+  table:
+    span not found verbatim: 3
+  multihop:
+    span not found verbatim: 15
+    generator found no natural multi-hop question: 10
+    verifier: 1
+  unanswerable:
+    answerable: 3
+    verifier returned no verdict: 2
+dropped:
+- type: zh_factual
+  source: tw-personal-data-protection-act-enforcement-rules.md#022
+  reason: 'span not found verbatim: 其拒絶簽名者，應記明其事由。'
+  question: 在《個人資料保護法施行細則》 第30 條裡，若被檢查者在現場作成的紀錄上拒絕簽名，要如何處置？
+- type: en_factual
+  source: en-aster-k2-kettle-manual.md#010
+  reason: 'span not found verbatim: Place the power base on a dry, flat, heat‑resistant surface '
+  question: How far must the Aster K2 Smart Kettle’s power base be positioned from the wall?
+- type: en_factual
+  source: us-ready-build-a-kit.md#005
+  reason: 'span not found verbatim: "Your work kit should include food, water and other necessit'
+  question: Which storage location’s emergency kit should include items stored in a "grab and go" case?
+- type: en_factual
+  source: en-harborlight-remote-work-policy.md#004
+  reason: 'span not found verbatim: On‑call engineers receive an on‑call allowance of NT$1,500 p'
+  question: What is the weekly on‑call allowance for engineers according to Harborlight Technologies' Remote and Hybrid Work Policy?
+- type: en_factual
+  source: en-harborlight-2026-price-list.pdf#020
+  reason: 'span not found verbatim: opened products with no defect may be returned within 7 days'
+  question: What restocking fee applies if I return an opened product without any defects?
+- type: en_factual
+  source: us-ready-earthquakes.md#001
+  reason: question refers to the source
+  question: What kind of insurance does the passage recommend getting since regular homeowners' coverage doesn’t include quake damage?
+- type: en_factual
+  source: us-cisa-strong-passwords.md#002
+  reason: 'span not found verbatim: "A strong password follows ALL THREE of these tips."'
+  question: According to the "Use Strong Passwords" guidelines, how many tips must a strong password follow?
+- type: en_factual
+  source: us-ready-earthquakes.md#006
+  reason: 'span not found verbatim: "**LOCK** your wheels (if applicable)."'
+  question: What actions does the Earthquake guide recommend for someone using a walker or wheelchair?
+- type: en_factual
+  source: us-constitution.md#003
+  reason: 'span not found verbatim: New‑York six'
+  question: How many representatives was New York allocated before the first Census under Section 2?
+- type: en_factual
+  source: us-cisa-strong-passwords.md#008
+  reason: 'span not found verbatim: don’t forget to enable MFA'
+  question: According to the Harborlight Technologies "Use Strong Passwords" guidance, what additional security measure should users enable after using a password manager?
+- type: xling_zh2en
+  source: us-ready-build-a-kit.md#000
+  reason: 'span not found verbatim: a disaster supplies kit is a collection of basic items'
+  question: 在「緊急備用套件」的說明裡，提到需要準備什麼基礎用品？
+- type: xling_zh2en
+  source: us-bill-of-rights.md#017
+  reason: 'span not found verbatim: "are reserved to the States respectively, or to the people."'
+  question: 第十修正案說明：未交付美國政府、亦未被禁制給各州的權力最終保留給哪兩個對象？
+- type: xling_zh2en
+  source: us-ready-earthquakes.md#005
+  reason: 'span not found verbatim: "**If you use a cane:** **DROP**, **COVER**, and **HOLD ON**'
+  question: 如果使用拐杖，在地震時應該怎麼做？
+- type: xling_zh2en
+  source: us-ready-build-a-kit.md#002
+  reason: 'span not found verbatim: Organize and protect your prescriptions, over-the‑counter dr'
+  question: 在「Build A Kit」的緊急備災物資清單裡，應該如何準備與處方藥有關的項目？
+- type: xling_zh2en
+  source: en-harborlight-remote-work-policy.md#005
+  reason: question language is not zh
+  question: 在《Harborlight Technologies—Remote and Hybrid Work Policy》中，遠距離員工每月可獲得多少網路津貼？
+- type: xling_zh2en
+  source: us-bill-of-rights.md#015
+  reason: 'span not found verbatim: Excessive bail shall not be required, nor excessive fines im'
+  question: 《美國憲法》之第八修正案禁止哪些項目？
+- type: xling_en2zh
+  source: tw-labor-standards-act-enforcement-rules.md#041
+  reason: question language is not en
+  question: In Article 50 of the 勞動基準法施行細則, how does it define a 公務員兼具勞工身分者?
+- type: xling_en2zh
+  source: tw-rules-of-leave-taking-for-workers.md#006
+  reason: 'span not found verbatim: 應於事前親自以口頭或書面敘說請假理由及日數。'
+  question: According to Article 10 of the Labour Leave Rules, what procedure must workers follow to request leave?
+- type: xling_en2zh
+  source: tw-labor-standards-act.md#069
+  reason: 'span not found verbatim: 主管機關應公布其事業單位或事業主之名稱、負責人姓名、處分期日、違反條文及罰鍊金額'
+  question: According to Article 80‑1 of Taiwan's Labor Standards Act, what information must the supervising authority publicly disclose when imposing a fine?
+- type: xling_en2zh
+  source: tw-labor-standards-act-enforcement-rules.md#019
+  reason: 'span not found verbatim: 一、從事排水機之監視工作。 二、從事壓風機或冷却設備之監視工作。 三、從事安全警報装置之监视工作。 四、从事生产或营建施'
+  question: In Article 22 of the Labour Standards Act Implementation Rules (勞動基準法施行細則), which types of work are specified as “monitoring work”?
+- type: keyword
+  source: tw-labor-standards-act-enforcement-rules.md#043
+  reason: keyword query is not 2-4 terms
+  question: 第 50-2 條 書面 約定 核備
+- type: keyword
+  source: zh-meeting-2026-02-aster-k2-launch.md#008
+  reason: 'span not found verbatim: *會議於 15:30 正式結束.*'
+  question: 林雅婷 上市 日期
+- type: keyword
+  source: tw-gender-equality-in-employment-act.md#018
+  reason: keyword query is not 2-4 terms
+  question: 30 人 雇主 子女 撫育
+- type: keyword
+  source: us-constitution.md#021
+  reason: 'span not found verbatim: No State shall, without the Consent of Congress, lay any Dut'
+  question: state duty tonnage consent
+- type: keyword
+  source: us-constitution.md#033
+  reason: 'span not found verbatim: In all Cases affecting Ambassadors, other public Ministers a'
+  question: original jurisdiction ambassadors
+- type: keyword
+  source: tw-labor-standards-act.md#052
+  reason: keyword query is not 2-4 terms
+  question: 職業傷害 死亡 補償 四十 個 月
+- type: keyword
+  source: tw-personal-data-protection-act.md#047
+  reason: keyword query is not 2-4 terms
+  question: 個人 資料 檔案 安全 維護 計畫
+- type: keyword
+  source: us-constitution.md#009
+  reason: 'span not found verbatim: each House shall be the Judge of the Elections, Returns and '
+  question: House quorum majority
+- type: keyword
+  source: tw-personal-data-protection-act.md#049
+  reason: keyword query is not 2-4 terms
+  question: 個資 法 行政 訴訟 程序
+- type: keyword
+  source: us-constitution.md#027
+  reason: keyword query is not 2-4 terms
+  question: President commander in chief pardons
+- type: paraphrase
+  source: tw-gender-equality-in-employment-act.md#001
+  reason: 'span not found verbatim: 本法於公務人員、教育人員及軍職人員，亦適用之。但第三十二條之一、第三十二條之二、第三三​條、第三四條、第三八條及第三八條'
+  question: 根據《性別平等工作法》，哪幾種政府或軍隊相關的身分不用受到第32條之一到第38條（一）那几条规定的约束？
+- type: paraphrase
+  source: tw-labor-standards-act-enforcement-rules.md#001
+  reason: 'span not found verbatim: 本法第三條第一項第八款所稱中央主管機關指定之事業…係指中央主管機關依中華民國行業標準分類之規定指定者'
+  question: 根據《勞動基準法》，是哪個政府單位會按照產業類別的劃分挑選特定企業或只挑選某些行業的一部份來適用此法？
+- type: paraphrase
+  source: us-bill-of-rights.md#000
+  reason: 'span not found verbatim: Ten of the proposed 12 amendments were ratified by three‑fou'
+  question: When did most of the originally suggested changes become part of the Constitution?
+- type: paraphrase
+  source: tw-gender-equality-in-employment-act.md#017
+  reason: 'span not found verbatim: 子女未滿二歲須受僱者親自哺（集）乳者，除規定之休息時間外，雇主應每日另給哺（集）乳時間六十​​分鍾。'
+  question: 如果員工的小孩還在兩歲以下且必須由本人自行餵母乳，公司需要如何安排額外的餵奶時間？
+- type: paraphrase
+  source: tw-personal-data-protection-act-enforcement-rules.md#014
+  reason: 'span not found verbatim: 應為適當之野明。'
+  question: 如果我要跟政府部門或私人機構申請把我的個人資訊改正或加上缺少的內容，我需要先做到什麼事情？
+- type: table
+  source: en-harborlight-incident-response-runbook.md#003
+  reason: 'span not found verbatim: "SEV-2"'
+  question: What is the response target for severity level SEV-2?
+- type: table
+  source: en-harborlight-2026-price-list.pdf#015
+  reason: 'span not found verbatim: "AirPure 5 fan motor replacement"'
+  question: What is the fee (NT$) for "AirPure 5 fan motor replacement" in the 2026 Product Price List?
+- type: table
+  source: en-aster-k2-kettle-manual.md#017
+  reason: 'span not found verbatim: Wi‑Fi connection lost'
+  question: In the Aster K2 Smart Kettle error codes table, what is the meaning of code E4?
+- type: multihop
+  source: us-constitution.md#011 + us-bill-of-rights.md
+  reason: span not found verbatim
+  question: According to the Constitution and the 1789 joint resolution, what event must occur before a newly enacted law altering Congressional salaries can become effective?
+- type: multihop
+  source: tw-gender-equality-in-employment-act.md#021 + tw-rules-of-leave-taking-for-workers.md
+  reason: generator found no natural multi-hop question
+- type: multihop
+  source: zh-meeting-2026-02-aster-k2-launch.md#009 + en-harborlight-2026-price-list.pdf
+  reason: span not found verbatim
+  question: 如果公司想一次性採購一台 Aster K2 智慧快煮壺並附帶官方提供的蓋子密封件，總共需要付多少新臺幣？
+- type: multihop
+  source: en-aster-k2-kettle-manual.md#002 + en-harborlight-2026-price-list.pdf
+  reason: span not found verbatim
+  question: What percent of the Aster K2 Smart Kettle’s list price would you spend if you bought both its mesh limescale filter and its lid seal?
+- type: multihop
+  source: zh-meeting-2026-05-hr-policy-review.md#001 + en-harborlight-remote-work-policy.md
+  reason: generator found no natural multi-hop question
+- type: multihop
+  source: us-ready-earthquakes.md#004 + us-ready-build-a-kit.md
+  reason: generator found no natural multi-hop question
+- type: multihop
+  source: zh-meeting-2026-02-aster-k2-launch.md#009 + en-aster-k2-kettle-manual.md
+  reason: span not found verbatim
+  question: 從早鳥活動頁面的完成期限到韌體 1.0.8 OTA 推播的部署期限，相差幾天？
+- type: multihop
+  source: us-constitution.md#031 + us-bill-of-rights.md
+  reason: span not found verbatim
+  question: Can a judge’s congressional‑approved salary reduction ever become effective immediately after an election, given how the Constitution protects judicial compensation versus how the Bill of Rights limits legislative pay adjustments?
+- type: multihop
+  source: zh-meeting-2026-05-hr-policy-review.md#002 + zh-harborlight-2026-budget-and-travel.pdf
+  reason: generator found no natural multi-hop question
+- type: multihop
+  source: tw-gender-equality-in-employment-act.md#017 + tw-rules-of-leave-taking-for-workers.md
+  reason: span not found verbatim
+  question: 若受僱者當天的延長工作時間已達兩小時，根據《性別平等工作法》可享有多少總共的哺(集)乳時間？此額度是否可以用『以小時為請假單位』的事假形式取得？
+- type: multihop
+  source: zh-meeting-2026-08-security-incident-review.md#002 + en-harborlight-incident-response-runbook.md
+  reason: span not found verbatim
+  question: 根據 INC‑2026‑031 會議記錄中提及的「8 月 13 日」完成 MFA 強制啟動，以及文件中說明對 SEV‑1 事故必須保留日誌 3 年，那麼這些日誌最晚需要保留到哪一天？
+- type: multihop
+  source: zh-meeting-2026-02-aster-k2-launch.md#003 + en-harborlight-2026-price-list.pdf
+  reason: span not found verbatim
+  question: 如果實體門市要等到五月才全面展開，而消費者在五月於台灣本島以官網下單購入一台 Aster K2 智慧快煮壺並使用標準配送，他需要支付多少新台幣？
+- type: multihop
+  source: tw-labor-standards-act.md#004 + tw-rules-of-leave-taking-for-workers.md
+  reason: span not found verbatim
+  question: 若雇主未盡第 8 條所述的「預防職業上災害」義務，使勞工因職業災害受傷，根據《勞工請假規則》可享有哪些帶薪假？
+- type: multihop
+  source: en-aster-k2-kettle-manual.md#000 + en-harborlight-2026-price-list.pdf
+  reason: generator found no natural multi-hop question
+- type: multihop
+  source: tw-personal-data-protection-act.md#042 + tw-personal-data-protection-act-enforcement-rules.md
+  reason: generator found no natural multi-hop question
+- type: multihop
+  source: zh-meeting-2026-05-hr-policy-review.md#002 + en-harborlight-remote-work-policy.md
+  reason: generator found no natural multi-hop question
+- type: multihop
+  source: us-constitution.md#027 + us-bill-of-rights.md
+  reason: span not found verbatim
+  question: Does the presidential power to grant pardons extend to individuals whose convictions involve violations of the Fifth Amendment's protection against deprivation of life, liberty, or property without due process?
+- type: multihop
+  source: zh-meeting-2026-08-security-incident-review.md#005 + us-cisa-strong-passwords.md
+  reason: generator found no natural multi-hop question
+- type: multihop
+  source: zh-harborlight-2026-budget-and-travel.pdf#008 + zh-harborlight-2026-budget-and-travel.pdf
+  reason: span not found verbatim
+  question: 如果將全公司 2026 年核定預算相對於 2025 年實際支出的增加金額全部投入，用來補貼普通職員在國內出差期間的每日膳雜費（600 元），這筆錢最多能夠支援多少名普通職員完成一年（365 天）的出差餐飲費用？
+- type: multihop
+  source: tw-personal-data-protection-act.md#009 + tw-personal-data-protection-act-enforcement-rules.md
+  reason: span not found verbatim
+  question: 如果透露個人資料會妨礙公務機關執行《個人資料保護法》第十條所說的『法定職務』，根據第10條的例外規定，機關是否可以拒絕回答當事人的查詢要求？
+- type: multihop
+  source: en-harborlight-incident-response-runbook.md#009 + zh-harborlight-2026-budget-and-travel.pdf
+  reason: generator found no natural multi-hop question
+- type: multihop
+  source: zh-meeting-2026-05-hr-policy-review.md#005 + en-harborlight-remote-work-policy.md
+  reason: span not found verbatim
+  question: 根據2026年的人資部預算（705萬元）和已發放給182位同仁每人6,000元的居家設備補助，以及《Remote and Hybrid Work Policy》規定的混合勤務員工一次性6,000元家庭辦公補助，若全部這182位同仁都再領取一次性的家庭辦公補助，剩餘的預算還有多少？
+- type: multihop
+  source: en-aster-k2-kettle-manual.md#011 + en-aster-k2-kettle-manual.md
+  reason: span not found verbatim
+  question: What is the shortest possible elapsed time from initiating Bluetooth pairing in the Harborlight Home app to having 1 litre of water boiled (starting at 20 °C) using the faster European model?
+- type: multihop
+  source: us-ready-earthquakes.md#006 + us-ready-build-a-kit.md
+  reason: generator found no natural multi-hop question
+- type: multihop
+  source: us-constitution.md#042 + us-bill-of-rights.md
+  reason: 'verifier: The provided excerpts allow counting the Delaware names (four) and identifying the minimum dispute value ($20), yielding $80, which contradicts the expected $100 answer, indicating the evidence is ins'
+  question: What total amount do you get if you multiply the number of people named under Delaware in the Constitution transcript by the minimum dispute value cited in the Bill of Rights?
+- type: multihop
+  source: zh-meeting-2026-05-hr-policy-review.md#006 + zh-harborlight-2026-budget-and-travel.pdf
+  reason: span not found verbatim
+  question: 如果把人資部 2026 年核定的 7,050 千元預算全部用于已領取居家設備補助的 182 名同事，各人能得到多少新臺幣的補助（金額四捨五入到最接近的元）？
+- type: unanswerable
+  source: '-'
+  reason: 'answerable: Passage [8] cites Article 21 of Taiwan''s Personal Data Protection Act detailing conditions for cross‑border data transfers.'
+  question: Which section of the Personal Data Protection Act addresses cross-border data transfers?
+- type: unanswerable
+  source: '-'
+  reason: 'answerable: Tw Gender Equality Act §16 states employees with ≥6 months tenure may apply for parental leave.'
+  question: Can employees take parental leave after six months of service according to Taiwan labor regulations?
+- type: unanswerable
+  source: '-'
+  reason: 'answerable: Article 21 of Taiwan''s Personal Data Protection Act explicitly allows authorities to restrict international transfers of personal data under certain conditions,'
+  question: 個人資料保護法中，有沒有明確限制跨境傳輸個資的條款？若有，請說明。
+- type: unanswerable
+  source: '-'
+  reason: verifier returned no verdict
+  question: 美國憲法第一修正案中的「言論自由」範圍如何被最高法院解釋？
+- type: unanswerable
+  source: '-'
+  reason: verifier returned no verdict
+  question: Harborlight Technologies 是否曾因資訊外洩而受到行政罰鍰？若有，罰額及原因為何？
