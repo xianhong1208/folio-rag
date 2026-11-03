@@ -238,7 +238,16 @@ export default function SettingsPage() {
           <span>Read-only. Your token can view these settings but not change them — changing settings (and testing connections) needs a token with the <code>rag:admin</code> scope.</span>
         </div>
       )}
-      {tabKey === 'models' && <p className="lede">Changes collect in the bar at the bottom and take effect <strong>when you apply them</strong>; they persist across restarts. <strong>Overridden</strong> marks a value that differs from config.yaml. API keys are best given as <code>{'${ENV_VAR}'}</code> references — the server stores the reference, never the key (required under the cloud profile).</p>}
+      {tabKey === 'models' && (
+        <dl className="set-notes" aria-label="How settings work">
+          <dt>apply</dt>
+          <dd>Edits collect in the bar at the bottom and take effect when you <b>Apply</b> them. They survive restarts.</dd>
+          <dt>override</dt>
+          <dd><span className="ovr">Overridden</span> marks a value that differs from <code>config.yaml</code>.</dd>
+          <dt>keys</dt>
+          <dd>Give API keys as <code>{'${ENV_VAR}'}</code>: the server stores the reference, never the key. Required under the cloud profile.</dd>
+        </dl>
+      )}
       {tabKey === 'models' && <RolesPanel view={view} readOnly={readOnly} probes={roleProbe} onProbe={runProbe} />}
       {tabKey === 'retrieval' && (
         <div className="preset-bar">
