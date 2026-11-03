@@ -145,3 +145,9 @@ def test_fit_retrieval_text_shortens_crumb_then_prefix_never_text():
     assert c == "" and len(p) < 30 and len(compose_retrieval_text(p, c, text)) <= 80
     # text alone over the window: neither is kept, the text is not cut
     assert fit_retrieval_text(prefix, crumb, text, _chars, 50) == ("", "")
+
+
+def test_files_from_pipeline_2_are_flagged_for_reindex():
+    import src.domain.rag.chunk_identity as ci
+    assert ci.CHUNK_PIPELINE_VERSION == "3"
+    assert ci.reindex_recommended("indexed", "2") is True
