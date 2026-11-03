@@ -3,9 +3,9 @@
 
 from .dependencies import (
     authenticate_request,
-    authenticate_request_remote,
-    get_remote_verifier_instance,
-    set_remote_verifier,
+    authenticate_bearer_token,
+    get_token_verifier,
+    set_token_verifier,
 )
 from .mcp_gate_auth import (
     AuthSettings,
@@ -19,9 +19,9 @@ from .init_auth import initialize_auth_system
 __all__ = [
     "TokenVerifyResult",
     "authenticate_request",
-    "authenticate_request_remote",
-    "get_remote_verifier_instance",
-    "set_remote_verifier",
+    "authenticate_bearer_token",
+    "get_token_verifier",
+    "set_token_verifier",
     "AuthSettings",
     "McpGateTokenVerifier",
     "build_auth_provider",

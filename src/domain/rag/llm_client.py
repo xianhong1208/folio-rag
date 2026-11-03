@@ -27,7 +27,7 @@ DEFAULT_TIMEOUT = 120.0
 DEFAULT_MAX_RETRIES = 2
 
 
-def _tuning(cfg) -> dict:
+def _timeout_and_retries(cfg) -> dict:
     timeout = getattr(cfg, "timeout", None) or DEFAULT_TIMEOUT
     retries = getattr(cfg, "max_retries", None)
     return {"timeout": float(timeout),
@@ -55,19 +55,19 @@ def create_openai_client(cfg: Any):
             api_key=api_key,
             api_version=getattr(cfg, "api_version", None) or "2024-12-01-preview",
             azure_endpoint=endpoint,
-            **_tuning(cfg),
+            **_timeout_and_retries(cfg),
         )
 
     if provider == "openai":
         api_key = api_key or os.environ.get("OPENAI_API_KEY")
         if not api_key:
             raise ValueError("OpenAI api_key is required (set api_key: \"${OPENAI_API_KEY}\")")
-        return OpenAI(api_key=api_key, base_url=base_url, **_tuning(cfg))
+        return OpenAI(api_key=api_key, base_url=base_url, **_timeout_and_retries(cfg))
 
     if provider in ("openai-compatible", "vllm", "ollama"):
         if not base_url:
             raise ValueError(f"{provider} requires base_url (e.g., http://localhost:8000/v1)")
-        return OpenAI(api_key=api_key or "not-needed", base_url=base_url, **_tuning(cfg))
+        return OpenAI(api_key=api_key or "not-needed", base_url=base_url, **_timeout_and_retries(cfg))
 
     raise ValueError(
         f"Unsupported LLM provider: '{provider}'. Supported: {', '.join(SUPPORTED_PROVIDERS)}"

@@ -17,23 +17,23 @@ from .mcp_gate_auth import McpGateTokenVerifier
 logger = get_api_logger()
 security = HTTPBearer()
 
-_remote_verifier: Optional[McpGateTokenVerifier] = None
+_token_verifier: Optional[McpGateTokenVerifier] = None
 
 
-def set_remote_verifier(verifier: McpGateTokenVerifier) -> None:
-    global _remote_verifier
-    _remote_verifier = verifier
+def set_token_verifier(verifier: McpGateTokenVerifier) -> None:
+    global _token_verifier
+    _token_verifier = verifier
 
 
-def get_remote_verifier_instance() -> Optional[McpGateTokenVerifier]:
-    return _remote_verifier
+def get_token_verifier() -> Optional[McpGateTokenVerifier]:
+    return _token_verifier
 
 
-async def authenticate_request_remote(request: Request) -> dict:
+async def authenticate_bearer_token(request: Request) -> dict:
     """Authenticate via remote Token Server (supports JWT and Opaque Token)"""
-    global _remote_verifier
+    global _token_verifier
 
-    if _remote_verifier is None:
+    if _token_verifier is None:
         logger.error("Remote verifier not initialized")
         raise HTTPException(
             status_code=500,
@@ -60,7 +60,7 @@ async def authenticate_request_remote(request: Request) -> dict:
             headers={"WWW-Authenticate": "Bearer"},
         )
 
-    result = await _remote_verifier.verify(token)
+    result = await _token_verifier.verify(token)
 
     if not result.valid:
         error_msg = result.error or "invalid_token"
@@ -81,4 +81,4 @@ async def authenticate_request_remote(request: Request) -> dict:
 
 async def authenticate_request(request: Request, credentials=Depends(security)):
     """Unified authentication dependency for FastAPI routers"""
-    return await authenticate_request_remote(request)
+    return await authenticate_bearer_token(request)

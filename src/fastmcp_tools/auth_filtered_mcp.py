@@ -30,7 +30,7 @@ from fastmcp.server.dependencies import get_http_request
 
 from db.folderdb import FolderDB
 from src.log import get_api_logger, mask_token
-from src.auth.dependencies import get_remote_verifier_instance
+from src.auth.dependencies import get_token_verifier
 from src.auth.owner_key import owner_key_from_bearer
 from src.fastmcp_tools.dynamic_tool_manager import DynamicToolManager, configured_tool_prefix
 
@@ -115,7 +115,7 @@ class AuthFilteredFastMCP(FastMCP):
         Returns:
             The filtered tool list with descriptions injected.
         """
-        _remote_verifier = get_remote_verifier_instance()
+        token_verifier = get_token_verifier()
 
         try:
             request = get_http_request()
@@ -136,13 +136,13 @@ class AuthFilteredFastMCP(FastMCP):
             if cached is not None:
                 return cached
 
-            if _remote_verifier is None:
+            if token_verifier is None:
                 api_logger.warning(
                     "Remote verifier not initialized, hiding all per-folder tools"
                 )
                 return [t for t in all_tools if not self._is_dynamic_folder_tool(t.name)]
 
-            result = await _remote_verifier.verify(token)
+            result = await token_verifier.verify(token)
             if not result.valid:
                 api_logger.warning(f"list_tools invalid token: {mask_token(token)}")
                 return [t for t in all_tools if not self._is_dynamic_folder_tool(t.name)]

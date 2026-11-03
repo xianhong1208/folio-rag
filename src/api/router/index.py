@@ -29,7 +29,7 @@ def _logo_data_uri() -> str:
         return ""
 
 
-def _inline(text: str) -> str:
+def _render_inline_markdown(text: str) -> str:
     """Apply inline Markdown syntax (code, bold, links).
 
     Args:
@@ -91,12 +91,12 @@ def _try_consume_table(lines: list[str], i: int) -> tuple[str | None, int]:
         j += 1
 
     parts = ["<table>", "<thead><tr>"]
-    parts.extend(f"<th>{_inline(html.escape(h))}</th>" for h in headers)
+    parts.extend(f"<th>{_render_inline_markdown(html.escape(h))}</th>" for h in headers)
     parts.append("</tr></thead>")
     parts.append("<tbody>")
     for row in rows:
         parts.append("<tr>")
-        parts.extend(f"<td>{_inline(html.escape(c))}</td>" for c in row)
+        parts.extend(f"<td>{_render_inline_markdown(html.escape(c))}</td>" for c in row)
         parts.append("</tr>")
     parts.append("</tbody></table>")
     return "\n".join(parts), j - i
@@ -121,7 +121,7 @@ def markdown_to_html(md: str) -> str:
         if para:
             text = " ".join(para).strip()
             if text:
-                out.append(f"<p>{_inline(text)}</p>")
+                out.append(f"<p>{_render_inline_markdown(text)}</p>")
             para.clear()
 
     def close_list():
@@ -168,7 +168,7 @@ def markdown_to_html(md: str) -> str:
         if m:
             flush_para(); close_list()
             level = len(m.group(1))
-            out.append(f"<h{level}>{_inline(html.escape(m.group(2)))}</h{level}>")
+            out.append(f"<h{level}>{_render_inline_markdown(html.escape(m.group(2)))}</h{level}>")
             i += 1
             continue
 
@@ -177,7 +177,7 @@ def markdown_to_html(md: str) -> str:
             flush_para()
             if list_type != "ul":
                 close_list(); out.append("<ul>"); list_type = "ul"
-            out.append(f"<li>{_inline(html.escape(m.group(1)))}</li>")
+            out.append(f"<li>{_render_inline_markdown(html.escape(m.group(1)))}</li>")
             i += 1
             continue
 
@@ -186,7 +186,7 @@ def markdown_to_html(md: str) -> str:
             flush_para()
             if list_type != "ol":
                 close_list(); out.append("<ol>"); list_type = "ol"
-            out.append(f"<li>{_inline(html.escape(m.group(1)))}</li>")
+            out.append(f"<li>{_render_inline_markdown(html.escape(m.group(1)))}</li>")
             i += 1
             continue
 

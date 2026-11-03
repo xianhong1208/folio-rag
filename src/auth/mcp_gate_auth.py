@@ -5,7 +5,7 @@ fetches its JWKS once and verifies every bearer token OFFLINE. Two consumers use
 module:
 
 - The REST API + MCP tool filter go through ``McpGateTokenVerifier`` (PyJWT-based),
-  registered via ``set_remote_verifier`` so the existing middleware / tool-filter keep
+  registered via ``set_token_verifier`` so the existing middleware / tool-filter keep
   working unchanged — they only rely on the ``TokenVerifyResult`` shape and the
   ``async verify(token)`` contract.
 - The FastMCP ``/mcp`` transport uses ``build_auth_provider`` (FastMCP's
