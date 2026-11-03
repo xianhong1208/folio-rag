@@ -117,3 +117,30 @@ class TestPipelineVersionAndWarning:
         )
         me = next(r for r in admin_stats.files_with_index_status(folder.id) if r["id"] == str(file_row.id))
         assert me["warning"] is None and me["reindex_recommended"] is False
+
+
+class TestSystemResources:
+    def test_vector_table_sizes_in_one_query(self, itest_db):
+        """Counts and sizes every data_* table (the per-table loop became one query)."""
+        from sqlalchemy import text
+        from db import admin_stats
+        from db.db import get_engine
+        names = ["data_990001_res-a", "data_990002_res-b"]
+        eng = get_engine()
+        before = admin_stats.system_resources()
+        with eng.begin() as c:
+            for n in names:
+                c.execute(text(f'CREATE TABLE "{n}" (id int primary key, t text)'))
+                c.execute(text(f'INSERT INTO "{n}" SELECT g, repeat(\'x\', 500) FROM generate_series(1, 200) g'))
+        try:
+            with eng.connect() as c:
+                expected = sum(c.execute(text("SELECT pg_total_relation_size(to_regclass(:t))"),
+                                         {"t": f'"{n}"'}).scalar() for n in names)
+            res = admin_stats.system_resources()
+            assert res["vector_tables"] == before["vector_tables"] + 2
+            assert res["vector_bytes"] == before["vector_bytes"] + expected
+            assert res["db_size_bytes"] > 0
+        finally:
+            with eng.begin() as c:
+                for n in names:
+                    c.execute(text(f'DROP TABLE IF EXISTS "{n}"'))
