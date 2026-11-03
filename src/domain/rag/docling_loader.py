@@ -744,8 +744,70 @@ def _log_pipeline_devices(converter) -> None:
 # whose first 2 lines are the header to repeat on splits.
 _MD_TABLE_SEPARATOR_RE = re.compile(r'^\s*\|?\s*:?-+:?\s*(\|\s*:?-+:?\s*)+\|?\s*$')
 
-# Sentence terminators (CJK + ASCII), used when a single line is too big and has no row structure.
-_SENTENCE_SPLIT_RE = re.compile(r'(?<=[.!?。!?])\s+')
+# Sentence ends. CJK terminators (。！？；) end a sentence on their own: Chinese and
+# Japanese put no space after them, so requiring whitespace (as the old pattern did)
+# left a whole Chinese paragraph as one "sentence" that fell through to the character
+# split and was cut mid-clause. Latin terminators need following whitespace, so
+# decimals ("3.5"), version numbers and URLs stay whole. Closing quotes/brackets stay
+# with the sentence they close; trailing whitespace stays with the sentence too, so
+# concatenating the pieces gives back the original text.
+_SENTENCE_END_RE = re.compile(
+    r'[。！？；]+[」』）】》〉”’"\')]*\s*'
+    r'|[.!?]+["”’\')\]]*\s+'
+)
+# Clause ends, for a single sentence that is still over budget: CJK commas / colons
+# (no space needed) and Latin ones followed by whitespace.
+_CLAUSE_END_RE = re.compile(r'[，、：]\s*|[,:;]\s+')
+
+
+def _split_keep_ends(text: str, pattern: "re.Pattern[str]") -> List[str]:
+    """Split ``text`` after every match of ``pattern``, keeping the separator (and
+    its trailing whitespace) on the left piece. ``"".join(result) == text``."""
+    out: List[str] = []
+    start = 0
+    for m in pattern.finditer(text):
+        if m.end() > start:
+            out.append(text[start:m.end()])
+            start = m.end()
+    if start < len(text):
+        out.append(text[start:])
+    return out
+
+
+def _pack_balanced(counts: List[int], max_tokens: int) -> List[List[int]]:
+    """Group consecutive units (token counts given) into pieces of at most
+    ``max_tokens``, as evenly sized as the unit boundaries allow.
+
+    Plain greedy packing fills every piece to the brim and leaves a runt at the end
+    (242 + 45 tokens); here each piece aims at ``remaining / pieces still needed`` and
+    a unit goes to the next piece when that lands closer to the target. A unit larger
+    than ``max_tokens`` gets a piece of its own (callers pre-split those).
+    """
+    groups: List[List[int]] = []
+    cur: List[int] = []
+    cur_tokens = 0
+    remaining = sum(counts)
+
+    def _target() -> float:
+        pieces = max(1, -(-remaining // max(max_tokens, 1)))  # ceil
+        return remaining / pieces
+
+    target = _target()
+    for i, c in enumerate(counts):
+        if cur:
+            over_budget = cur_tokens + c > max_tokens
+            overshoot = cur_tokens + c - target
+            undershoot = target - cur_tokens
+            if over_budget or (overshoot > 0 and overshoot > undershoot):
+                groups.append(cur)
+                remaining -= cur_tokens
+                target = _target()
+                cur, cur_tokens = [], 0
+        cur.append(i)
+        cur_tokens += c
+    if cur:
+        groups.append(cur)
+    return groups
 
 
 def _detect_table_header(lines: List[str]) -> Optional[str]:
@@ -858,36 +920,46 @@ def _split_by_lines(
 
 
 def _split_by_sentence(text: str, tokenizer, max_tokens: int) -> List[str]:
-    """Mid-tier split: break a single line by sentence terminators.
+    """Mid-tier split: break a single line at sentence ends, then pack the
+    sentences into balanced pieces of at most ``max_tokens``.
 
     Reached when a single newline-bounded line is itself > max_tokens —
-    typical for long paragraphs without internal structure.
+    typical for long paragraphs without internal structure. A sentence that is
+    still too big is cut at clause ends (，、： / ", "), and only a clause that is
+    still too big falls to the character split.
     """
-    sentences = _SENTENCE_SPLIT_RE.split(text)
+    units: List[str] = []
+    for sent in _split_keep_ends(text, _SENTENCE_END_RE):
+        if not sent.strip():
+            continue
+        if _count_tokens(tokenizer, sent.strip()) <= max_tokens:
+            units.append(sent)
+            continue
+        for clause in _split_keep_ends(sent, _CLAUSE_END_RE):
+            if not clause.strip():
+                continue
+            if _count_tokens(tokenizer, clause.strip()) <= max_tokens:
+                units.append(clause)
+            else:
+                units.extend(_split_by_chars(clause, tokenizer, max_tokens))
+
+    counts = [_count_tokens(tokenizer, u.strip()) for u in units]
     out: List[str] = []
-    buf: List[str] = []
-    buf_tokens = 0
 
-    for sent in sentences:
-        sent = sent.strip()
-        if not sent:
-            continue
-        sent_tokens = _count_tokens(tokenizer, sent)
-        # Single sentence still too big — fall to char-level split
-        if sent_tokens > max_tokens:
-            if buf:
-                out.append(" ".join(buf))
-                buf, buf_tokens = [], 0
-            out.extend(_split_by_chars(sent, tokenizer, max_tokens))
-            continue
-        if buf_tokens + sent_tokens > max_tokens:
-            out.append(" ".join(buf))
-            buf, buf_tokens = [], 0
-        buf.append(sent)
-        buf_tokens += sent_tokens
+    def _emit(group: List[int]) -> None:
+        piece = "".join(units[i] for i in group).strip()
+        # The token count of a concatenation can exceed the sum of its parts by a
+        # token or two (word-start markers); halve such a group instead of overflowing.
+        if len(group) > 1 and _count_tokens(tokenizer, piece) > max_tokens:
+            mid = len(group) // 2
+            _emit(group[:mid])
+            _emit(group[mid:])
+            return
+        if piece:
+            out.append(piece)
 
-    if buf:
-        out.append(" ".join(buf))
+    for group in _pack_balanced(counts, max_tokens):
+        _emit(group)
     return out
 
 

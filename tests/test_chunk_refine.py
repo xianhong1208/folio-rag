@@ -202,3 +202,100 @@ class TestLeafSplitterProvenance:
     def test_empty_text_record_filtered(self):
         leaves = self._split([{"text": "  ", "headings": ["H"], "page_no": 1}])
         assert leaves == []
+
+
+class TestSentenceSplit:
+    """H1: CJK sentence ends need no whitespace, and pieces are balanced."""
+
+    ZH = ("第一條員工出差應事先申請並經主管核准。未經核准者費用不予核銷！"
+          "住宿費每日以二千元為上限；超過部分自行負擔。膳雜費每日五百元？"
+          "當日往返者減半支給。出差報告應於返回後五日內提出。")
+
+    def test_cjk_paragraph_splits_at_sentence_ends(self):
+        from src.domain.rag.docling_loader import _split_by_sentence
+
+        pieces = _split_by_sentence(self.ZH, TOK, 40)
+        assert len(pieces) > 1
+        assert "".join(pieces) == self.ZH  # nothing lost, nothing duplicated
+        for p in pieces:
+            assert len(p) <= 40
+            assert p[-1] in "。！？；", p  # never cut mid-sentence
+
+    def test_cjk_paragraph_through_refine_is_not_char_cut(self):
+        recs = _refine_chunks_for_token_budget([self.ZH], TOK, 40)
+        assert len(recs) > 1
+        assert all(r["text"][-1] in "。！？；" for r in recs)
+        assert "".join(r["text"] for r in recs) == self.ZH
+
+    def test_latin_needs_whitespace_after_terminator(self):
+        from src.domain.rag.docling_loader import _SENTENCE_END_RE, _split_keep_ends
+
+        text = "Version 3.5 costs $2.50 today. Next sentence! Last?"
+        parts = _split_keep_ends(text, _SENTENCE_END_RE)
+        assert parts == ["Version 3.5 costs $2.50 today. ", "Next sentence! ", "Last?"]
+
+    def test_closing_quote_stays_with_sentence(self):
+        from src.domain.rag.docling_loader import _SENTENCE_END_RE, _split_keep_ends
+
+        parts = _split_keep_ends("他說：「好。」然後離開。", _SENTENCE_END_RE)
+        assert parts == ["他說：「好。」", "然後離開。"]
+
+    def test_last_piece_is_not_a_runt(self):
+        from src.domain.rag.docling_loader import _split_by_sentence
+
+        # 12 sentences x 20 chars = 240 tokens, budget 200: greedy gives 200 + 40.
+        text = "".join(f"Sentence number {i:02d}. " for i in range(12)).strip()
+        pieces = _split_by_sentence(text, TOK, 200)
+        sizes = [len(p) for p in pieces]
+        assert len(pieces) == 2
+        assert min(sizes) >= 100, sizes
+        assert " ".join(pieces) == text
+
+    def test_oversized_sentence_cut_at_clauses_before_chars(self):
+        from src.domain.rag.docling_loader import _split_by_sentence
+
+        sent = "甲方應於簽約後付款，乙方應於收款後交貨，丙方應於交貨後驗收，丁方應於驗收後開立發票。"
+        pieces = _split_by_sentence(sent, TOK, 25)
+        assert "".join(pieces) == sent
+        for p in pieces:
+            assert len(p) <= 25
+            assert p[-1] in "，。", p
+
+    def test_real_tokenizer_zh_pieces_fill_the_budget(self):
+        from src.domain.rag.chunk_tokenizer import get_chunk_tokenizer
+        from src.domain.rag.docling_loader import _count_tokens
+
+        tok = get_chunk_tokenizer("intfloat/multilingual-e5-large")
+        text = self.ZH * 12
+        recs = _refine_chunks_for_token_budget([text], tok, 256)
+        sizes = [_count_tokens(tok, r["text"]) for r in recs]
+        assert all(s <= 256 for s in sizes)
+        # Balanced: no piece below 60% of the largest one.
+        assert min(sizes) >= 0.6 * max(sizes), sizes
+        assert all(r["text"][-1] in "。！？；" for r in recs)
+
+
+class TestPackBalanced:
+    def test_respects_budget(self):
+        from src.domain.rag.docling_loader import _pack_balanced
+
+        groups = _pack_balanced([30] * 10, 100)
+        assert all(sum(30 for _ in g) <= 100 for g in groups)
+        assert [i for g in groups for i in g] == list(range(10))
+
+    def test_balances_tail(self):
+        from src.domain.rag.docling_loader import _pack_balanced
+
+        # greedy: [100] [20]; balanced: two pieces of 60
+        groups = _pack_balanced([20] * 6, 100)
+        assert [len(g) for g in groups] == [3, 3]
+
+    def test_oversized_unit_alone(self):
+        from src.domain.rag.docling_loader import _pack_balanced
+
+        assert _pack_balanced([10, 500, 10], 100) == [[0], [1], [2]]
+
+    def test_empty(self):
+        from src.domain.rag.docling_loader import _pack_balanced
+
+        assert _pack_balanced([], 100) == []
