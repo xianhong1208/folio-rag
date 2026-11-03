@@ -3,7 +3,6 @@
 
 from uuid import UUID
 from fastapi import Request, Depends
-from typing import Optional
 
 from db.cached_folderdb import CachedFolderDB
 from db.filedb import FileDB

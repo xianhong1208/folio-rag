@@ -16,7 +16,7 @@ audited under the session's ``sub``. See src/auth/console_session.py.
 
 from __future__ import annotations
 
-from typing import Any, Dict, Optional
+from typing import Any, Dict
 
 import httpx
 from fastapi import APIRouter, Body, Depends, HTTPException

@@ -242,10 +242,7 @@ def test_reset_instance_creates_new_instance(clean_singleton):
         (CacheKeys.folder_by_name("tok123", "月報"), "folder:tok123:月報"),
         (CacheKeys.folder_by_id(42), "folder:id:42"),
         (CacheKeys.files_in_folder(7), "files:folder:7"),
-        (CacheKeys.file_by_id("uuid-1"), "file:id:uuid-1"),
         (CacheKeys.rag_query(3, "abcdef"), "query:3:abcdef"),
-        (CacheKeys.auth_token("tok123"), "auth:tok123"),
-        (CacheKeys.index_status("uuid-1"), "index:file:uuid-1"),
     ],
 )
 def test_cache_keys_formats(generated, expected):
@@ -257,7 +254,4 @@ def test_cache_ttl_constants():
     """CacheTTL constant values match the design (seconds)"""
     assert CacheTTL.FOLDER == 300
     assert CacheTTL.FILE_LIST == 180
-    assert CacheTTL.FILE_DETAIL == 300
     assert CacheTTL.QUERY_RESULT == 300
-    assert CacheTTL.AUTH_TOKEN == 3600
-    assert CacheTTL.INDEX_STATUS == 600

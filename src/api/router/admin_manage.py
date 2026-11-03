@@ -167,9 +167,8 @@ async def admin_index_folder(
 
 
 def _fts_mode() -> str:
-    from src.config.config_manager import Config
-    ret = getattr(getattr(Config.get_config_model(), "rag", None), "retrieval", None)
-    return getattr(ret, "text_search_config", "simple") or "simple"
+    from src.domain.rag.hybrid_search import configured_text_search_config
+    return configured_text_search_config()
 
 
 @router.get("/api/admin/manage/folders/{folder_id}/fts")
@@ -394,7 +393,7 @@ async def admin_query_folder(folder_id: int,
     return resp
 
 
-def _llm():
+def _answer_llm():
     """(client, model) for the answer LLM (rag.answer_llm over rag.llm)."""
     from src.domain.rag.context_generator import ContextGenerator
     from src.domain.rag.llm_client import model_name, role_llm
@@ -403,7 +402,7 @@ def _llm():
     return client, model_name(llm_cfg)
 
 
-def _close(client) -> None:
+def _close_quietly(client) -> None:
     try:
         client.close()
     except Exception:  # noqa: BLE001
@@ -419,11 +418,11 @@ def _generate_answer(query: str, results: list) -> dict:
     from src.domain.rag import answer as crag
     if not results:
         return crag.answer(None, "", query, results)
-    client, model = _llm()
+    client, model = _answer_llm()
     try:
         return crag.answer(client, model, query, results)
     finally:
-        _close(client)
+        _close_quietly(client)
 
 
 def _crag_grade(query: str, results: list) -> dict:
@@ -438,11 +437,11 @@ def _crag_grade(query: str, results: list) -> dict:
     if not top:
         return {"top": [], "contexts": [], "kept": [], "dropped": 0,
                 "grading": crag.Grading([])}
-    client, model = _llm()
+    client, model = _answer_llm()
     try:
         grading = crag.grade(client, model, query, [r.get("text") or "" for r in top])
     finally:
-        _close(client)
+        _close_quietly(client)
     if not grading.ok:
         logger.warning(f"[CRAG] relevance grading failed ({grading.reason}); answer unverified")
     contexts = crag.contexts_for(top, grading.grades)
@@ -459,7 +458,7 @@ def _generate_stream(query: str, contexts: list):
     cleaned answer is sent on the ``done`` frame.
     """
     from src.domain.rag import answer as crag
-    client, model = _llm()
+    client, model = _answer_llm()
     try:
         stream = client.chat.completions.create(
             model=model,
@@ -472,7 +471,7 @@ def _generate_stream(query: str, contexts: list):
             if delta:
                 yield crag.normalise_citations(delta)
     finally:
-        _close(client)
+        _close_quietly(client)
 
 
 async def _stream_answer_events(query: str, results: list):

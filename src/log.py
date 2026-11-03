@@ -8,13 +8,10 @@ injection via contextvars, and structured grep-friendly log helpers.
 
 import os
 import sys
-import json
 import uuid
 from contextvars import ContextVar
-from typing import Dict, Any, Literal, Optional
+from typing import Literal, Optional
 from loguru import logger
-from fastmcp.server.dependencies import get_http_request
-from starlette.requests import Request
 
 
 # Request ID: auto-generated per HTTP request, carried across layers via contextvars.
@@ -216,49 +213,3 @@ def log_warn(log, op: str, *, folder_id=None, file_id=None, token=None, msg: str
         **extra,
     )
     log.warning(f"[{op}] {ctx} | {msg}" if msg else f"[{op}] {ctx}")
-
-
-async def log_request_info(
-    tool_name: str = "",
-    module: LogModule = "mcptools",
-    request: Request = None
-) -> Dict[str, Any]:
-    """Log and return the current HTTP request info.
-
-    Supports two calling styles: FastAPI (pass ``request``) and FastMCP (request
-    is obtained automatically from the context).
-    """
-    module_logger = get_logger(module)
-
-    try:
-        mcp_session_id = None
-
-        if request:
-            module_logger.info(f"[API_CALL] tool={tool_name}")
-        else:
-            request = get_http_request()
-            mcp_session_id = request.headers.get("mcp-session-id", "N/A")
-            module_logger.info(f"[MCP_CALL] tool={tool_name} session={mcp_session_id}")
-
-        json_data = None
-        content_type = request.headers.get("content-type", "")
-
-        if request.method in ["POST", "PUT", "PATCH"]:
-            try:
-                if "application/json" in content_type:
-                    json_data = await request.json()
-            except Exception as e:
-                module_logger.warning(f"[REQ_PARSE] JSON parse failed: {e}")
-
-        request_info = {"json": json_data}
-        if mcp_session_id:
-            request_info["mcp_session_id"] = mcp_session_id
-
-        if json_data:
-            module_logger.debug(f"[REQ_BODY] {json.dumps(json_data, ensure_ascii=False)}")
-
-        return request_info
-
-    except Exception as e:
-        module_logger.warning(f"[REQ_INFO] unavailable: {e}")
-        return {}

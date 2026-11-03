@@ -206,11 +206,11 @@ def answer(client, model: str, query: str, results: Sequence[dict]) -> dict:
                 "note": f"generation returned empty (finish={finish})"}
     cleaned = clean_answer(raw, [c.number for c in contexts])
     return {"answer": cleaned.text, "confidence": confidence(grading, len(contexts)), **base,
-            "note": _note(grading, len(contexts)),
+            "note": _answer_note(grading, len(contexts)),
             "citations": cleaned.citations, "invalid_citations": cleaned.invalid_citations}
 
 
-def _note(grading: Grading, kept: int) -> str:
+def _answer_note(grading: Grading, kept: int) -> str:
     if not grading.ok:
         return f"Relevance grading failed ({grading.reason}); answered from all {kept} chunk(s), unverified"
     return f"Answered from {kept} relevant chunk(s)"
@@ -223,7 +223,7 @@ def finish_stream(raw: str, contexts: Sequence[Context], grading: Grading) -> di
         return {"answer": EMPTY_ANSWER_MESSAGE, "note": "generation returned empty",
                 "confidence": CONF_LOW, "citations": [], "invalid_citations": []}
     cleaned = clean_answer(raw, [c.number for c in contexts])
-    return {"answer": cleaned.text, "note": _note(grading, len(contexts)),
+    return {"answer": cleaned.text, "note": _answer_note(grading, len(contexts)),
             "confidence": confidence(grading, len(contexts)),
             "citations": cleaned.citations, "invalid_citations": cleaned.invalid_citations}
 

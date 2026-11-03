@@ -7,7 +7,6 @@ rag_indexing, rag_query, and rag_maintenance.
 
 from typing import Any, Dict, List, Optional
 
-from llama_index.vector_stores.postgres import PGVectorStore
 
 from src.adapter.model import RAGQueryResult
 from src.adapter.rag_context import RAGContext
@@ -21,7 +20,6 @@ from src.api.router.response import (
     IndexFolderResponse,
 )
 from src.domain.rag.index_job_manager import IndexProgressTracker
-from src.domain.rag.query_engine import QueryEngine
 from src.log import get_adapter_logger
 
 
@@ -33,8 +31,7 @@ class RAGAdapter:
     backed by PostgreSQL pgvector.
 
     State lives on RAGContext (`self._ctx`); this class coordinates the
-    indexing, query, and maintenance sub-services. The `self._xxx` properties
-    are backwards-compat delegates to the context.
+    indexing, query, and maintenance sub-services.
     """
 
     def __init__(self):
@@ -42,80 +39,6 @@ class RAGAdapter:
         self._indexing = RAGIndexingService(self._ctx)
         self._query_svc = RAGQueryService(self._ctx)
         self._maintenance = RAGMaintenanceService(self._ctx)
-
-    @property
-    def _embedding_provider(self):
-        return self._ctx.embedding_provider
-
-    @property
-    def _embed_dim(self) -> int:
-        return self._ctx.embed_dim
-
-    @property
-    def _model_name(self) -> str:
-        return self._ctx.model_name
-
-    @property
-    def _chunker_tokenizer_name(self) -> Optional[str]:
-        return self._ctx.chunker_tokenizer_name
-
-    @property
-    def _leaf_chunk_size(self) -> int:
-        return self._ctx.leaf_chunk_size
-
-    @property
-    def _parent_target_tokens(self) -> int:
-        return self._ctx.parent_target_tokens
-
-    @property
-    def _chunk_overlap(self) -> int:
-        return self._ctx.chunk_overlap
-
-    @property
-    def _vector_store_manager(self):
-        return self._ctx.vector_store_manager
-
-    @property
-    def _indexer(self):
-        return self._ctx.indexer
-
-    @property
-    def _document_indexer(self):
-        return self._ctx.indexer  # legacy alias
-
-    @property
-    def _indexing_service(self):
-        return self._ctx.indexing_service
-
-    @property
-    def _auto_merging_enabled(self) -> bool:
-        return self._ctx.auto_merging_enabled
-
-    @property
-    def _merge_threshold(self) -> float:
-        return self._ctx.merge_threshold
-
-    @property
-    def _expand_neighbors(self) -> int:
-        return self._ctx.expand_neighbors
-
-    @property
-    def _reranker(self):
-        return self._ctx.reranker
-
-    @property
-    def _query_engines(self) -> Dict[str, QueryEngine]:
-        return self._ctx.query_engines
-
-    def _invalidate_query_engine_cache(self, folder_id: int) -> None:
-        """Remove cached QueryEngine for a folder (call after index changes)."""
-        self._ctx.invalidate_query_engine_cache(folder_id)
-
-    def _get_vector_store(
-        self, folder_id: int, token: str, folder: Optional[Any] = None
-    ) -> PGVectorStore:
-        """Get or create the vector store for a folder/token (delegates to RAGContext)."""
-        return self._ctx.get_vector_store(folder_id, token, folder)
 
     async def index_document(
         self,
@@ -220,27 +143,6 @@ class RAGAdapter:
         return await self._query_svc.query_trace(
             query=query,
             folder_id=folder_id,
-            token=token,
-            top_k=top_k,
-            similarity_cutoff=similarity_cutoff,
-            sparse_top_k=sparse_top_k,
-            hybrid_alpha=hybrid_alpha,
-        )
-
-    async def query_rag_by_folder_name(
-        self,
-        query: str,
-        folder_name: str,
-        token: str,
-        top_k: int = 5,
-        similarity_cutoff: float = 0.7,
-        sparse_top_k: Optional[int] = None,
-        hybrid_alpha: Optional[float] = None,
-    ) -> RAGQueryResult:
-        """Delegates to RAGQueryService — query by folder name (with authorization)."""
-        return await self._query_svc.query_rag_by_folder_name(
-            query=query,
-            folder_name=folder_name,
             token=token,
             top_k=top_k,
             similarity_cutoff=similarity_cutoff,

@@ -33,7 +33,6 @@ from src.api.dependencies.auth import (
     extract_token,
     get_file_by_id,
     get_folder_by_id,
-    get_folder_by_name,
 )
 from src.api.router.response import (
     ErrorDetailResponse,

@@ -236,12 +236,3 @@ class CachedFolderDB:
         cls._cache.clear_pattern(query_pattern)
 
         log.debug(f"Invalidated caches for folder {folder.id}")
-
-    @classmethod
-    def get_cache_stats(cls) -> dict:
-        """Get cache statistics
-
-        Returns:
-            Dictionary with cache metrics
-        """
-        return cls._cache.get_stats()

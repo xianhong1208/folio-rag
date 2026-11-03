@@ -5,7 +5,6 @@ base_url that omits it, so GET {base}/models 404s even though the service is fin
 The probe must fall back to {base}/v1/models before reporting.
 """
 import httpx
-import pytest
 
 from src.api.router import admin_overview as ov
 

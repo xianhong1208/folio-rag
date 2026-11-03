@@ -471,7 +471,7 @@ class TestValueConstraints:
                 "request_dimensions", "expand_context_default", "language", "endpoint_path"}
         for path in ro.EDITABLE:
             leaf = path.rsplit(".", 1)[1]
-            assert (path in ro._RANGES or ro._choices(path) or path in ro._NULLABLE
+            assert (path in ro._RANGES or ro._allowed_values(path) or path in ro._NULLABLE
                     or leaf in free), path
 
     def test_cloud_profile_rejects_explicit_ckip_with_422_text(self):

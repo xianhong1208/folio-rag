@@ -156,7 +156,3 @@ class IndexingService:
     def delete_indices_for_folder(self, folder_id: int):
         """Delete all index records for a folder."""
         return FileIndexDB.delete_by_folder(folder_id)
-
-    def delete_files_for_folder(self, folder_id: int):
-        """Delete all files for a folder."""
-        return FileDB.delete_by_folder_id(folder_id)

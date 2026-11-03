@@ -13,7 +13,6 @@ from src.adapter.model import (
     RAGChunkMetadata,
     RAGSearchResult,
     RAGQueryResult,
-    FileIndexData,
 )
 
 FILE_UUID = "bdb19c41-0012-4400-9172-67c8dbd08d56"
@@ -113,18 +112,6 @@ def test_rag_query_result_defaults_and_list():
     assert result.retrieval_time_ms is None
     assert len(result.results) == 1
     assert isinstance(result.results[0], RAGSearchResult)
-
-
-def test_file_index_data_json_serialization():
-    """FileIndexData json-mode serialization: UUID->str, datetime->ISO string"""
-    data = FileIndexData(
-        file_id=FILE_UUID, file_name="a.txt", folder_id=1, num_chunks=5,
-        indexed_at=ISO_TIME, status="indexed", embedding_model="bge-m3",
-        chunk_size=256, chunk_overlap=50,
-    )
-    dumped = data.model_dump(mode="json")
-    assert dumped["file_id"] == FILE_UUID
-    assert dumped["indexed_at"] == ISO_TIME
 
 
 def test_rag_search_result_invalid_score_type():

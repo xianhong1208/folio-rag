@@ -12,7 +12,7 @@ from db.filedb import FileDB
 from db.folderdb import FolderDB
 from sqlalchemy.exc import NoResultFound
 from uuid import UUID, uuid4
-from src.log import get_adapter_logger, log_op, log_err, log_warn, mask_token
+from src.log import get_adapter_logger
 from src.adapter.model import FileConfigData, FileDownloadData
 from src.storage.file_storage import FileStorage
 logger = get_adapter_logger()
@@ -180,7 +180,7 @@ class FileAdapter():
             user_token: User token
             **kwargs: Query filters (including folder_id)
         """
-        folder = FileAdapter._verify_folder_ownership(kwargs.get('folder_id'), user_token)
+        FileAdapter._verify_folder_ownership(kwargs.get('folder_id'), user_token)
 
         file_dict = FileDB.get(**kwargs)
             
@@ -214,7 +214,7 @@ class FileAdapter():
             A record containing the file content and metadata.
         """
         try:
-            folder = FileAdapter._verify_folder_ownership(folder_id, user_token)
+            FileAdapter._verify_folder_ownership(folder_id, user_token)
 
             file_record = FileDB.get(folder_id=folder_id, id=file_id)
 

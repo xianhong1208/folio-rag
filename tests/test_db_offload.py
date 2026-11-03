@@ -7,7 +7,6 @@ worker thread. Pins down that _run_db runs off the loop thread and passes
 results/exceptions through unchanged.
 """
 
-import asyncio
 import threading
 
 import pytest

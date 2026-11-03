@@ -9,7 +9,7 @@ from sqlalchemy import engine_from_config
 from sqlalchemy import pool
 
 from alembic import context
-from alembic.operations.ops import CreateTableOp, CreateForeignKeyOp
+from alembic.operations.ops import CreateTableOp
 
 # Resolve project root (works in both dev and packaged/Nuitka mode).
 _env_file_path = os.path.abspath(__file__)

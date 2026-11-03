@@ -37,7 +37,7 @@ from src.domain.exceptions import (
 )
 from src.fastmcp_tools.acl import extract_token
 from src.fastmcp_tools.dynamic_tool_manager import DynamicToolManager
-from src.log import get_mcptools_logger, log_err, log_op, log_warn, mask_token
+from src.log import get_mcptools_logger, mask_token
 from src.storage.file_storage import FileStorage
 
 

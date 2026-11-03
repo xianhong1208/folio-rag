@@ -91,17 +91,17 @@ def _resolve_retrieval_defaults() -> dict:
     out = dict(_FALLBACK_RETRIEVAL_DEFAULTS)
     try:
         cfg = Config.get_config_model()
-        ret = getattr(getattr(cfg, "rag", None), "retrieval", None)
-        if ret is None:
+        retrieval_cfg = getattr(getattr(cfg, "rag", None), "retrieval", None)
+        if retrieval_cfg is None:
             return out
-        if getattr(ret, "default_top_k", None) is not None:
-            out["top_k"] = ret.default_top_k
-        if getattr(ret, "default_similarity_cutoff", None) is not None:
-            out["similarity_cutoff"] = ret.default_similarity_cutoff
-        if getattr(ret, "default_sparse_top_k", None) is not None:
-            out["sparse_top_k"] = ret.default_sparse_top_k
-        if getattr(ret, "default_hybrid_alpha", None) is not None:
-            out["hybrid_alpha"] = ret.default_hybrid_alpha
+        if getattr(retrieval_cfg, "default_top_k", None) is not None:
+            out["top_k"] = retrieval_cfg.default_top_k
+        if getattr(retrieval_cfg, "default_similarity_cutoff", None) is not None:
+            out["similarity_cutoff"] = retrieval_cfg.default_similarity_cutoff
+        if getattr(retrieval_cfg, "default_sparse_top_k", None) is not None:
+            out["sparse_top_k"] = retrieval_cfg.default_sparse_top_k
+        if getattr(retrieval_cfg, "default_hybrid_alpha", None) is not None:
+            out["hybrid_alpha"] = retrieval_cfg.default_hybrid_alpha
     except Exception as e:
         logger.warning(f"Failed to read rag.retrieval defaults from config (using fallback): {e}")
     return out
