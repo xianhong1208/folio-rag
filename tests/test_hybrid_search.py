@@ -278,7 +278,7 @@ class TestMcpUsesSharedPath:
 
         seg = MagicMock()
         seg.segment.return_value = "退貨 政策"
-        searcher, conn, engine = _searcher_with_db({"'退貨' & '政策'": [_row("b", 2.0)]})
+        searcher, conn, engine = _searcher_with_db({"'退貨' | '政策'": [_row("b", 2.0)]})
         del searcher.segment_query                              # use the real one
         searcher.dense = AsyncMock(return_value=[nws("a", 0.8)])
         retr = AutoMergingRetriever(MagicMock(), merge_threshold=1.1,
@@ -287,7 +287,8 @@ class TestMcpUsesSharedPath:
              patch("db.db.get_async_engine", return_value=engine):
             out = await retr.aquery("退貨政策", SearchSettings(top_k=5), expand_context=False)
         assert searcher.dense.await_args.args[0] == "退貨政策"
-        assert conn.calls[0][1]["q"] == "'退貨' & '政策'"         # segmented BM25
+        bm25 = [p for sql, p in conn.calls if "q_any" in p][0]
+        assert bm25["q_all"] == "'退貨' & '政策'"                 # segmented BM25
         assert {r.node_id for r in out} == {"a", "b"}          # BM25 hit reaches agents
         assert retr.last_outcome is not None
 
