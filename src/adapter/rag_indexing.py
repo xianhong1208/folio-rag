@@ -23,6 +23,7 @@ from src.domain.exceptions import (
     RAGFileNotFoundError,
 )
 from src.domain.rag.hierarchical_indexer import IndexingAbortedError
+from src.adapter.db_offload import run_db
 from src.domain.rag.indexing_executor import indexing_work
 from src.log import get_adapter_logger, log_err, log_op, log_warn
 from src.utils import env_compat
@@ -58,17 +59,8 @@ _INDEXING_SEMAPHORE: Optional[asyncio.Semaphore] = None
 _PER_FILE_TIMEOUT_DEFAULT = IndexingConfig.model_fields["per_file_timeout_seconds"].default
 
 
-async def _run_db(fn, *args, **kwargs):
-    """Run a blocking synchronous DB helper on a worker thread so it doesn't hold the event loop.
-
-    baseDB is session-per-call (a fresh session created and closed each time), so
-    running it on a thread is thread-safe.
-
-    Warning: do not use inside an `except asyncio.CancelledError:` block — awaiting
-    during cancellation re-raises CancelledError. Those paths (mark_index_failed on
-    cancel) stay synchronous.
-    """
-    return await asyncio.to_thread(fn, *args, **kwargs)
+# Blocking DB helpers go through a worker thread (see src/adapter/db_offload.py).
+_run_db = run_db
 
 
 def _resolve_indexing_concurrency() -> int:

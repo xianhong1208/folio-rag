@@ -8,6 +8,7 @@ from __future__ import annotations
 
 from typing import Any, Dict, List, TYPE_CHECKING
 
+from src.adapter.db_offload import run_db
 from src.domain.rag.chunk_identity import reindex_recommended
 from src.domain.rag.vector_store_manager import VectorStoreManager  # physical-table deletion is centralized here
 from src.api.router.response import DeleteFolderIndexResponse, FileIndexResult
@@ -53,7 +54,7 @@ class RAGMaintenanceService:
         indexing_service = self._ctx.indexing_service
 
         try:
-            index_record = indexing_service.get_index_for_file(file_id)
+            index_record = await run_db(indexing_service.get_index_for_file, file_id)
             if not index_record:
                 log_warn(
                     logger, "DELETE_INDEX_SKIP", file_id=file_id, token=token,
@@ -65,18 +66,19 @@ class RAGMaintenanceService:
 
             # Vector store ownership check — an orphan index just deletes its DB row
             try:
-                vector_store = self._ctx.get_vector_store(folder_id, token)
+                vector_store = await run_db(self._ctx.get_vector_store, folder_id, token)
             except (RAGOperationError, DomainException) as folder_err:
                 log_warn(
                     logger, "DELETE_INDEX_ORPHAN",
                     folder_id=folder_id, file_id=file_id, token=token,
                     msg=f"folder access failed, treating as orphan index: {folder_err}",
                 )
-                indexing_service.delete_index_for_file(file_id)
+                await run_db(indexing_service.delete_index_for_file, file_id)
                 indexing_service.invalidate_folder_caches(folder_id)
                 return True
 
-            deletion_successful = self._delete_chunks_from_vector_store(
+            deletion_successful = await run_db(
+                self._delete_chunks_from_vector_store,
                 vector_store=vector_store,
                 index_record=index_record,
                 folder_id=folder_id,
@@ -87,7 +89,7 @@ class RAGMaintenanceService:
 
             # Even if chunk deletion failed, still clear the DB record so nothing is
             # left pointing at nonexistent chunks
-            indexing_service.delete_index_for_file(file_id)
+            await run_db(indexing_service.delete_index_for_file, file_id)
             indexing_service.invalidate_folder_caches(folder_id)
 
             log_op(
@@ -129,7 +131,7 @@ class RAGMaintenanceService:
         indexing_service = self._ctx.indexing_service
 
         try:
-            folder = indexing_service.get_folder(folder_id, token)
+            folder = await run_db(indexing_service.get_folder, folder_id, token)
             folder_name = folder.name
             vector_table_uuid = str(folder.vector_table_uuid)
 
@@ -155,7 +157,7 @@ class RAGMaintenanceService:
                     folder_id=folder_id, token=token, msg=str(cancel_err),
                 )
 
-            index_records = indexing_service.list_indices_for_folder(folder_id)
+            index_records = await run_db(indexing_service.list_indices_for_folder, folder_id)
             total_files = len(index_records)
 
             # Order matters: delete FileIndex rows first, then DROP the table, raising
@@ -163,7 +165,7 @@ class RAGMaintenanceService:
             # but no vectors — a later reindex then short-circuits on content_hash and
             # never self-heals. This order self-heals: a retry re-deletes rows
             # idempotently and re-runs the DROP.
-            deleted_indices = indexing_service.delete_indices_for_folder(folder_id)
+            deleted_indices = await run_db(indexing_service.delete_indices_for_folder, folder_id)
             log_op(
                 logger, "DELETE_INDICES",
                 folder_id=folder_id, msg=f"{deleted_indices} records",
@@ -171,7 +173,7 @@ class RAGMaintenanceService:
 
             vsm = self._ctx.vector_store_manager
             vector_store_table = vsm.physical_table_name(folder_id, vector_table_uuid)
-            if vsm.drop_table(folder_id, vector_table_uuid):
+            if await run_db(vsm.drop_table, folder_id, vector_table_uuid):
                 log_op(logger, "DROP_TABLE", folder_id=folder_id, msg=f"table={vector_store_table}")
             else:
                 # A failed DROP must not be swallowed: leaving the old vector table
@@ -185,7 +187,7 @@ class RAGMaintenanceService:
             # drop_table() above already cleared the VSM cache entry.
 
             # Per-file rows: files are preserved even though their indices are gone.
-            files = indexing_service.list_files(folder_id)
+            files = await run_db(indexing_service.list_files, folder_id)
             results = [
                 FileIndexResult(
                     file_id=str(f.id),
@@ -234,14 +236,14 @@ class RAGMaintenanceService:
                 logger.debug("Indexed files cache HIT: %s", cache_key)
                 return cached
 
-            index_records = indexing_service.list_indices_for_folder(folder_id)
+            index_records = await run_db(indexing_service.list_indices_for_folder, folder_id)
 
             if not index_records:
                 cache.set(cache_key, [], ttl=CacheTTL.FILE_LIST)
                 return []
 
             file_ids = [record.file_id for record in index_records]
-            files_by_id = indexing_service.get_files_by_ids(file_ids)
+            files_by_id = await run_db(indexing_service.get_files_by_ids, file_ids)
 
             results = []
             for record in index_records:

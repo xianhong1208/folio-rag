@@ -14,6 +14,7 @@ from db.db import get_engine
 from sqlalchemy import text
 from sqlalchemy.exc import NoResultFound
 from src.log import get_adapter_logger
+from src.adapter.db_offload import run_db
 from src.adapter.model import FolderConfigData
 from src.domain.rag.vector_store_manager import VectorStoreManager  # physical-table drop is centralized here
 from src.storage.file_storage import FileStorage
@@ -100,7 +101,7 @@ class FolderAdapter:
         try:
             # Ensure every query is scoped by user_token
             kwargs['user_token'] = user_token
-            folder_dicts = FolderDB.get(**kwargs)
+            folder_dicts = await run_db(FolderDB.get, **kwargs)
 
             return [FolderConfigData(
                 id=folder.id,
@@ -137,49 +138,26 @@ class FolderAdapter:
         """
         logger.info(f"Updating folder: folder_id: {folder_id}, name: {name}, description: {description}")
         try:
-            folder_check = FolderDB.get(id=folder_id, user_token=user_token)
+            folder_check = await run_db(FolderDB.get, id=folder_id, user_token=user_token)
             if not folder_check:
                 raise NoResultFound(f"Folder id {folder_id} does not exist")
 
             old_folder = folder_check[0]
             old_name = old_folder.name
 
-            # On rename, keep storage directory and stored file paths in sync.
+            # On rename, keep storage directory and stored file paths in sync
+            # (filesystem rename + a bulk UPDATE: both blocking, so off the loop).
             if name is not None and name != old_name:
-                if old_folder.user_token:
-                    renamed = FileStorage.rename_folder(old_folder.user_token, old_name, name)
-                    if renamed:
-                        logger.info(f"Storage folder renamed: {old_name} -> {name}")
-                    else:
-                        logger.warning(f"Storage folder rename failed or not exists: {old_name}")
+                await run_db(FolderAdapter._rename_storage, folder_id, user_token,
+                             old_folder.user_token, old_name, name)
 
-                try:
-                    engine = get_engine()
-                    with engine.connect() as conn:
-                        conn.execute(
-                            text('''
-                                UPDATE "Files" 
-                                SET file_path = REPLACE(file_path, :old_path, :new_path)
-                                WHERE folder_id = :folder_id
-                            '''),
-                            {
-                                "old_path": f"storage/{user_token}/{old_name}/",
-                                "new_path": f"storage/{user_token}/{name}/",
-                                "folder_id": folder_id
-                            }
-                        )
-                        conn.commit()
-                        logger.info(f"Updated file paths for folder {folder_id}: {old_name} -> {name}")
-                except Exception as e:
-                    logger.error(f"Failed to update file paths: {e}")
-            
             update_kwargs = {"id": folder_id, "user_token": user_token}
             if name is not None:
                 update_kwargs["name"] = name
             if description is not None:
                 update_kwargs["description"] = description
             
-            updated_folder = FolderDB.update(**update_kwargs)
+            updated_folder = await run_db(FolderDB.update, **update_kwargs)
             
             logger.info(f"Successfully updated folder: {folder_id}")
 
@@ -208,6 +186,85 @@ class FolderAdapter:
             raise 
 
     @staticmethod
+    def _rename_storage(folder_id: int, user_token: str, owner_token: Optional[str],
+                        old_name: str, name: str) -> None:
+        """Rename the folder's storage directory and rewrite its files' stored paths (blocking)."""
+        if owner_token:
+            renamed = FileStorage.rename_folder(owner_token, old_name, name)
+            if renamed:
+                logger.info(f"Storage folder renamed: {old_name} -> {name}")
+            else:
+                logger.warning(f"Storage folder rename failed or not exists: {old_name}")
+
+        try:
+            engine = get_engine()
+            with engine.connect() as conn:
+                conn.execute(
+                    text('''
+                        UPDATE "Files" 
+                        SET file_path = REPLACE(file_path, :old_path, :new_path)
+                        WHERE folder_id = :folder_id
+                    '''),
+                    {
+                        "old_path": f"storage/{user_token}/{old_name}/",
+                        "new_path": f"storage/{user_token}/{name}/",
+                        "folder_id": folder_id
+                    }
+                )
+                conn.commit()
+                logger.info(f"Updated file paths for folder {folder_id}: {old_name} -> {name}")
+        except Exception as e:
+            logger.error(f"Failed to update file paths: {e}")
+
+    @staticmethod
+    def _delete_folder_contents(folder) -> None:
+        """Drop the folder's vector table, FileIndex rows, stored files and File rows (blocking).
+
+        A failure is logged and swallowed: the folder record itself is still deleted.
+        """
+        folder_id = folder.id
+        try:
+            files = FileDB.get(folder_id=folder_id)
+
+            # This adapter is stateless (no VSM instance) and drops the whole
+            # folder, so cache invalidation is moot — use the static
+            # drop_table_by_name, which does not touch the cache.
+            vector_table_name = VectorStoreManager.physical_table_name(
+                folder.id, folder.vector_table_uuid)
+            VectorStoreManager.drop_table_by_name(vector_table_name)
+
+            if files:
+                for file in files:
+                    try:
+                        from db.fileindexdb import FileIndexDB
+                        FileIndexDB.delete_by_file(file.id)
+                    except Exception as e:
+                        logger.warning(f"Failed to delete FileIndex record for file {file.id}: {e}")
+
+                    FileStorage.delete_file(file.file_path)
+
+                deleted_count = FileDB.delete_by_folder_id(folder_id)
+                logger.info(f"Successfully deleted {deleted_count} files from folder {folder_id}")
+        except Exception as e:
+            # Log a file-deletion failure but continue deleting the folder
+            logger.error(f"Failed to delete files in folder {folder_id}: {e}")
+
+    @staticmethod
+    def _delete_folder_storage_and_row(folder) -> None:
+        """Best-effort storage cleanup, then delete the folder row (blocking).
+
+        An invalid name (legacy ghost row) or a missing directory must not block
+        deletion of the DB record, otherwise the folder could never be removed.
+        """
+        try:
+            FileStorage.delete_folder(folder.user_token, folder.name)
+        except ValueError as e:
+            logger.warning(
+                f"Storage cleanup skipped for folder {folder.id} "
+                f"(invalid name, likely ghost row): {e}")
+        FolderDB.delete(id=folder.id)
+
+    @staticmethod
     async def delete_folder(
         folder_id: int,
         user_token: Optional[str] = None
@@ -225,7 +282,7 @@ class FolderAdapter:
         logger.info(f"Deleting folder: {folder_id}")
 
         try:
-            folder_check = FolderDB.get(id=folder_id, user_token=user_token)
+            folder_check = await run_db(FolderDB.get, id=folder_id, user_token=user_token)
             if not folder_check:
                 raise NoResultFound(f"Folder id {folder_id} does not exist")
 
@@ -246,47 +303,13 @@ class FolderAdapter:
             except Exception as e:
                 logger.warning(f"Failed to cancel jobs for folder {folder_id}: {e}")
 
-            try:
-                files = FileDB.get(folder_id=folder_id)
-
-                # This adapter is stateless (no VSM instance) and drops the whole
-                # folder, so cache invalidation is moot — use the static
-                # drop_table_by_name, which does not touch the cache.
-                vector_table_name = VectorStoreManager.physical_table_name(
-                    folder.id, folder.vector_table_uuid)
-                VectorStoreManager.drop_table_by_name(vector_table_name)
-
-                if files:
-                    for file in files:
-                        try:
-                            from db.fileindexdb import FileIndexDB
-                            FileIndexDB.delete_by_file(file.id)
-                        except Exception as e:
-                            logger.warning(f"Failed to delete FileIndex record for file {file.id}: {e}")
-
-                        FileStorage.delete_file(file.file_path)
-
-                    deleted_count = FileDB.delete_by_folder_id(folder_id)
-                    logger.info(f"Successfully deleted {deleted_count} files from folder {folder_id}")
-            except Exception as e:
-                # Log a file-deletion failure but continue deleting the folder
-                logger.error(f"Failed to delete files in folder {folder_id}: {e}")
+            await run_db(FolderAdapter._delete_folder_contents, folder)
 
             # Remove the dynamic MCP tool before deleting the DB record; the
             # hooks fail safe internally and never block deletion.
             notify_folder_deleted(folder.name, folder.user_token)
 
-            # Best-effort storage cleanup: an invalid name (legacy ghost row) or a
-            # missing directory must not block deletion of the DB record, otherwise
-            # the folder could never be removed.
-            try:
-                FileStorage.delete_folder(folder.user_token, folder.name)
-            except ValueError as e:
-                logger.warning(
-                    f"Storage cleanup skipped for folder {folder_id} "
-                    f"(invalid name, likely ghost row): {e}")
-
-            FolderDB.delete(id=folder_id)
+            await run_db(FolderAdapter._delete_folder_storage_and_row, folder)
             logger.info(f"Successfully deleted folder: {folder_id} ({folder.name})")
 
             # Finally, purge this folder's job records (in-memory + DB). Without
@@ -294,7 +317,7 @@ class FolderAdapter:
             # keeps polling a deleted folder, endlessly hitting FOLDER_NOT_FOUND.
             try:
                 from src.domain.rag.index_job_manager import IndexingJobManager
-                IndexingJobManager.get_instance().purge_jobs_for_folder(folder_id)
+                await run_db(IndexingJobManager.get_instance().purge_jobs_for_folder, folder_id)
             except Exception as e:
                 logger.warning(f"Failed to purge job records for folder {folder_id}: {e}")
 
