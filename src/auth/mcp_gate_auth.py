@@ -11,6 +11,10 @@ module:
   ``RemoteAuthProvider`` + ``JWTVerifier``), which also publishes
   ``/.well-known/oauth-protected-resource/mcp`` so OAuth-capable MCP clients can
   discover where to sign in.
+
+Both also consult MCP Gate's revocation feed (``src/auth/revocation.py``) when
+``auth.revocation`` is enabled, so a token revoked in MCP Gate stops working here
+within a poll interval instead of at its expiry.
 """
 
 from __future__ import annotations
@@ -21,6 +25,7 @@ from typing import Optional
 
 import jwt
 
+from src.auth.revocation import REVOKED, check_revoked
 from src.log import get_auth_logger
 
 logger = get_auth_logger()
@@ -189,8 +194,21 @@ class McpGateTokenVerifier:
         )
 
     async def verify(self, token: str) -> TokenVerifyResult:
-        """Verify a bearer token offline. Non-blocking (PyJWT runs in a thread)."""
-        return await asyncio.to_thread(self._verify_sync, token)
+        """Verify a bearer token offline. Non-blocking (PyJWT runs in a thread).
+
+        A token that verifies but is on MCP Gate's revocation list (or arrives while
+        the list is stale under ``fail_mode: closed``) is rejected.
+        """
+        result = await asyncio.to_thread(self._verify_sync, token)
+        if not result.valid:
+            return result
+        reason = check_revoked(result.jti)
+        if reason:
+            logger.warning(f"Bearer token rejected: {reason} (jti {(result.jti or '-')[:8]}...)")
+            message = ("token has been revoked" if reason == REVOKED
+                       else "revocation status unavailable")
+            return TokenVerifyResult(valid=False, error=message, error_code=reason)
+        return result
 
 
 def build_auth_provider(config):
@@ -207,10 +225,12 @@ def build_auth_provider(config):
 
     # Imported lazily so a disabled-auth deployment need not import FastMCP auth stack.
     from fastmcp.server.auth import RemoteAuthProvider
-    from fastmcp.server.auth.providers.jwt import JWTVerifier
+
+    from src.auth.fastmcp_verifier import RevocationAwareJWTVerifier
 
     provider = RemoteAuthProvider(
-        token_verifier=JWTVerifier(
+        # JWTVerifier + the revocation list (a no-op while auth.revocation is disabled).
+        token_verifier=RevocationAwareJWTVerifier(
             jwks_uri=settings.jwks_uri,
             issuer=settings.issuer,
             audience=settings.audience,

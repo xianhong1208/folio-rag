@@ -144,6 +144,12 @@ async def detailed_health_check():
     else:
         checks["capabilities"] = {"status": "healthy", "message": "All routers/modules loaded"}
 
+    # MCP Gate revocation feed: last successful poll and how many revoked tokens are held.
+    from src.auth.revocation import revocation_status
+    checks["revocation"] = revocation_status()
+    if checks["revocation"].get("stale"):
+        overall_healthy = False
+
     return {
         "status": "healthy" if overall_healthy else "degraded",
         "timestamp": datetime.now(timezone.utc).isoformat(),

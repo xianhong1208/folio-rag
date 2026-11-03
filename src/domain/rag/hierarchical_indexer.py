@@ -32,6 +32,8 @@ from src.domain.rag.hierarchy import build_hierarchy
 from src.domain.rag.chunk_identity import (
     CHUNK_PIPELINE_VERSION,
     breadcrumb,
+    cap_breadcrumb,
+    fit_retrieval_text,
     chunk_hash,
     embedding_key,
     leaf_node_id,
@@ -139,6 +141,49 @@ except Exception:
 
 
 
+def _table_heads(leaf_docs: List[Document]) -> List[Optional[int]]:
+    """For each leaf, the index of the first piece of the split table it continues
+    (None for prose, whole tables and first pieces). Pops the transient
+    ``table_part`` marker so it never reaches stored metadata."""
+    heads: List[Optional[int]] = [None] * len(leaf_docs)
+    head: Optional[int] = None
+    for i, ld in enumerate(leaf_docs):
+        part = ld.metadata.pop("table_part", None)
+        if part == 0:
+            head = i
+        elif (part and head is not None
+              and leaf_docs[head].metadata.get("headings") == ld.metadata.get("headings")):
+            heads[i] = head
+        else:
+            head = None
+    return heads
+
+
+def _embedding_input_limit() -> int:
+    """``rag.embedding.max_input_tokens`` (live), 512 when unset or unreadable."""
+    try:
+        from src.config.config_manager import Config
+
+        rag = getattr(Config.get_config_model(), "rag", None)
+        value = getattr(getattr(rag, "embedding", None), "max_input_tokens", None)
+        return int(value) if value else 512
+    except Exception:
+        return 512
+
+
+def _prefix_warning(failed: int, total: int) -> Optional[str]:
+    """File warning for chunks indexed without their contextual prefix."""
+    if not failed:
+        return None
+    return (f"{failed} of {total} chunks lack a context prefix (the model gave no usable "
+            "answer) — re-index the file to retry them")
+
+
+def _join_warnings(*warnings: Optional[str]) -> Optional[str]:
+    parts = [w for w in warnings if w]
+    return "; ".join(parts) if parts else None
+
+
 class HierarchicalIndexer:
     """Integrated indexer: Docling + hierarchy + contextual retrieval."""
 
@@ -193,6 +238,65 @@ class HierarchicalIndexer:
         """
         return configured_text_search_config()
 
+    def _fit_embedding_window(self, leaf_docs: List[Document],
+                              prefixes: List[Optional[str]], file_name: str) -> None:
+        """Shorten breadcrumbs / prefixes in place so every leaf's embedding input fits
+        ``rag.embedding.max_input_tokens`` (special tokens and passage_prefix included)."""
+        limit = _embedding_input_limit()
+        model = self._embed_model if self._embed_model is not None else Settings.embed_model
+        passage = getattr(model, "_passage_prefix", "") or ""
+
+        def count(text: str) -> int:
+            return self._count_tokens(passage + text) + 2  # + <s> </s>
+
+        adjusted = 0
+        for i, ld in enumerate(leaf_docs):
+            crumb = ld.metadata.get("breadcrumb") or ""
+            prefix = prefixes[i] or ""
+            new_prefix, new_crumb = fit_retrieval_text(prefix, crumb, ld.text, count, limit)
+            if (new_prefix, new_crumb) == (prefix, crumb):
+                continue
+            adjusted += 1
+            ld.metadata["breadcrumb"] = new_crumb
+            if prefixes[i]:
+                prefixes[i] = new_prefix
+        if adjusted:
+            logger.info(
+                f"{file_name}: shortened the breadcrumb / prefix of {adjusted} leaf(s) to fit "
+                f"the {limit}-token embedding window")
+
+    @staticmethod
+    def _flag_fts_rebuild(vector_store, file_name: str, segmenter_name: Optional[str]) -> str:
+        """The segmenter fell back to raw text for this file's keyword index: stamp the
+        folder's table ``<name>-degraded`` so the console flags it for Rebuild FTS (the
+        stamp differs from the configured segmenter; a completed rebuild re-stamps it),
+        and return the file warning. A failed stamp is logged, never fatal."""
+        logger.warning(
+            f"{file_name}: the {segmenter_name} segmenter failed; its keyword index holds "
+            "unsegmented text — flagging the folder for Rebuild FTS"
+        )
+        try:
+            from src.domain.rag.chunk_lookup import ChunkLookup
+            from src.domain.rag.vector_store_manager import stamp_tsv_segmenter
+
+            stamp_tsv_segmenter(
+                ChunkLookup._get_engine(vector_store),
+                ChunkLookup._get_table_name(vector_store),
+                f"{segmenter_name or 'segmenter'}-degraded",
+            )
+        except Exception as e:
+            logger.warning(f"{file_name}: could not flag the folder for Rebuild FTS: {e}")
+        return (f"Keyword index built without {segmenter_name or 'word'} segmentation "
+                "(segmenter unavailable) — run Rebuild FTS on this folder")
+
+    def _count_tokens(self, text: str) -> int:
+        """Tokens of ``text`` in the chunk tokenizer of the embedding model (the same
+        counter the leaf budgets use)."""
+        from src.domain.rag.docling_loader import get_hf_tokenizer
+
+        return len(get_hf_tokenizer(self._embedding_model_name).encode(
+            text or "", add_special_tokens=False))
+
     @staticmethod
     def _clean_text(text: str) -> str:
         return clean_text(text)
@@ -236,7 +340,8 @@ class HierarchicalIndexer:
         their contextual prefix and embedding (see chunk_store.fetch_reusable), and the
         file's rows are swapped in one transaction.
 
-        Returns {"leaves", "parents", "llm_calls", "embedded", "pipeline_version", "warning"}.
+        Returns {"leaves", "parents", "llm_calls", "embedded", "pipeline_version",
+        "prefix_failures", "warning"}.
         """
         file_name = document.metadata.get("file_name", "unknown")
 
@@ -261,11 +366,13 @@ class HierarchicalIndexer:
         file_id_meta = str(document.metadata.get("file_id") or "")
         if not file_id_meta:
             raise ValueError(f"{file_name}: document has no file_id; cannot replace its chunks")
+        table_head = _table_heads(leaf_docs)
         hashes: List[str] = []
         leaf_ids: List[str] = []
         seen_hashes: Dict[str, int] = {}
         for ld in leaf_docs:
-            crumb = breadcrumb(file_name, ld.metadata.get("headings"))
+            crumb = cap_breadcrumb(breadcrumb(file_name, ld.metadata.get("headings")),
+                                   self._count_tokens)
             chash = chunk_hash(ld.text, crumb)
             occurrence = seen_hashes.get(chash, 0)
             seen_hashes[chash] = occurrence + 1
@@ -281,15 +388,23 @@ class HierarchicalIndexer:
 
         prefixes: List[Optional[str]] = [None] * n_chunks
         need_llm: List[int] = []
+        continuations: List[int] = []  # table pieces that take their table's prefix
         for i, chash in enumerate(hashes):
             old = reusable.get(chash)
-            if old is not None and old.get("ctx_key") == ctx_key:
+            # An empty stored prefix under a live generator's key is a failure that an
+            # older version cached (it stamped ctx_key on a discarded answer): regenerate.
+            if (old is not None and old.get("ctx_key") == ctx_key
+                    and (old.get("context_prefix") or ctx_key == "off")):
                 prefixes[i] = old.get("context_prefix") or ""
             elif not self._context_generator or not document.text:
                 prefixes[i] = ""
+            elif table_head[i] is not None:
+                continuations.append(i)
             else:
                 need_llm.append(i)
-        n_reused_prefix = n_chunks - len(need_llm)
+        # Continuation pieces of a split table make no call: they take the prefix of
+        # the table's first piece (cached or generated below).
+        n_reused_prefix = n_chunks - len(need_llm) - len(continuations)
 
         if need_llm:
             _raise_if_aborted(should_abort, file_name, "contextualizing")
@@ -318,8 +433,27 @@ class HierarchicalIndexer:
             _raise_if_aborted(should_abort, file_name, "contextualizing")
             for i, prefix in zip(need_llm, generated):
                 # Reasoning models occasionally emit control characters: clean before PGVector.
-                prefixes[i] = None if prefix is None else self._clean_text(prefix).strip()
-            logger.info(f"Contextual prefixes generated for {len(need_llm)} leaves ({file_name})")
+                cleaned = None if prefix is None else self._clean_text(prefix).strip()
+                # Empty after cleaning is a failure too: never cache it under ctx_key.
+                prefixes[i] = cleaned or None
+            logger.info(
+                f"Contextual prefixes generated for {len(need_llm)} leaves "
+                f"(+{len(continuations)} table continuation(s) sharing them) ({file_name})")
+        for i in continuations:
+            prefixes[i] = prefixes[table_head[i]]  # None when the table's prefix failed
+        asked = need_llm + continuations
+        n_prefix_failed = sum(1 for i in asked if prefixes[i] is None)
+        if n_prefix_failed:
+            logger.warning(
+                f"{file_name}: {n_prefix_failed} of {len(asked)} chunk(s) got no "
+                "contextual prefix (no usable answer from the model); indexed without "
+                "one — a re-index retries them"
+            )
+
+        # The embedding model sees passage_prefix + prefix + breadcrumb + text; fit that
+        # into its window by shortening the breadcrumb, then the prefix, never the text
+        # (the server would otherwise silently cut the chunk's tail).
+        self._fit_embedding_window(leaf_docs, prefixes, file_name)
 
         for ld, prefix in zip(leaf_docs, prefixes):
             if prefix:
@@ -339,6 +473,7 @@ class HierarchicalIndexer:
             base_metadata=base_metadata,
             leaf_ids=leaf_ids,
             parent_id_for=lambda idxs: parent_node_id(file_id_meta, [hashes[i] for i in idxs]),
+            count_tokens=self._count_tokens,
         )
         search_texts = {n.node_id: retrieval_text(n.text, n.metadata) for n in leaf_nodes}
 
@@ -366,13 +501,16 @@ class HierarchicalIndexer:
 
         leaf_texts = [search_texts[n.node_id] for n in to_embed]
         n_leaves = len(leaf_texts)
-        n_batches = (n_leaves + _EMBEDDING_BATCH_SIZE - 1) // _EMBEDDING_BATCH_SIZE
+        # One request per batch: the model's own batch size (rag.embedding.embed_batch_size).
+        batch_size = getattr(embed_model, "embed_batch_size", None)
+        batch_size = batch_size if isinstance(batch_size, int) and batch_size > 0 else _EMBEDDING_BATCH_SIZE
+        n_batches = (n_leaves + batch_size - 1) // batch_size
         _report_chunk_progress(progress_cb, "embedding", 0, n_leaves)
         leaf_embeddings: list = []
         for i in range(n_batches):
             _raise_if_aborted(should_abort, file_name, "embedding")
-            batch_start = i * _EMBEDDING_BATCH_SIZE
-            batch_end = min(batch_start + _EMBEDDING_BATCH_SIZE, n_leaves)
+            batch_start = i * batch_size
+            batch_end = min(batch_start + batch_size, n_leaves)
             batch_texts = leaf_texts[batch_start:batch_end]
             try:
                 batch_embeddings = await _embed_batch_with_retry(
@@ -415,6 +553,7 @@ class HierarchicalIndexer:
         tsv_config = self._text_search_config()
         segment = None
         segmenter_name = None
+        degraded = {"value": False}  # set when the segmenter fell back to raw text
         if tsv_config == "simple":
             # Segmented mode: Chinese is segmented in Python by the configured segmenter
             # (rag.retrieval.segmenter: ckip / jieba / bigram); Postgres's 'simple'
@@ -424,6 +563,12 @@ class HierarchicalIndexer:
             segmenter = get_segmenter()
             segment = segmenter.segment_batch
             segmenter_name = getattr(segmenter, "name", None)
+            report = getattr(segmenter, "segment_batch_report", None)
+            if callable(report):
+                def segment(texts, _report=report):
+                    out, failed = _report(texts)
+                    degraded["value"] = degraded["value"] or failed
+                    return out
         # _to_thread_protected (not a bare to_thread) so on cancel the write finishes
         # rather than leaving an orphan insert racing DROP TABLE.
         write = replace_file_chunks
@@ -433,6 +578,11 @@ class HierarchicalIndexer:
             write, vector_store, file_id_meta, all_nodes,
             search_texts, tsv_config, segment,
         )
+
+        fts_warning = None
+        if degraded["value"]:
+            fts_warning = await asyncio.to_thread(
+                self._flag_fts_rebuild, vector_store, file_name, segmenter_name)
 
         # 6. Ensure this (possibly just-created) table has an HNSW vector index now,
         # so a new folder gets fast search without waiting for the next boot.
@@ -461,6 +611,12 @@ class HierarchicalIndexer:
             "llm_calls": len(need_llm),
             "embedded": n_leaves,
             "pipeline_version": CHUNK_PIPELINE_VERSION,
-            # Parse caveat from the loader (pages docling could not parse), for the file record.
-            "warning": document.metadata.get("_parse_warning"),
+            "prefix_failures": n_prefix_failed,
+            # Caveats for the file record: pages the parser could not read, chunks that
+            # are indexed without their contextual prefix.
+            "warning": _join_warnings(
+                document.metadata.get("_parse_warning"),
+                _prefix_warning(n_prefix_failed, n_chunks),
+                fts_warning,
+            ),
         }

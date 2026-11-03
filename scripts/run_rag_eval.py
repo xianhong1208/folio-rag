@@ -45,9 +45,13 @@ async def main() -> int:
     ap.add_argument("--config", default="config/config.yaml")
     args = ap.parse_args()
 
-    docs = [f for f in sorted(DOCS_DIR.iterdir()) if f.is_file()] if DOCS_DIR.is_dir() else []
+    docs = ([f for f in sorted(DOCS_DIR.iterdir())
+             if f.is_file() and not f.name.startswith(".") and f.name != "SOURCES.md"]
+            if DOCS_DIR.is_dir() else [])
     qa_items = yaml.safe_load(QA_FILE.read_text(encoding="utf-8")) if QA_FILE.is_file() else None
-    qa_items = [q for q in (qa_items or []) if isinstance(q, dict) and q.get("question")]
+    # Unanswerable items (no expected file) only make sense for scripts/eval_retrieval.py.
+    qa_items = [q for q in (qa_items or []) if isinstance(q, dict) and q.get("question")
+                and q.get("expected_files")]
     if not docs or not qa_items:
         print("No eval material. Please provide:")
         print(f"   {DOCS_DIR.relative_to(REPO)}/ — representative document set")

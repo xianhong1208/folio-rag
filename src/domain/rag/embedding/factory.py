@@ -131,6 +131,8 @@ class EmbeddingProviderFactory:
         }
         if getattr(embedding_config, "request_dimensions", False):
             tuning["dimensions"] = dimension
+        batch_size = int(getattr(embedding_config, "embed_batch_size", 0) or 64)
+        tuning["embed_batch_size"] = batch_size
 
         # Add provider-specific parameters
         if provider_type in ["vllm", "ollama"]:
@@ -153,9 +155,9 @@ class EmbeddingProviderFactory:
             kwargs['tuning'] = tuning
 
         elif provider_type in ["huggingface", "local"]:
-            # HuggingFace-specific settings could be added here
             kwargs['base_url'] = base_url
             kwargs['api_key'] = api_key
+            kwargs['embed_batch_size'] = batch_size
 
         logger.info(f"Creating embedding provider: {provider_type} with model {model_name}")
 

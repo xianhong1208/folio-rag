@@ -1,0 +1,4 @@
+# The root .gitignore keeps eval material out of the repo because it may be private.
+# This folder holds the public retrieval-eval corpus instead (sources and licenses in
+# SOURCES.md), so everything in it is tracked.
+!*

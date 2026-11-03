@@ -97,3 +97,161 @@ def test_delete_chunks_by_file_swallows_errors():
     with patch(f"{_VSM}.get_engine", return_value=engine):
         n = VectorStoreManager.delete_chunks_by_file("data_5_abc-uuid", 42)
     assert n == 0
+
+
+# ---- LRU cache + engine ownership (connection blow-up regression) -----------------
+
+def _vsm_with(mode="per_folder", cache_size=3):
+    fake_cfg = MagicMock()
+    fake_cfg.database.url = "postgresql://u:secret@h/db"
+    fake_cfg.database.port = 5444
+    fake_cfg.database.vector_store_engines = mode
+    fake_cfg.database.vector_store_cache_size = cache_size
+    fake_cfg.database.pool_timeout = 30
+    fake_cfg.database.pool_recycle = 1800
+    with patch(f"{_VSM}.Config.get_config_model", return_value=fake_cfg):
+        return VectorStoreManager(embed_dim=8)
+
+
+def _fake_store_factory(created):
+    """PGVectorStore stand-in: records kwargs and carries its own mock engines."""
+    def _make(**kwargs):
+        store = MagicMock(name=f"store-{kwargs['table_name']}")
+        store.kwargs = kwargs
+        store._engine = MagicMock(name="engine")
+        store._async_engine = MagicMock(name="async_engine")
+        created.append(store)
+        return store
+    return _make
+
+
+def test_lru_evicts_oldest_and_disposes_its_engines():
+    """Creating N > cache_size stores keeps only cache_size and disposes every evicted store's engines."""
+    vsm = _vsm_with(cache_size=3)
+    created = []
+    with patch(f"{_VSM}.PGVectorStore", side_effect=_fake_store_factory(created)):
+        for i in range(5):
+            vsm.get_or_create(i, "u")
+    assert list(vsm._vector_stores) == ["2_u", "3_u", "4_u"]
+    for evicted in created[:2]:
+        evicted._engine.dispose.assert_called_once()
+        # No running loop here: the async pool is dropped without awaiting.
+        evicted._async_engine.sync_engine.dispose.assert_called_once_with(close=False)
+    for kept in created[2:]:
+        kept._engine.dispose.assert_not_called()
+        kept._async_engine.sync_engine.dispose.assert_not_called()
+
+
+def test_per_folder_stores_get_small_pools():
+    vsm = _vsm_with(cache_size=3)
+    created = []
+    with patch(f"{_VSM}.PGVectorStore", side_effect=_fake_store_factory(created)):
+        vsm.get_or_create(1, "u")
+    kw = created[0].kwargs
+    assert kw["create_engine_kwargs"]["pool_size"] == 1
+    assert kw["create_engine_kwargs"]["max_overflow"] == 2
+    assert kw["create_engine_kwargs"]["pool_pre_ping"] is True
+    assert kw["create_engine_kwargs"]["pool_recycle"] == 1800
+    assert kw["async_connection_string"].startswith("postgresql+asyncpg://")
+    assert "engine" not in kw
+
+
+def test_cache_hit_refreshes_recency():
+    vsm = _vsm_with(cache_size=2)
+    created = []
+    with patch(f"{_VSM}.PGVectorStore", side_effect=_fake_store_factory(created)):
+        first = vsm.get_or_create(1, "u")
+        vsm.get_or_create(2, "u")
+        assert vsm.get_or_create(1, "u") is first      # hit: 1 becomes most recent
+        vsm.get_or_create(3, "u")                       # evicts 2, not 1
+    assert list(vsm._vector_stores) == ["1_u", "3_u"]
+    assert len(created) == 3
+
+
+async def test_eviction_on_running_loop_awaits_async_dispose():
+    """On the event loop the async engine is disposed properly (scheduled), not dropped."""
+    import asyncio
+    from unittest.mock import AsyncMock
+    vsm = _vsm_with(cache_size=1)
+    created = []
+    with patch(f"{_VSM}.PGVectorStore", side_effect=_fake_store_factory(created)):
+        vsm.get_or_create(1, "u")
+        created[0]._async_engine.dispose = AsyncMock()
+        vsm.get_or_create(2, "u")
+    await asyncio.sleep(0)
+    created[0]._async_engine.dispose.assert_awaited_once()
+    created[0]._async_engine.sync_engine.dispose.assert_not_called()
+
+
+def test_shared_mode_injects_shared_engines_and_never_disposes():
+    vsm = _vsm_with(mode="shared", cache_size=1)
+    created = []
+    eng, aeng = MagicMock(name="shared"), MagicMock(name="shared_async")
+    with patch(f"{_VSM}.PGVectorStore", side_effect=_fake_store_factory(created)), \
+         patch(f"{_VSM}.get_engine", return_value=eng), \
+         patch(f"{_VSM}.get_async_engine", return_value=aeng):
+        vsm.get_or_create(1, "u")
+        vsm.get_or_create(2, "u")
+        vsm.clear_cache()
+    kw = created[0].kwargs
+    assert kw["engine"] is eng and kw["async_engine"] is aeng
+    assert "secret" not in kw["connection_string"]      # informational string, no password
+    assert "create_engine_kwargs" not in kw
+    for store in created:
+        store._engine.dispose.assert_not_called()
+        store._async_engine.sync_engine.dispose.assert_not_called()
+    assert vsm._vector_stores == {}
+
+
+def test_clear_cache_and_drop_table_dispose_owned_engines():
+    vsm = _vsm_with(cache_size=5)
+    created = []
+    with patch(f"{_VSM}.PGVectorStore", side_effect=_fake_store_factory(created)):
+        vsm.get_or_create(1, "a")
+        vsm.get_or_create(2, "b")
+    engine, _ = _mock_engine()
+    with patch(f"{_VSM}.get_engine", return_value=engine):
+        vsm.drop_table(1, "a")
+    created[0]._engine.dispose.assert_called_once()
+    created[1]._engine.dispose.assert_not_called()
+    vsm.clear_cache()
+    created[1]._engine.dispose.assert_called_once()
+    assert vsm._vector_stores == {}
+
+
+def test_release_survives_dispose_errors():
+    vsm = _vsm_with(cache_size=1)
+    created = []
+    with patch(f"{_VSM}.PGVectorStore", side_effect=_fake_store_factory(created)):
+        vsm.get_or_create(1, "u")
+        created[0]._engine.dispose.side_effect = RuntimeError("x")
+        created[0]._async_engine.sync_engine.dispose.side_effect = RuntimeError("y")
+        vsm.get_or_create(2, "u")   # must not raise
+    assert list(vsm._vector_stores) == ["2_u"]
+
+
+def test_create_failure_propagates_and_caches_nothing():
+    vsm = _vsm_with(cache_size=2)
+    with patch(f"{_VSM}.PGVectorStore", side_effect=RuntimeError("bad")):
+        with pytest.raises(RuntimeError):
+            vsm.get_or_create(1, "u")
+    assert vsm._vector_stores == {}
+
+
+def test_invalid_cache_settings_fall_back_to_defaults(vsm):
+    """A config without the new keys (MagicMock here) gets the documented defaults."""
+    from src.domain.rag.vector_store_manager import DEFAULT_CACHE_SIZE
+    assert vsm.cache_size == DEFAULT_CACHE_SIZE
+    assert vsm._engine_mode == "shared"
+
+
+def test_pool_kwargs_reads_config_and_overrides():
+    from types import SimpleNamespace
+    from db.db import pool_kwargs
+    conf = SimpleNamespace(pool_size=7, max_overflow=3, pool_timeout=11, pool_recycle=99)
+    assert pool_kwargs(conf) == {"pool_size": 7, "max_overflow": 3, "pool_timeout": 11,
+                                 "pool_recycle": 99, "pool_pre_ping": True}
+    assert pool_kwargs(conf, pool_size=1, max_overflow=2)["pool_size"] == 1
+    # MagicMock / missing values fall back to SQLAlchemy-like defaults
+    assert pool_kwargs(MagicMock()) == {"pool_size": 5, "max_overflow": 10, "pool_timeout": 30,
+                                        "pool_recycle": 3600, "pool_pre_ping": True}

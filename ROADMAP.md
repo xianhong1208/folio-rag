@@ -26,16 +26,14 @@ tracked but not started. Items are grounded in the current codebase and its know
   `answer` path — retrieval + CRAG grading stay non-stream; only the final
   generation streams (blocking OpenAI stream bridged to the loop via a threadpool
   producer + asyncio queue).
-- **Instant revocation.** *Deferred by decision* — revisit when needed. A revoked
-  token should stop working immediately, not at expiry. Two candidate mechanisms:
-  - *jti deny-list* (self-contained): a console-managed revocation list checked on
-    every verify, keyed on the `jti` that already scopes ownership. Needs no MCP
-    Center change and is fully testable locally.
-  - *RFC 7662 introspection* (`IntrospectionTokenVerifier`): the resource server
-    asks MCP Gate whether the token is still active on each request. Needs MCP
-    Center to expose an introspection endpoint.
-  Whichever is chosen must cover **both** verify paths — the REST / tool-filter
-  `McpGateTokenVerifier` and the FastMCP `/mcp` transport verifier.
+- **Revocation.** *Shipped (MCP Gate revocation feed, off by default).* With
+  `auth.revocation` enabled, a background poller mirrors MCP Gate's
+  `POST /oauth/revoked` (revoked, unexpired `jti`s) and every verify path rejects
+  them — the FastMCP `/mcp` verifier, the REST / tool-filter
+  `McpGateTokenVerifier`, console sign-in and every console-session request — so a
+  revocation takes effect within one poll interval (30 s by default). Fail-open by
+  default; `fail_mode: closed` rejects all tokens once the list is stale.
+  Truly instant revocation (RFC 7662 introspection on each request) stays deferred.
 - **Multi-modal retrieval.** *Shipped (v1 — tables).* A `content_type` signal is
   detected at index time and threaded through to the UI, which badges table chunks
   and rebuilds them as real HTML tables. Verified live: Docling's *chunker*
@@ -121,10 +119,12 @@ fragmented chunks and weak precision.
 - **Synchronous** SQLAlchemy / psycopg2 — do not use `+asyncpg`.
 - **GPU selection is manual** — PyTorch is chosen per platform via a
   `uv sync --extra local --group` (rocm / cuda / cpu).
-- **Console sessions outlive token revocation.** The console session is a
-  stateless signed cookie, so revoking the token in MCP Gate does not end it
-  before its expiry (`auth.console.session_hours`, default 8 h) — the same
-  offline-verification trade-off as bearer tokens.
+- **Revocation is not instant, and is off by default.** Tokens are verified
+  offline. Without `auth.revocation` a revoked token (and console sessions made
+  from it) keeps working until it expires; with it, until the next poll of MCP
+  Gate's revocation feed (`poll_interval_sec`, default 30 s). With the default
+  `fail_mode: open`, revocations made while MCP Gate is unreachable apply only
+  once it is reachable again.
 - **The server aborts at shutdown.** Every restart, the old `python3 main.py`
   dies with SIGABRT raised from inside the process (`si_code=SI_TKILL`, i.e. a
   native library's `abort()` during interpreter teardown — torch/CUDA-style), which

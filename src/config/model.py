@@ -4,8 +4,9 @@
 All Pydantic config models are collected here for reuse across the project.
 """
 
+import logging as _logging
 from typing import List, Literal, Optional, Union
-from pydantic import BaseModel, ConfigDict, Field, PrivateAttr, model_validator
+from pydantic import BaseModel, ConfigDict, Field, PrivateAttr, field_validator, model_validator
 
 # Secrets are excluded from repr()/str() (repr=False), so logging a whole config
 # object, or an exception message that embeds one, can never print them.
@@ -16,6 +17,19 @@ class ServerConfig(BaseModel):
     host: str
     port: int
     transport: str
+
+
+class RetentionConfig(BaseModel):
+    """How long append-only tables keep rows (days; 0 = keep for ever).
+
+    Purged at startup and then every ``interval_hours`` (db/retention_db.py),
+    ``batch_size`` rows per transaction.
+    """
+    index_jobs_days: int = Field(30, ge=0)        # terminal IndexJobs rows only
+    query_logs_days: int = Field(90, ge=0)        # the console analytics window goes up to 90 days
+    settings_audit_days: int = Field(365, ge=0)
+    batch_size: int = Field(5000, ge=100, le=100000)
+    interval_hours: float = Field(24, gt=0, le=24 * 7)
 
 
 class DatabaseConfig(BaseModel):
@@ -31,6 +45,14 @@ class DatabaseConfig(BaseModel):
     database: Optional[str] = None
     user: Optional[str] = None
     password: Optional[str] = Field(None, repr=False)
+    # How each folder's PGVectorStore connects. "shared" (default): every store reuses
+    # the two shared engines above (pool_size + max_overflow connections each, no
+    # matter how many folders exist). "per_folder": each cached store gets its own
+    # small sync + async pools (1 + 2 connections each), disposed on cache eviction.
+    vector_store_engines: Literal["shared", "per_folder"] = "shared"
+    # Max PGVectorStore objects kept in the LRU cache (least recently used evicted).
+    vector_store_cache_size: int = Field(64, ge=1, le=10000)
+    retention: RetentionConfig = Field(default_factory=RetentionConfig)
 
 
 class DynamicToolsConfig(BaseModel):
@@ -61,6 +83,27 @@ class ConsoleAuthConfig(BaseModel):
     admin_scope: str = "rag:admin"
 
 
+class RevocationConfig(BaseModel):
+    """MCP Gate's revocation feed (``auth.revocation``).
+
+    Folio verifies tokens offline, so without this a token revoked in MCP Gate keeps
+    working until it expires. When enabled, a background task polls
+    ``<issuer>/oauth/revoked`` and every verification path rejects listed tokens.
+    The credentials belong to a confidential client registered in the MCP Gate
+    console and bound to this server as its resource server.
+    """
+    enabled: bool = False
+    client_id: Optional[str] = None
+    # Must be an ${ENV_VAR} reference; a literal secret in config.yaml is refused at startup.
+    client_secret: Optional[str] = Field(None, repr=False)
+    poll_interval_sec: float = Field(30, ge=5, le=3600)
+    # "open": keep accepting tokens when the feed is unreachable (logged loudly);
+    # "closed": reject every token once no poll has succeeded for
+    # stale_after_intervals x poll_interval_sec.
+    fail_mode: Literal["open", "closed"] = "open"
+    stale_after_intervals: int = Field(4, ge=2, le=100)
+
+
 class AuthConfig(BaseModel):
     """Bearer-token verification against an OAuth 2.1 authorization server (MCP Gate).
 
@@ -88,6 +131,8 @@ class AuthConfig(BaseModel):
     dynamic_tools: Optional[DynamicToolsConfig] = None
     # Admin-console login (session cookie, admin scope). Defaults apply when omitted.
     console: ConsoleAuthConfig = Field(default_factory=ConsoleAuthConfig)
+    # MCP Gate revocation feed (off by default; needs a resource-server client).
+    revocation: RevocationConfig = Field(default_factory=RevocationConfig)
 
 
 class LoggingConfig(BaseModel):
@@ -212,6 +257,12 @@ class RAGEmbeddingConfig(BaseModel):
     request_dimensions: bool = False
     timeout: float = Field(60.0, gt=0)  # per-request timeout (seconds)
     max_retries: int = Field(3, ge=0, le=10)  # 429 / 5xx / timeout retries (SDK backoff)
+    # Texts per embedding request (llama-index defaults to 10, i.e. 5 requests per batch of 50).
+    embed_batch_size: int = Field(64, ge=1, le=2048)
+    # The model's input window. Before embedding, a leaf's retrieval text (prefix +
+    # breadcrumb + text, plus passage_prefix) is fitted into it by shortening the
+    # breadcrumb, then the prefix — never the chunk text. 512 for e5 / bge-large.
+    max_input_tokens: int = Field(512, ge=64)
 
 
 class RAGChunkingConfig(BaseModel):
@@ -236,6 +287,8 @@ class RAGRetrievalConfig(BaseModel):
     default_top_k: int
     default_similarity_cutoff: float
     default_sparse_top_k: int = 12
+    # Fused candidates handed to the reranker: max(3 x top_k, this). Ignored without a reranker.
+    rerank_candidates: int = 60
     default_hybrid_alpha: float = 0.75
     hybrid_search: bool
     text_search_config: str = "simple"  # Chinese is segmented in Python; Postgres tokenizes the space-joined result with `simple`
@@ -245,14 +298,26 @@ class RAGRetrievalConfig(BaseModel):
     # profile: cloud (which loads no in-process model; explicit ckip is rejected there).
     # Changing it flags existing folders for Rebuild FTS (no re-embedding needed).
     segmenter: Optional[Literal["ckip", "jieba", "bigram"]] = None
+    # Device for the CKIP segmenter: cpu | cuda | cuda:N | auto (cuda:0 when available).
+    ckip_device: str = "cpu"
     # "rrf" = Reciprocal Rank Fusion (BM25 affects ordering); "concat" = llama_index native
     # (dense dominates, effectively vector-only; legacy).
     hybrid_fusion: str = "rrf"
     rrf_k: int = 60  # RRF constant (larger = smoother; 60 is the common convention)
+    # MCP search: attach the top-ranked hit's original file as an embedded resource
+    # (off by default — a whole file can dwarf the search result itself). Only that
+    # one file is attached, and only when it is at most resource_file_max_bytes.
     return_resource_files: bool = False
+    resource_file_max_bytes: int = Field(1_000_000, ge=0)
     auto_merging: Optional[AutoMergingConfig] = None
     expand_context_default: bool = True
-    expand_context_neighbors: int = 2
+    # Leaves of context on each side of an unmerged hit (MCP search). Windows stay
+    # inside the hit's section and adjacent windows of a file are merged.
+    expand_context_neighbors: int = 1
+    # Estimated-token budget of one MCP search response (CJK ≈ 0.7 tokens/char,
+    # other text ≈ 0.25). Lowest-ranked results are dropped (and reported) to fit;
+    # 0 disables the budget.
+    mcp_response_token_budget: int = Field(6000, ge=0)
     # Max concurrent queries (REST + MCP share one semaphore; excess is queued). 8 keeps every
     # connection pool (5+10 each) within headroom.
     max_concurrent_queries: int = 8
@@ -297,7 +362,9 @@ class ContextualRetrievalConfig(BaseModel):
     """Contextual Retrieval configuration."""
     enabled: bool = False
     max_context_length: int = 150
-    max_concurrent: int = 5
+    max_concurrent: int = 5  # per file
+    # Cap on prefix requests in flight across every file indexed at once (process-wide).
+    max_concurrent_global: int = Field(16, ge=1)
     max_doc_chars: int = 60000
     max_tokens: int = 1024
     reasoning_effort: Optional[str] = None
@@ -306,7 +373,7 @@ class ContextualRetrievalConfig(BaseModel):
     # Cost guards (0 = unlimited). Chunks over a cap get the deterministic fallback prefix
     # (file name) instead of an LLM call, and a warning is logged.
     max_calls_per_file: int = Field(0, ge=0)
-    # Estimated tokens (prompt chars / 4 + max_tokens) per UTC day, process-wide.
+    # Estimated tokens (prompt: 1 per CJK char, 1 per 4 other chars; + max_tokens) per UTC day.
     max_tokens_per_day: int = Field(0, ge=0)
 
 
@@ -420,12 +487,34 @@ class ParsingConfig(BaseModel):
     prompt: Optional[str] = None  # override the built-in language-neutral transcription prompt
 
 
+# Upper bound for rag.indexing.max_concurrent_jobs (and FOLIO_INDEXING_CONCURRENCY).
+MAX_INDEXING_CONCURRENCY = 32
+
+
 class IndexingConfig(BaseModel):
     """Behavior control for background indexing jobs."""
-    # Max concurrent files per job. Kept low (4) because docling convert is serialized by
-    # DOCLING_INFER_LOCK; a high value would starve the shared executor. Override via
+    # Max files indexed at once, process-wide (one semaphore shared by every job). Kept
+    # low (4) because docling convert is serialized by DOCLING_INFER_LOCK and each file
+    # fans out contextual-prefix LLM calls and embedding batches. Range 1..32; a larger
+    # value (old configs shipped 100) is capped at 32 with a warning. Override via
     # FOLIO_INDEXING_CONCURRENCY.
-    max_concurrent_jobs: int = 4
+    max_concurrent_jobs: int = Field(4, ge=1)
+
+    # Threads in the dedicated indexing pool (src/domain/rag/indexing_executor.py).
+    # Indexing's blocking work (docling, prefix LLM calls, embedding, pgvector writes)
+    # runs there instead of the event loop's default executor, so the query path's
+    # to_thread calls never queue behind a large indexing job.
+    executor_workers: int = Field(16, ge=1, le=64)
+
+    @field_validator("max_concurrent_jobs")
+    @classmethod
+    def _cap_concurrency(cls, v: int) -> int:
+        if v > MAX_INDEXING_CONCURRENCY:
+            _logging.getLogger(__name__).warning(
+                f"rag.indexing.max_concurrent_jobs={v} is above {MAX_INDEXING_CONCURRENCY}; "
+                f"using {MAX_INDEXING_CONCURRENCY} (set 4-8 for normal use)")
+            return MAX_INDEXING_CONCURRENCY
+        return v
 
     # Per-file limit (seconds); override via FOLIO_PER_FILE_TIMEOUT_SECONDS. Default is effectively
     # unlimited (10 days), relying on the 60s keepalive heartbeat instead of a hard timeout.

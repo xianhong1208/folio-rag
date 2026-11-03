@@ -23,7 +23,7 @@ Design:
 from __future__ import annotations
 
 import threading
-from typing import List, Optional
+from typing import List, Optional, Tuple
 
 from src.log import get_api_logger
 
@@ -43,6 +43,38 @@ def _cloud_profile() -> bool:
         return False
 
 
+def _configured_device() -> str:
+    """``rag.retrieval.ckip_device`` (default ``cpu``)."""
+    try:
+        from src.config.config_manager import Config
+        rag = getattr(Config.get_config_model(), "rag", None)
+        return str(getattr(getattr(rag, "retrieval", None), "ckip_device", None) or "cpu")
+    except Exception:
+        return "cpu"
+
+
+def resolve_device(spec: Optional[str]) -> int:
+    """Device spec -> ckip-transformers' device index (-1 = CPU, N = cuda:N).
+
+    Accepts ``cpu``, ``cuda`` (= cuda:0), ``cuda:N`` and ``auto`` (cuda:0 when torch
+    sees a GPU). Anything else falls back to the CPU with a warning."""
+    s = (spec or "cpu").strip().lower()
+    if s == "cpu":
+        return -1
+    if s == "auto":
+        try:
+            import torch
+            return 0 if torch.cuda.is_available() else -1
+        except Exception:
+            return -1
+    if s == "cuda":
+        return 0
+    if s.startswith("cuda:") and s[5:].isdigit():
+        return int(s[5:])
+    logger.warning(f"Unknown rag.retrieval.ckip_device {spec!r}; CKIP runs on the CPU")
+    return -1
+
+
 class CkipSegmenter:
     """Lazy, thread-safe wrapper around ckip_transformers CkipWordSegmenter.
 
@@ -53,8 +85,9 @@ class CkipSegmenter:
 
     name = "ckip"
 
-    def __init__(self, model: str = _DEFAULT_MODEL):
+    def __init__(self, model: str = _DEFAULT_MODEL, device: Optional[str] = None):
         self._model_name = model
+        self._device = device  # None = rag.retrieval.ckip_device, read at load time
         self._ws = None  # the underlying CkipWordSegmenter (lazy)
         self._load_lock = threading.Lock()
         self._load_failed = False  # once True, we permanently fall back
@@ -90,10 +123,13 @@ class CkipSegmenter:
                 # module import or the non-Chinese retrieval path.
                 from ckip_transformers.nlp import CkipWordSegmenter
 
+                spec = self._device or _configured_device()
+                device = resolve_device(spec)
                 logger.info(
-                    f"Loading CKIP word segmenter (model={self._model_name})..."
+                    f"Loading CKIP word segmenter (model={self._model_name}, "
+                    f"device={'cpu' if device < 0 else f'cuda:{device}'})..."
                 )
-                self._ws = CkipWordSegmenter(model=self._model_name)
+                self._ws = CkipWordSegmenter(model=self._model_name, device=device)
                 logger.info("✅ CKIP word segmenter ready")
                 return True
             except Exception as e:  # noqa: BLE001 — degrade on ANY failure
@@ -128,7 +164,7 @@ class CkipSegmenter:
             return text
         try:
             # CkipWordSegmenter is a batch API; wrap the single input in a list.
-            result = self._ws([text])
+            result = self._ws([text], show_progress=False)
             words = result[0] if result else []
             return self._join(words) or text
         except Exception as e:  # noqa: BLE001
@@ -141,22 +177,30 @@ class CkipSegmenter:
         Preserves input order and length. Empty inputs map to "". On model
         unavailability or any runtime error, returns the inputs unchanged.
         """
+        return self.segment_batch_report(texts)[0]
+
+    def segment_batch_report(self, texts: List[str]) -> Tuple[List[str], bool]:
+        """``segment_batch`` plus whether it degraded to the raw texts.
+
+        The indexer uses the flag to mark the folder for Rebuild FTS: unsegmented
+        Chinese in the keyword index silently loses recall, and the table's stamp
+        would otherwise still say "ckip"."""
         if not texts:
-            return []
+            return [], False
         if not self._ensure_model():
-            return list(texts)
+            return list(texts), True
         try:
-            results = self._ws(texts)
+            results = self._ws(texts, show_progress=False)
             out: List[str] = []
             for original, words in zip(texts, results):
                 if not original or not original.strip():
                     out.append("")
                 else:
                     out.append(self._join(words) or original)
-            return out
+            return out, False
         except Exception as e:  # noqa: BLE001
             logger.warning(f"CKIP batch segment failed, using raw texts: {e!r}")
-            return list(texts)
+            return list(texts), True
 
 
 # ----------------------------------------------------------------------------

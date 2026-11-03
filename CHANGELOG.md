@@ -6,7 +6,25 @@ to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Retrieval quality and cost (Phase 1) — measured on the new golden set
+Golden set: 205 questions over a public 19-document corpus (`evals/rag/`), baseline vs
+this release on the same index host (`evals/baselines/rag-2026-11-03-*`):
+MCP Recall@10 0.973 → **0.981**, Recall@5 0.957 → 0.976, nDCG@10 0.936 → 0.938,
+Chinese-question/English-document Recall@10 0.80 → **0.90**; tokens per MCP search
+8.2k → **2.6k** (duplicated text 48% → 7%); search p50 latency 461 → 685 ms (the
+larger rerank pool). **Re-index every folder** (chunking v3, prompt v3); the console
+flags them.
+
 ### Added
+- Golden-set retrieval eval (`scripts/eval_retrieval.py`, `evals/rag/`), per-stage
+  search timings in the trace, `docs/operations-postgres.md`.
+- **MCP Gate revocation feed** (`auth.revocation`, off by default). A background
+  poller mirrors MCP Gate's `POST /oauth/revoked` and rejects revoked tokens on
+  `/mcp`, the REST API, console sign-in and existing console sessions, within one
+  poll interval instead of at expiry (PATs can live a year). Needs a confidential
+  client bound to Folio as its resource server; `fail_mode` `open` (default) or
+  `closed`; status in `/health/detailed` under `checks.revocation`. See README →
+  *Token revocation*.
 - **Per-file Retry and Cancel in the console.** Retry (or Reindex) any idle
   file; cancel a queued or indexing file without stopping the rest of its job
   (`POST …/files/{id}/retry`, `POST …/files/{id}/cancel`, bulk
@@ -116,6 +134,37 @@ to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   tokenizer of multilingual-e5 and bge-m3) and a `tokenizers` dependency.
 
 ### Changed
+- **MCP search responses** are budgeted (`rag.retrieval.mcp_response_token_budget`,
+  6000): neighbour windows stay inside the hit's section, overlapping windows merge per
+  file, `expand_context_neighbors` defaults to 1, and original files are no longer
+  attached by default (`return_resource_files: false`; when on, only the top hit's file,
+  up to `resource_file_max_bytes`). Responses report `score_type`, `omitted_results` and
+  `response_tokens_estimated`.
+- **MCP tool contract**: `similarity_cutoff` is no longer advertised (accepted and
+  ignored — it had no effect under rank fusion and rerank); `top_k` / `expand_context`
+  defaults are read live; `top_k` is clamped to 1..20; read mode pages with
+  `offset` / `next_offset`.
+- **The tool payload is an explicit MCP text block.** Without an attachment, FastMCP
+  used to deliver it double-encoded (`["{…}"]`).
+- **Rerank pool**: the reranker sees max(3 × top_k, `rag.retrieval.rerank_candidates`
+  = 60) fused candidates instead of 3 × top_k — cross-lingual hits sat at fused rank
+  50+ and never reached it.
+- **BM25**: one SQL statement (all-terms matches first), the folder's own stamped
+  segmenter, and no bigrams across Chinese particles.
+- **Chunking (pipeline v3)**: Chinese sentences split at 。！？；; no duplicated overlap
+  in the plain-text/audio splitter; parents sized with the real tokenizer; CSV keeps
+  its header row in every chunk; audio transcripts carry timestamps in ~5-minute
+  blocks; one context prefix per split table.
+- **Contextual prefixes** never use the model's reasoning text, are not cached when
+  empty or failed, and failures surface as a file warning (prompt v3 regenerates
+  prefixes cached by older versions).
+- **Database**: all folder vector stores share the two engines (40 folders: 80 → 2
+  backend connections); store cache is an LRU; indexing runs on its own thread pool
+  and `max_concurrent_jobs` defaults to 4 (values above 32 are capped); QueryLogs,
+  SettingsAudit and IndexJobs have retention (`database.retention.*`); duplicate
+  FileIndices index dropped (migration `20261103d0b001`).
+- Blocking DB / LLM calls moved off the event loop (console answers, query logging,
+  folder ACL, adapters).
 - **Renamed from Agentic RAG to Folio.** The console, MCP server name and
   instructions, API title, log banners and docs say Folio; the Python
   distribution is `folio-rag`. Per-folder MCP tools are now `Folio_<folder>`

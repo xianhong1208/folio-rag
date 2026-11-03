@@ -18,6 +18,53 @@ evals/
   baselines/                  # Scoring output (JSON; baselines are committed to the repo)
 ```
 
+## Retrieval golden set (public corpus, HTTP harness)
+
+The main retrieval benchmark. Unlike the rest of `evals/`, its material is public and
+committed: `rag/documents/` holds ~20 documents that can live in an MIT repo (Taiwanese
+laws, U.S. government pages, fictional company documents, two PDFs with tables and
+three synthetic zh-TW meeting transcripts; sources and licenses in
+`rag/documents/SOURCES.md`).
+
+| File | What it is |
+|---|---|
+| `rag/golden_qa.yaml` | ~200 questions, stratified by type (zh/en factual, cross-lingual both ways, keyword, paraphrase, table, multi-hop, ~10% unanswerable). Gold = file + exact quoted spans, never chunk ids. |
+| `rag/golden_qa_build_log.yaml` | every generated question that was dropped, with the reason |
+| `rag/llm_cache.jsonl` | cached LLM responses — rebuilding the set or the transcripts replays them |
+| `rag/sources/` | Markdown sources of the PDFs |
+| `retrieval_metrics.py` | span matching, Recall/MRR/nDCG, token estimate, duplicate ratio, sampling (unit-tested) |
+| `baselines/rag-<date>-<label>.{json,md}` | committed results |
+
+```bash
+# score the running server (indexes the corpus into folder folio_eval_golden_v1 first,
+# reusing it when every file's sha256 matches); writes evals/baselines/rag-<date>-dev-<sha>.*
+.venv/bin/python scripts/eval_retrieval.py --token-file <pat.json> --runs 2
+
+# rebuild material (deterministic: cached LLM responses, fixed seed)
+.venv/bin/python scripts/eval_fetch_laws.py            # laws from law.moj.gov.tw
+.venv/bin/python scripts/eval_make_corpus.py --offline # PDFs + synthetic transcripts
+.venv/bin/python scripts/eval_build_golden.py --offline
+```
+
+`<pat.json>` is `{"token": "...", "jti": "..."}` for an MCP Gate PAT issued for Folio
+(with `rag:admin` so the settings snapshot is included). The eval folder belongs to
+that token; use the same token for every run so the folder is reused.
+
+What the harness measures, per question type and question language:
+
+- **mcp** — the MCP search tool with its defaults (what an agent receives); **mcp_k20**
+  — the same with `top_k=20`; **trace** — the console retrieval trace (`top_k=20`):
+  fused + reranked leaves before auto-merge / expansion, with each hit's rank in the
+  dense, BM25 and fused candidate lists (reported as lower bounds on stage recall).
+- chunk-level Recall@5/10/20, MRR@10, nDCG@10: a result matches an evidence item when
+  its text contains ≥60% of every quoted span (8-character windows after normalising
+  away whitespace, punctuation and Markdown), or when it is the leaf next to the chunk
+  holding the span. File-level Recall@5.
+- unanswerable questions: false-accept rate = top score ≥ 0.25 / 0.5.
+- MCP response size (estimated tokens: CJK 0.7/char, other 0.25/char), duplicate-text
+  ratio, p50/p95 latency; run-to-run variance over `--runs`.
+- gold reachability: evidence spans the indexed chunks no longer contain (parser loss).
+
 ## Material Source A: Common Voice zh-TW (no proofreading, recommended)
 
 Mozilla Common Voice Scripted Speech (zh-TW, CC0-1.0) ships with **human-verified** per-sentence text, so no proofreading is needed. After logging in to the Mozilla Data Collective and downloading the tar.gz:
@@ -67,5 +114,5 @@ uv run --no-sync python scripts/run_asr_eval.py --provider openai-compatible \
 ## Conventions
 
 - **Baselines go in the repo**: commit `baselines/*.json` for every meaningful run and attach the diff in the MR description.
-- **Material does not go in the repo** (documents/audio may contain internal data): already excluded by `.gitignore`; keep the material in shared storage and note the path in the README.
+- **Material does not go in the repo** (documents/audio may contain internal data): already excluded by `.gitignore`; keep the material in shared storage and note the path in the README. The exception is `rag/documents/`, the public golden-set corpus (its own `.gitignore` re-includes it): add only files you can publish under MIT and record each in `SOURCES.md`.
 - Any change on the retrieval side (embedding / chunking / retrieval parameters / ASR) -> score before merging.

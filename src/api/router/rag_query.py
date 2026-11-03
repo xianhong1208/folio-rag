@@ -15,6 +15,7 @@ server's overall config. hybrid_alpha is accepted for compatibility and ignored.
 """
 
 from fastapi import APIRouter, Body, Depends, HTTPException, Request
+from starlette.concurrency import run_in_threadpool
 
 from db.cached_folderdb import CachedFolderDB
 from src.adapter.rag import get_rag_adapter
@@ -164,7 +165,10 @@ async def query_rag(
             ),
         )
 
-        folder = CachedFolderDB.get_by_name_and_token(query_request.folder_name, token)
+        # Sync DB lookups (folder, query log) run in the threadpool: a slow
+        # database must not stall every other request on the event loop.
+        folder = await run_in_threadpool(
+            CachedFolderDB.get_by_name_and_token, query_request.folder_name, token)
         if not folder:
             raise FolderNotFoundError(folder_name=query_request.folder_name)
 
@@ -187,7 +191,8 @@ async def query_rag(
         try:
             from db.query_log_db import QueryLogDB
             from src.log import mask_token
-            QueryLogDB.record(
+            await run_in_threadpool(
+                QueryLogDB.record,
                 query=query_request.query, folder_id=folder.id,
                 result_count=result.total_results, latency_ms=_latency_ms,
                 token_prefix=mask_token(token) if token else None,
