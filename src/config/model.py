@@ -249,12 +249,20 @@ class RAGRetrievalConfig(BaseModel):
     # (dense dominates, effectively vector-only; legacy).
     hybrid_fusion: str = "rrf"
     rrf_k: int = 60  # RRF constant (larger = smoother; 60 is the common convention)
+    # MCP search: attach the top-ranked hit's original file as an embedded resource
+    # (off by default — a whole file can dwarf the search result itself). Only that
+    # one file is attached, and only when it is at most resource_file_max_bytes.
     return_resource_files: bool = False
+    resource_file_max_bytes: int = Field(1_000_000, ge=0)
     auto_merging: Optional[AutoMergingConfig] = None
     expand_context_default: bool = True
     # Leaves of context on each side of an unmerged hit (MCP search). Windows stay
     # inside the hit's section and adjacent windows of a file are merged.
     expand_context_neighbors: int = 1
+    # Estimated-token budget of one MCP search response (CJK ≈ 0.7 tokens/char,
+    # other text ≈ 0.25). Lowest-ranked results are dropped (and reported) to fit;
+    # 0 disables the budget.
+    mcp_response_token_budget: int = Field(6000, ge=0)
     # Max concurrent queries (REST + MCP share one semaphore; excess is queued). 8 keeps every
     # connection pool (5+10 each) within headroom.
     max_concurrent_queries: int = 8

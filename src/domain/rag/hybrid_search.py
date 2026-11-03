@@ -32,6 +32,11 @@ FUSIONS = (FUSION_RRF, FUSION_CONCAT)
 # let the cross-encoder pick the final top_k.
 RERANK_CANDIDATE_FACTOR = 3
 
+# pgvector's default hnsw.ef_search. An HNSW scan returns at most ef_search rows,
+# so a dense query deeper than this would be silently cut short; the dense query
+# raises it (transaction-local) to max(DEFAULT_EF_SEARCH, k).
+DEFAULT_EF_SEARCH = 40
+
 
 @dataclass(frozen=True)
 class SearchSettings:
@@ -128,6 +133,17 @@ class SearchOutcome:
     dense: List[Any] = field(default_factory=list)
     sparse: List[Any] = field(default_factory=list)
     fused: List[Any] = field(default_factory=list)
+    fusion: str = FUSION_RRF             # how candidates were fused (see score_type)
+
+    @property
+    def score_type(self) -> str:
+        """What ``score`` means on the final nodes: ``rerank`` (cross-encoder
+        relevance, 0..1), ``rrf`` (reciprocal-rank fusion, ~0.01-0.03, only the
+        order is meaningful) or ``vector`` (legacy concat fusion: cosine for dense
+        hits, ts_rank for keyword-only hits)."""
+        if self.reranked:
+            return "rerank"
+        return "vector" if self.fusion == FUSION_CONCAT else "rrf"
 
 
 def is_leaf(node_with_score) -> bool:
@@ -236,6 +252,21 @@ def _bm25_statement(table: str):
         f'ORDER BY rank DESC LIMIT :k')
 
 
+def _dense_statement(table: str):
+    """Cosine top-k over the folder table (parents are dropped in Python, as before:
+    a WHERE filter would make the HNSW scan return fewer than k rows)."""
+    from sqlalchemy import text as _sql
+
+    return _sql(
+        f'SELECT node_id, text, metadata_, '
+        f'1 - (embedding <=> CAST(:emb AS vector)) AS similarity '
+        f'FROM "{table}" ORDER BY embedding <=> CAST(:emb AS vector) LIMIT :k')
+
+
+def _vector_literal(embedding: Sequence[float]) -> str:
+    return "[" + ",".join(repr(float(x)) for x in embedding) + "]"
+
+
 def _row_to_node(row):
     """(node_id, text, metadata_, rank) → NodeWithScore, as llama-index builds it."""
     from llama_index.core.schema import NodeWithScore, TextNode
@@ -275,16 +306,47 @@ class HybridSearcher:
         return self._reranker
 
     # ------------------------------------------------------------------ dense
-    async def dense(self, query_text: str, k: int) -> List[Any]:
-        """Vector search, leaves only (parents carry a zero vector, but be explicit)."""
-        from llama_index.core.retrievers import VectorIndexRetriever
+    async def embed_query(self, query_text: str) -> List[float]:
+        """The query embedding, from the index's embedding model."""
+        return await self._index._embed_model.aget_query_embedding(query_text)
 
-        retriever = VectorIndexRetriever(
-            index=self._index, similarity_top_k=k, vector_store_query_mode="default")
-        nodes = await retriever.aretrieve(query_text)
+    async def dense(self, query_text: str, k: int) -> List[Any]:
+        """Vector search, leaves only (parents carry a zero vector, but be explicit).
+
+        Runs its own cosine query rather than llama-index's: llama-index never
+        raises ``hnsw.ef_search`` (and would do it with a session-wide ``SET`` that
+        leaks to the next user of the pooled connection), and an HNSW scan returns
+        at most ef_search (default 40) rows — a deeper k was silently truncated.
+        Here ``SET LOCAL`` scopes the raise to this query's transaction.
+        """
+        from src.domain.rag.chunk_lookup import ChunkLookup
+
+        embedding = await self.embed_query(query_text)
+        table = ChunkLookup._get_table_name(self._vector_store)
+        ef = max(DEFAULT_EF_SEARCH, int(k))
+        async with self._dense_engine().begin() as conn:
+            await conn.execute(_sql_text(f"SET LOCAL hnsw.ef_search = {ef}"))
+            rows = (await conn.execute(_dense_statement(table), {
+                "emb": _vector_literal(embedding), "k": int(k)})).fetchall()
+        nodes = [_row_to_node(r) for r in rows]
         return [n for n in nodes if is_leaf(n)]
 
     # ----------------------------------------------------------------- sparse
+    def _dense_engine(self):
+        """llama-index's own async engine for this store when it has built one (the
+        dense query has always run on that pool), else the shared async engine."""
+        try:
+            from sqlalchemy.ext.asyncio import AsyncEngine
+
+            eng = getattr(self._vector_store, "_async_engine", None)
+            if isinstance(eng, AsyncEngine):
+                return eng
+        except Exception:  # noqa: BLE001  # pragma: no cover - import guard
+            pass
+        from db.db import get_async_engine
+
+        return get_async_engine()
+
     async def segment_query(self, query_text: str, settings: SearchSettings) -> str:
         """Space-separated query terms, tokenised the way the index was.
 
@@ -369,7 +431,8 @@ class HybridSearcher:
         fused, dense, sparse = await self.candidates(query_text, settings)
         # Snapshot the fused order and scores: rerank rewrites node.score in place.
         outcome = SearchOutcome(nodes=[], candidates=len(fused), dense=dense, sparse=sparse,
-                                fused=_with_scores(fused, _snapshot(fused)))
+                                fused=_with_scores(fused, _snapshot(fused)),
+                                fusion=settings.fusion)
         if self._reranker and fused:
             from src.domain.rag.rerank_policy import rerank
 
@@ -401,6 +464,12 @@ class _ScoredView:
     @property
     def text(self):
         return self.node.text
+
+
+def _sql_text(sql: str):
+    from sqlalchemy import text as _sql
+
+    return _sql(sql)
 
 
 def _with_scores(nodes: Sequence[Any], snapshot) -> List[Any]:

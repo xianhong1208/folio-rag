@@ -21,7 +21,7 @@ from __future__ import annotations
 
 import time
 from collections import Counter
-from typing import List
+from typing import List, Optional
 
 from db.filedb import FileDB
 from db.fileindexdb import FileIndexDB
@@ -32,17 +32,144 @@ from src.log import get_mcptools_logger, log_err, log_op_debug, log_warn
 logger = get_mcptools_logger()
 
 
+# MCP search returns at most this many results (the REST API caps top_k the same way).
+MAX_TOP_K = 20
+
+_HINT_NO_RESULTS = (
+    "No matching passages. Rephrase the query with other keywords or synonyms "
+    "(e.g. the document's own terms), or use mode='list' to see which files exist.")
+_HINT_FEW = (
+    "Only {n} passage(s) matched. If they do not answer the question, rephrase the "
+    "query with more specific terms; do not read whole files to make up for it.")
+_HINT_OK = (
+    "Results are ranked best first (score_type={score_type}). Cite file_name and page. "
+    "Use mode='read' only when the user asks for a whole document.")
+_HINT_OMITTED = (
+    " {omitted} lower-ranked result(s) were left out to keep this response under "
+    "~{budget} tokens; ask a narrower query to surface them.")
+
+
+def clamp_top_k(top_k) -> int:
+    """top_k bounded to 1..MAX_TOP_K (a missing or invalid value counts as 1)."""
+    try:
+        return max(1, min(MAX_TOP_K, int(top_k)))
+    except (TypeError, ValueError):
+        return 1
+
+
+def score_type_of(retriever) -> str:
+    """``rerank`` / ``rrf`` / ``vector`` for the retriever's last search."""
+    outcome = getattr(retriever, "last_outcome", None)
+    st = getattr(outcome, "score_type", None)
+    return st if isinstance(st, str) else "rrf"
+
+
+def configured_response_budget() -> int:
+    """``rag.retrieval.mcp_response_token_budget`` (live); the default when unreadable."""
+    try:
+        from src.config.config_manager import Config
+
+        retrieval = Config.get_config_model().rag.retrieval
+        value = getattr(retrieval, "mcp_response_token_budget", DEFAULT_RESPONSE_BUDGET)
+        return int(value if value is not None else DEFAULT_RESPONSE_BUDGET)
+    except Exception:  # noqa: BLE001
+        return DEFAULT_RESPONSE_BUDGET
+
+
+DEFAULT_RESPONSE_BUDGET = 6000
+
+
+def result_dict(r: MergedResult) -> dict:
+    """One search hit as the agent sees it."""
+    out = {
+        "node_id": r.node_id,
+        "file_id": r.file_id,
+        "file_name": r.file_name,
+        "score": round(r.score, 4),
+        "node_role": r.node_role,
+        "chunk_index_range": r.chunk_index_range,
+        "text": r.text,
+    }
+    # Citation provenance: included only when present (older indexed data lacks this metadata)
+    if r.page is not None:
+        out["page"] = r.page
+    if r.headings:
+        out["headings"] = r.headings
+    # content_type ("table"/"picture") lets an MCP agent know a hit's text
+    # is a serialized table/figure, not prose — parity with the REST path.
+    content_type = getattr(r, "content_type", None)
+    if content_type:
+        out["content_type"] = content_type
+    merged = getattr(r, "merged_from_leaves", None) or []
+    if r.node_role == "parent":
+        out["merged_from_leaves"] = len(merged)
+    elif len(merged) > 1:
+        out["merged_hits"] = len(merged)      # one window covering several hits
+    return out
+
+
+def fit_to_budget(response: dict, budget: int) -> dict:
+    """Drop the lowest-ranked results until ``response`` fits ``budget`` estimated
+    tokens; when even the best result alone is too big, cut its text. Records
+    ``omitted_results`` / ``response_tokens_estimated`` on the response.
+    A budget of 0 (or less) disables the check.
+    """
+    import json
+
+    from src.domain.rag.token_budget import estimate_tokens, truncate_to_tokens
+
+    def size(obj) -> int:
+        return estimate_tokens(json.dumps(obj, ensure_ascii=False))
+
+    results = list(response.get("results") or [])
+    if budget <= 0 or not results:
+        response["response_tokens_estimated"] = size(response)
+        return response
+    # Room for the envelope and a hint that may grow by one sentence.
+    envelope = {k: v for k, v in response.items() if k != "results"}
+    used = size(envelope) + 80
+    kept = []
+    for r in results:
+        cost = size(r)
+        if used + cost > budget:
+            if not kept:
+                # The best hit alone does not fit: keep it, cut to what is left.
+                room = max(budget - used - size({**r, "text": ""}), 0)
+                text, _ = truncate_to_tokens(r.get("text") or "", room)
+                r = {**r, "text": text, "text_truncated": True}
+                kept.append(r)
+                used += size(r)
+            break
+        kept.append(r)
+        used += cost
+    omitted = len(results) - len(kept)
+    response["results"] = kept
+    response["total_results"] = len(kept)
+    if omitted:
+        response["omitted_results"] = omitted
+    response["response_tokens_estimated"] = size(response)
+    return response
+
+
 async def handle_search(
     *,
     query: str,
     folder,
     retriever: AutoMergingRetriever,
     top_k: int,
-    similarity_cutoff: float,
+    similarity_cutoff: Optional[float] = None,
     expand_context: bool,
+    token_budget: Optional[int] = None,
 ) -> dict:
-    """mode='search' — primary hybrid + auto-merge (async: retrieval runs off the event loop)."""
+    """mode='search' — primary hybrid + auto-merge (async: retrieval runs off the event loop).
+
+    ``similarity_cutoff`` is accepted for backward compatibility and ignored: the
+    ranking is rank fusion (+ rerank), whose scores a similarity threshold does
+    not apply to. ``token_budget`` (default ``rag.retrieval.mcp_response_token_budget``)
+    caps the estimated size of the response.
+    """
     start = time.perf_counter()
+    top_k = clamp_top_k(top_k)
 
     log_op_debug(
         logger,
@@ -50,7 +177,9 @@ async def handle_search(
         folder_id=folder.id,
         msg=(
             f"folder='{folder.name}' query='{query[:50]}{'...' if len(query) > 50 else ''}' "
-            f"top_k={top_k} cutoff={similarity_cutoff} expand_context={expand_context}"
+            f"top_k={top_k} expand_context={expand_context}"
+            + (f" similarity_cutoff={similarity_cutoff} (ignored)"
+               if similarity_cutoff is not None else "")
         ),
     )
 
@@ -81,7 +210,6 @@ async def handle_search(
         results: List[MergedResult] = await retriever.aquery(
             query_text=query,
             top_k=top_k,
-            similarity_cutoff=similarity_cutoff,
             expand_context=expand_context,
         )
     except Exception as exc:
@@ -106,56 +234,36 @@ async def handle_search(
     merged_leaves_total = sum(
         len(r.merged_from_leaves) for r in results if r.node_role == "parent"
     )
+    score_type = score_type_of(retriever)
 
     response = {
         "mode": "search",
         "query": query,
         "folder": folder.name,
+        "top_k": top_k,
+        # What "score" means: rerank = cross-encoder relevance (0..1);
+        # rrf = rank fusion (~0.01-0.03, compare only within one response).
+        "score_type": score_type,
         "total_results": len(results),
-        "results": [
-            {
-                "node_id": r.node_id,
-                "file_id": r.file_id,
-                "file_name": r.file_name,
-                "score": round(r.score, 4),
-                "node_role": r.node_role,
-                "chunk_index_range": r.chunk_index_range,
-                "text": r.text,
-                # Citation provenance: included only when present (older indexed data lacks this metadata)
-                **({"page": r.page} if r.page is not None else {}),
-                **({"headings": r.headings} if r.headings else {}),
-                # content_type ("table"/"picture") lets an MCP agent know a hit's text
-                # is a serialized table/figure, not prose — parity with the REST path.
-                **({"content_type": getattr(r, "content_type", None)}
-                   if getattr(r, "content_type", None) else {}),
-                **(
-                    {"merged_from_leaves": len(r.merged_from_leaves)}
-                    if r.node_role == "parent"
-                    else {}
-                ),
-            }
-            for r in results
-        ],
+        "results": [result_dict(r) for r in results],
     }
 
-    hint_reason = "normal"
     if not results:
-        response["_hint"] = (
-            "No results above similarity_cutoff. Try: lower cutoff, broaden query, "
-            "or use mode='list' to see what's available."
-        )
+        response["_hint"] = _HINT_NO_RESULTS
         hint_reason = "no_results"
     elif len(results) < top_k:
-        response["_hint"] = (
-            f"Only {len(results)} results above threshold. "
-            "Consider lowering similarity_cutoff or using mode='read' on most relevant file."
-        )
+        response["_hint"] = _HINT_FEW.format(n=len(results))
         hint_reason = "below_top_k"
     else:
-        response["_hint"] = (
-            "If results seem fragmented, try mode='read' with a relevant file_id "
-            "to load full document content."
-        )
+        response["_hint"] = _HINT_OK.format(score_type=score_type)
+        hint_reason = "normal"
+
+    budget = configured_response_budget() if token_budget is None else int(token_budget)
+    fit_to_budget(response, budget)
+    if response.get("omitted_results"):
+        response["_hint"] += _HINT_OMITTED.format(
+            omitted=response["omitted_results"], budget=budget)
+        hint_reason += "+budget"
 
     elapsed_ms = (time.perf_counter() - start) * 1000
 
@@ -165,11 +273,13 @@ async def handle_search(
         folder_id=folder.id,
         msg=(
             f"results={len(results)} "
+            f"returned={response['total_results']} "
             f"roles={{leaf:{role_counts.get('leaf', 0)},"
             f"parent:{role_counts.get('parent', 0)}(merged_from_{merged_leaves_total}),"
             f"expanded:{role_counts.get('expanded', 0)}}} "
             f"unique_files={len(file_counts)} "
-            f"scores=[{score_stats}] "
+            f"scores=[{score_stats}] score_type={score_type} "
+            f"tokens~{response.get('response_tokens_estimated')} "
             f"hint={hint_reason} "
             f"elapsed={elapsed_ms:.0f}ms"
         ),
