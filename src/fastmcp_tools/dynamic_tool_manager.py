@@ -56,6 +56,9 @@ def _make_tool_func(folder_name: str, query_function: Callable):
         expand_context: Annotated[Optional[bool], Field(
             description="mode=search: add neighbouring chunks of the same section "
                         "(default: server setting)")] = None,
+        offset: Annotated[Optional[int], Field(
+            description="mode=read: chunk index to start from; pass the previous "
+                        "page's next_offset")] = None,
         similarity_cutoff: Optional[float] = None,
     ) -> list:
         return await query_function(
@@ -66,6 +69,7 @@ def _make_tool_func(folder_name: str, query_function: Callable):
             top_k=top_k,
             similarity_cutoff=similarity_cutoff,
             expand_context=expand_context,
+            offset=offset,
         )
 
     return folder_tool
@@ -178,9 +182,9 @@ class DynamicToolManager:
         Args:
             folder_name: Folder name.
             query_function: Async function with keyword arguments (folder_name, mode,
-                query, file_id, top_k, similarity_cutoff, expand_context);
-                top_k / expand_context arrive as None when the caller left
-                them out.
+                query, file_id, top_k, similarity_cutoff, expand_context, offset);
+                top_k / expand_context / offset arrive as None when the caller
+                left them out.
             folder_description: Description written into the tool description to
                 guide the agent.
             user_token: Token (required) — used for ACL filtering (only this token
@@ -252,7 +256,8 @@ class DynamicToolManager:
             "- do NOT call it just to look around before searching — search directly",
             "",
             "### `mode=\"read\"` (whole file; use sparingly)",
-            "Loads the full text of one file (up to ~30000 tokens).",
+            "Returns the text of one file, up to ~30000 tokens per call; a longer file comes",
+            "in pages (the response's next_offset is the offset of the next page).",
             "**Only when**:",
             "- the user explicitly asks for the complete content, a transcript or the whole document",
             "- the user wants the whole file translated or summarised line by line",
@@ -273,6 +278,7 @@ class DynamicToolManager:
             "- `file_id` (str): required for mode=read (from list or search results)",
             f"- `top_k` (int, 1-{MAX_TOP_K}): mode=search, number of results; default: server setting",
             "- `expand_context` (bool): mode=search, add neighbouring chunks; default: server setting",
+            "- `offset` (int): mode=read, chunk index to start from (next_offset of the previous page)",
             "",
             "Response: JSON with mode, results, score_type (what score means: rerank =",
             "relevance 0-1, rrf = rank fusion — compare scores only within one response)",

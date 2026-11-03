@@ -44,6 +44,22 @@ async def test_list_mode_runs_in_a_worker_thread():
     assert out == {"mode": "list"} and seen["thread"] != threading.get_ident()
 
 
+async def test_read_mode_passes_offset():
+    ctx = MagicMock()
+    svc = RAGQueryService(ctx)
+    with patch("src.domain.rag.folder_acl.verify_folder_access",
+               return_value=SimpleNamespace(id=1, name="f", vector_table_uuid="u")), \
+         patch("src.adapter.rag_query.Config.get_config_model",
+               return_value=SimpleNamespace(rag=SimpleNamespace(retrieval=SimpleNamespace(
+                   max_concurrent_queries=4)))), \
+         patch("src.domain.rag.agentic_handlers.handle_read",
+               new=AsyncMock(return_value={"mode": "read"})) as read:
+        await svc.query_agentic(folder_name="f", mode="read", query="", file_id="x", top_k=5,
+                                similarity_cutoff=None, expand_context=False, token="t",
+                                offset=42)
+    assert read.await_args.kwargs["offset"] == 42
+
+
 async def test_read_mode_file_lookup_runs_in_a_worker_thread():
     from src.domain.rag import agentic_handlers as ah
 

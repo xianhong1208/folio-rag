@@ -54,7 +54,7 @@ class TestSchema:
             (tool,) = await c.list_tools()
             props = tool.input_schema["properties"]
             assert "similarity_cutoff" not in props
-            assert {"query", "mode", "file_id", "top_k", "expand_context"} <= set(props)
+            assert {"query", "mode", "file_id", "top_k", "expand_context", "offset"} <= set(props)
             # an old client still sending it is not rejected
             await c.call_tool("Folio_docs", {"query": "q", "similarity_cutoff": 0.4})
         assert calls[-1]["similarity_cutoff"] == 0.4
@@ -63,7 +63,9 @@ class TestSchema:
         mcp, calls = registered
         async with Client(mcp) as c:
             await c.call_tool("Folio_docs", {"query": "q"})
+            await c.call_tool("Folio_docs", {"mode": "read", "file_id": "f", "offset": 12})
         assert calls[0]["top_k"] is None and calls[0]["expand_context"] is None
+        assert calls[1]["offset"] == 12 and calls[1]["mode"] == "read"
 
     async def test_description_has_no_baked_defaults(self, registered):
         mcp, _ = registered
@@ -72,7 +74,7 @@ class TestSchema:
         assert "default 7" not in tool.description
         assert "similarity_cutoff" not in tool.description
         assert "lower the cutoff" not in tool.description
-        assert "score_type" in tool.description
+        assert "score_type" in tool.description and "next_offset" in tool.description
 
 
 class TestLiveDefaults:
@@ -105,9 +107,10 @@ class TestQueryBackend:
             blocks = await at._query(**args)
         return blocks, adapter.query.await_args.kwargs
 
-    async def test_resolves_defaults(self):
-        blocks, kw = await self._call(_cfg(default_top_k=4), {"mode": "search", "results": []})
-        assert kw["top_k"] == 4 and kw["expand_context"] is False
+    async def test_resolves_defaults_and_passes_offset(self):
+        blocks, kw = await self._call(_cfg(default_top_k=4), {"mode": "search", "results": []},
+                                      mode="read", offset=30)
+        assert kw["top_k"] == 4 and kw["expand_context"] is False and kw["offset"] == 30
         assert json.loads(blocks[0])["mode"] == "search" and len(blocks) == 1
 
     async def test_no_resource_files_by_default(self):

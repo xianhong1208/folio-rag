@@ -229,11 +229,12 @@ class RAGQueryService:
         similarity_cutoff: Optional[float],
         expand_context: bool,
         token: str,
+        offset: Optional[int] = None,
     ) -> Dict[str, Any]:
         """MCP query entry point — unified interface for three modes (search / list / read).
 
         ``similarity_cutoff`` is accepted for backward compatibility and ignored
-        (see handle_search).
+        (see handle_search); ``offset`` pages mode='read'.
 
         Returns:
             JSON-serializable dict — wrapped into an MCP content block by agentic_tools.
@@ -261,6 +262,7 @@ class RAGQueryService:
                     file_id=file_id,
                     folder=folder,
                     vector_store=vector_store,
+                    offset=offset,
                 )
 
         if mode == "search":

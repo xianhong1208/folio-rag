@@ -367,6 +367,7 @@ async def _query(
     top_k: Optional[int],
     similarity_cutoff: Optional[float],
     expand_context: Optional[bool],
+    offset: Optional[int] = None,
 ) -> list:
     """Shared backend query for all per-folder MCP tools.
 
@@ -383,6 +384,7 @@ async def _query(
             fusion / rerank scores).
         expand_context: True -> for mode=search, unmerged leaves expand their
             neighbors (None = rag.retrieval.expand_context_default).
+        offset: mode=read page start (chunk index).
 
     Returns:
         ``list[str | RagFile]`` — the first element is a JSON string (metadata +
@@ -409,6 +411,7 @@ async def _query(
             similarity_cutoff=similarity_cutoff,
             expand_context=expand_context,
             token=token,
+            offset=offset,
         )
 
         content_blocks: list = [json.dumps(response, ensure_ascii=False)]
