@@ -64,17 +64,17 @@ def _ffmpeg_result(stderr: str, returncode: int = 0):
 class TestSilenceTrim:
     def test_detect_leading_silence(self):
         stderr = "[silencedetect] silence_start: 0.0\n[silencedetect] silence_end: 12.5 | silence_duration: 12.5"
-        with patch.object(ad.subprocess, "run", return_value=_ffmpeg_result(stderr)):
+        with patch.object(ad, "run_ffmpeg", return_value=_ffmpeg_result(stderr)):
             assert ad._detect_leading_silence_end("x.mp3") == 12.5
 
     def test_detect_no_silence(self):
-        with patch.object(ad.subprocess, "run", return_value=_ffmpeg_result("no silence lines")):
+        with patch.object(ad, "run_ffmpeg", return_value=_ffmpeg_result("no silence lines")):
             assert ad._detect_leading_silence_end("x.mp3") == 0.0
 
     def test_detect_silence_not_at_start_ignored(self):
         """silence_start > 1.0 = not "leading" silence -> do not trim."""
         stderr = "silence_start: 30.0\nsilence_end: 45.0"
-        with patch.object(ad.subprocess, "run", return_value=_ffmpeg_result(stderr)):
+        with patch.object(ad, "run_ffmpeg", return_value=_ffmpeg_result(stderr)):
             assert ad._detect_leading_silence_end("x.mp3") == 0.0
 
     def test_trim_skipped_below_threshold(self):
@@ -84,7 +84,7 @@ class TestSilenceTrim:
 
     def test_trim_success_returns_temp(self, tmp_path):
         with patch.object(ad, "_detect_leading_silence_end", return_value=10.0), \
-             patch.object(ad.subprocess, "run", return_value=_ffmpeg_result("", 0)) as m:
+             patch.object(ad, "run_ffmpeg", return_value=_ffmpeg_result("", 0)) as m:
             out = ad._trim_audio_leading_silence("in.mp3", "meeting.mp3")
         assert out is not None and out.endswith(".mp3")
         cmd = m.call_args[0][0]
@@ -94,7 +94,7 @@ class TestSilenceTrim:
 
     def test_trim_unknown_suffix_uses_copy_codec(self):
         with patch.object(ad, "_detect_leading_silence_end", return_value=5.0), \
-             patch.object(ad.subprocess, "run", return_value=_ffmpeg_result("", 0)) as m:
+             patch.object(ad, "run_ffmpeg", return_value=_ffmpeg_result("", 0)) as m:
             out = ad._trim_audio_leading_silence("in.xyz", "odd.xyz")
         cmd = m.call_args[0][0]
         assert "copy" in cmd
@@ -103,7 +103,7 @@ class TestSilenceTrim:
 
     def test_trim_ffmpeg_failure_raises_and_cleans_temp(self):
         with patch.object(ad, "_detect_leading_silence_end", return_value=10.0), \
-             patch.object(ad.subprocess, "run", return_value=_ffmpeg_result("boom", 1)):
+             patch.object(ad, "run_ffmpeg", return_value=_ffmpeg_result("boom", 1)):
             with pytest.raises(RuntimeError, match="ffmpeg seek-trim failed"):
                 ad._trim_audio_leading_silence("in.mp3", "x.mp3")
 
