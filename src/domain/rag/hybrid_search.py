@@ -16,6 +16,7 @@ concurrent requests that ask for different ``top_k`` / cutoff / fusion values.
 from __future__ import annotations
 
 import asyncio
+import contextvars
 import re
 import time
 from dataclasses import dataclass, field, replace
@@ -41,6 +42,20 @@ DEFAULT_EF_SEARCH = 40
 # How long a folder's segmenter stamp is trusted before it is read again (a
 # Rebuild FTS re-stamps the table; queries follow within this many seconds).
 SEGMENTER_STAMP_TTL_S = 60.0
+
+# Per-request stage timings (ms). Set by HybridSearcher.search for the duration of
+# one call; the concurrent dense / BM25 tasks inherit the same dict through the
+# context, so each records its own stage without shared searcher state.
+_STAGE_TIMINGS: contextvars.ContextVar[Optional[Dict[str, float]]] = contextvars.ContextVar(
+    "folio_stage_timings", default=None)
+
+
+def record_stage(stage: str, started: float) -> None:
+    """Add the time since ``started`` (perf_counter) to ``stage`` of the current
+    request's timings; a no-op outside a timed search."""
+    timings = _STAGE_TIMINGS.get()
+    if timings is not None:
+        timings[stage] = round(timings.get(stage, 0.0) + (time.perf_counter() - started) * 1000, 1)
 
 
 @dataclass(frozen=True)
@@ -139,6 +154,9 @@ class SearchOutcome:
     sparse: List[Any] = field(default_factory=list)
     fused: List[Any] = field(default_factory=list)
     fusion: str = FUSION_RRF             # how candidates were fused (see score_type)
+    # Per-stage wall time in ms: embed, dense, segment, bm25, fuse, rerank (the
+    # MCP retriever adds merge / expand). dense and bm25 run concurrently.
+    timings: Dict[str, float] = field(default_factory=dict)
 
     @property
     def score_type(self) -> str:
@@ -380,7 +398,11 @@ class HybridSearcher:
     # ------------------------------------------------------------------ dense
     async def embed_query(self, query_text: str) -> List[float]:
         """The query embedding, from the index's embedding model."""
-        return await self._index._embed_model.aget_query_embedding(query_text)
+        t0 = time.perf_counter()
+        try:
+            return await self._index._embed_model.aget_query_embedding(query_text)
+        finally:
+            record_stage("embed", t0)
 
     async def dense(self, query_text: str, k: int) -> List[Any]:
         """Vector search, leaves only (parents carry a zero vector, but be explicit).
@@ -396,10 +418,12 @@ class HybridSearcher:
         embedding = await self.embed_query(query_text)
         table = ChunkLookup._get_table_name(self._vector_store)
         ef = max(DEFAULT_EF_SEARCH, int(k))
+        t0 = time.perf_counter()
         async with self._dense_engine().begin() as conn:
             await conn.execute(_sql_text(f"SET LOCAL hnsw.ef_search = {ef}"))
             rows = (await conn.execute(_dense_statement(table), {
                 "emb": _vector_literal(embedding), "k": int(k)})).fetchall()
+        record_stage("dense", t0)
         nodes = [_row_to_node(r) for r in rows]
         return [n for n in nodes if is_leaf(n)]
 
@@ -433,6 +457,7 @@ class HybridSearcher:
         """
         if settings.text_search_config != "simple":
             return query_text
+        t0 = time.perf_counter()
         try:
             from src.domain.rag.text_segmenter import get_segmenter
 
@@ -444,6 +469,8 @@ class HybridSearcher:
         except Exception as e:  # noqa: BLE001
             logger.debug(f"query segmentation failed, using raw text: {e}")
             return query_text
+        finally:
+            record_stage("segment", t0)
 
     async def folder_segmenter(self, engine, table: str) -> Optional[str]:
         """The segmenter to tokenise this folder's queries with: the one stamped on
@@ -485,12 +512,14 @@ class HybridSearcher:
             lexemes = query_lexemes(await self.segment_query(query_text, settings, seg_name))
             if not lexemes:
                 return []
+            t0 = time.perf_counter()
             async with engine.connect() as conn:
                 rows = list((await conn.execute(_bm25_statement(table), {
                     "cfg": settings.text_search_config,
                     "q_any": to_tsquery_text(lexemes, "|"),
                     "q_all": to_tsquery_text(lexemes, "&"),
                     "k": k})).fetchall())
+                record_stage("bm25", t0)
         except Exception as e:  # noqa: BLE001
             logger.warning(f"BM25 search skipped ({type(e).__name__}: {e}); dense results only")
             return []
@@ -515,34 +544,46 @@ class HybridSearcher:
             self.dense(query_text, k),
             self.sparse(query_text, max(k, int(settings.sparse_top_k or 0)), settings))
         dense_raw, sparse_raw = _snapshot(dense), _snapshot(sparse)
+        t0 = time.perf_counter()
         if settings.fusion == FUSION_CONCAT:
             fused = concat_fuse(dense, sparse, settings.similarity_cutoff)
         else:
             fused = rrf_fuse([dense, sparse], k, settings.rrf_k)
+        record_stage("fuse", t0)
         # Expose the raw per-path scores even though RRF overwrote node.score.
         return fused, _with_scores(dense, dense_raw), _with_scores(sparse, sparse_raw)
 
     # ----------------------------------------------------------------- search
     async def search(self, query_text: str, settings: SearchSettings) -> SearchOutcome:
-        """Candidates → rerank (if configured) → top_k leaves."""
-        fused, dense, sparse = await self.candidates(query_text, settings)
-        # Snapshot the fused order and scores: rerank rewrites node.score in place.
-        outcome = SearchOutcome(nodes=[], candidates=len(fused), dense=dense, sparse=sparse,
-                                fused=_with_scores(fused, _snapshot(fused)),
-                                fusion=settings.fusion)
-        if self._reranker and fused:
-            from src.domain.rag.rerank_policy import rerank
+        """Candidates → rerank (if configured) → top_k leaves.
 
-            rr = await rerank(self._reranker, query_text, list(fused), settings.top_k)
-            outcome.nodes = rr.nodes
-            outcome.top_score = rr.top_score
-            outcome.reranked = not rr.failed
-            outcome.rerank_failed = rr.failed
+        ``outcome.timings`` holds this call's per-stage milliseconds.
+        """
+        timings: Dict[str, float] = {}
+        token = _STAGE_TIMINGS.set(timings)
+        try:
+            fused, dense, sparse = await self.candidates(query_text, settings)
+            # Snapshot the fused order and scores: rerank rewrites node.score in place.
+            outcome = SearchOutcome(nodes=[], candidates=len(fused), dense=dense, sparse=sparse,
+                                    fused=_with_scores(fused, _snapshot(fused)),
+                                    fusion=settings.fusion, timings=timings)
+            if self._reranker and fused:
+                from src.domain.rag.rerank_policy import rerank
+
+                t0 = time.perf_counter()
+                rr = await rerank(self._reranker, query_text, list(fused), settings.top_k)
+                record_stage("rerank", t0)
+                outcome.nodes = rr.nodes
+                outcome.top_score = rr.top_score
+                outcome.reranked = not rr.failed
+                outcome.rerank_failed = rr.failed
+                return outcome
+            # No reranker: RRF scores are rank-based (≈0.03), so the similarity cutoff
+            # does not apply; concat already applied it to its dense half.
+            outcome.nodes = list(fused)[: settings.top_k]
             return outcome
-        # No reranker: RRF scores are rank-based (≈0.03), so the similarity cutoff
-        # does not apply; concat already applied it to its dense half.
-        outcome.nodes = list(fused)[: settings.top_k]
-        return outcome
+        finally:
+            _STAGE_TIMINGS.reset(token)
 
 
 class _ScoredView:

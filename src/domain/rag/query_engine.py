@@ -72,7 +72,8 @@ class QueryEngine:
             raise
         logger.info(
             f"Query completed: {len(results)} result(s) from {outcome.candidates} "
-            f"candidate(s) (fusion={settings.fusion}, reranked={outcome.reranked})")
+            f"candidate(s) (fusion={settings.fusion}, reranked={outcome.reranked}) "
+            f"timings_ms={outcome.timings}")
         return results, outcome
 
     async def aquery(self, query_text: str, settings: SearchSettings,
@@ -117,7 +118,9 @@ class QueryEngine:
             })
         return {"results": results, "reranked": outcome.reranked,
                 "candidates": outcome.candidates, "fusion": settings.fusion,
-                "score_type": outcome.score_type}
+                "score_type": outcome.score_type,
+                # Per-stage wall time (ms): embed, dense, segment, bm25, fuse, rerank.
+                "timings_ms": dict(outcome.timings)}
 
 
 def hit_spans(parent_text: str, leaf_texts) -> List[List[int]]:

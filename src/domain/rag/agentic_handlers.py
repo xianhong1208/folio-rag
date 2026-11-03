@@ -266,6 +266,7 @@ async def handle_search(
         hint_reason += "+budget"
 
     elapsed_ms = (time.perf_counter() - start) * 1000
+    timings = getattr(getattr(retriever, "last_outcome", None), "timings", None)
 
     log_op_debug(
         logger,
@@ -282,6 +283,7 @@ async def handle_search(
             f"tokens~{response.get('response_tokens_estimated')} "
             f"hint={hint_reason} "
             f"elapsed={elapsed_ms:.0f}ms"
+            + (f" stages_ms={timings}" if isinstance(timings, dict) else "")
         ),
     )
 
