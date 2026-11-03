@@ -139,6 +139,8 @@ Folio_product-docs  mode="search"  query="要怎麼輪替簽章金鑰?"
 
 **重排。** reranker 對最多 3 × `top_k` 個融合候選評分,保留分數不低於 `rag.rerank.score_threshold` 的前 `top_k` 個。`mxbai-rerank-*-v2` 是以對話格式 prompt 訓練的 Qwen 模型;`rag.rerank.auto_template: true`（預設）時,若設定的模板是預設值或舊的無對話格式版本,會自動套上官方格式（若 rerank 服務已自行套用 chat template,請關掉)。套上後分數是校準過的機率,對這個模型而言 **`score_threshold: 0.5`** 才有意義;沒套的話無關段落也有 0.8 以上,任何門檻都濾不掉東西。reranker 失敗時,查詢會依檢索順序回傳前 `top_k` 個候選（而不是全部 3 × `top_k` 個）,且這個降級結果不會被快取。
 
+**說出「找不到相關內容」。** 每次 MCP 搜尋都會回報資料夾的匹配程度:`top_relevance`（reranker 在所有候選上的最高分,在 `score_threshold` 之前)、`min_relevance`(設定的門檻)與 `low_relevance` —— 沒有結果、或 `top_relevance` 低於 `rag.retrieval.min_relevance` 時為 `true`,此時 `_hint` 會告訴 agent 這個資料夾多半無法回答這個問題。每筆經過重排的結果都帶 `relevance`,低於門檻的結果標上 `low_relevance: true`。結果**只標記、不刪除**(刪除是 `rag.rerank.score_threshold` 的工作):在 golden set 上,這個門檻能擋下所有跟語料無關的問題,但「差一點」的問題(問對了法條、問的細節卻不在文中)分數跟可回答的問題一樣高,所以最後的判斷留給 agent。預設的 `0.9` 是針對 `mxbai-rerank-v2` 校準的(掃描結果見 `evals/baselines/rag-2026-11-03-min-relevance.md`);設 `0` 關閉,沒有 reranker 時只有空結果會被標記。
+
 **知識缺口。** 每次 REST、主控台與 MCP 搜尋都會記錄（token 只存遮罩後的前綴）結果數與 reranker 的最高分。*Query Analytics* 把某資料夾中**最近一次**搜尋沒有結果、或最高分低於 `rag.rerank.gap_threshold`（預設 `0.5`）的問題列為知識缺口 —— 補上能回答它的文件、再問一次後,缺口就會消失。
 
 **回答（主控台）。** 勾選 *generate answer* 時,先用一次 LLM 呼叫評估各 chunk 是否相關,丟掉不相關的（都不相關就不回答）,再用剩下的以**問題所用的語言**生成回答。每個 chunk 保留它在結果卡片中的編號,`[3]` 一定是第 3 張卡（主控台中引用可點擊）;引用了沒提供給模型的 chunk 會被移除,`【n†…】` 會轉成 `[n]`,Markdown 粗體標記會去掉 —— 串流路徑也一樣,最後的 `done` frame 帶有整理過的完整回答。評估結果無法解析時,回答會標成 **unverified**,而不是 `high`。
@@ -166,6 +168,7 @@ Folio_product-docs  mode="search"  query="要怎麼輪替簽章金鑰?"
 | `rag.rerank.{model,base_url}` | `mixedbread-ai/mxbai-rerank-base-v2`、`:8787` | cross-encoder 重排器。 |
 | `rag.rerank.score_threshold` / `auto_template` | `0.0` / `true` | 濾掉分數低於門檻的結果（mxbai-rerank-v2 適合 0.5）;自動套用 mxbai-v2 的對話格式 prompt。 |
 | `rag.rerank.gap_threshold` | `0.5` | 知識缺口分析:最高 rerank 分數低於此值即視為「沒有好的匹配」。 |
+| `rag.retrieval.min_relevance` | 隨附設定檔為 `0.9`(未設定時 `0`) | MCP 搜尋:最高 rerank 分數低於此值 → `low_relevance: true`(只標記、不刪除)。依模型而定;`0` = 關閉。 |
 | `rag.asr.provider` | `fireredasr` | 音訊轉錄:`fireredasr`（本地繁中）· `docling-whisper` · `openai-compatible`。`rag.asr.enabled: false` 時音檔會以明確訊息標為失敗(不做任何轉錄)。 |
 | `rag.retrieval.segmenter` | `ckip`(`profile: cloud` 為 `bigram`) | 關鍵字檢索的中文斷詞器:`ckip` · `jieba` · `bigram`（見「中文斷詞」）。 |
 | `rag.docling.ocr_enabled` | `true` | 掃描 PDF 與圖片的 OCR。設 `false` 會真的關掉(重啟後生效);沒有文字層的掃描檔會以明確訊息失敗。 |
