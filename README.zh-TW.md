@@ -160,6 +160,7 @@ Folio_product-docs  mode="search"  query="要怎麼輪替簽章金鑰?"
 | `auth.console.session_secret` | *(自動產生)* | 簽 session cookie 的金鑰,可用 `${ENV_VAR}`。未設定時會產生一次並存到 `storage/.console_session_secret`(已 gitignore),重啟後 session 仍有效。 |
 | `auth.console.secure_cookie` | `auto` | Cookie 的 `Secure` 旗標:`auto` = 只在 https 時加上;放在 TLS 終結的 proxy 後面時設 `true`。 |
 | `auth.console.admin_scope` | `rag:admin` | 解鎖主控台全域設定的 scope。 |
+| `auth.revocation.*` | 停用 | MCP Gate revocation feed,讓被撤銷的 token 在到期前就失效——見 [Token 撤銷](#token-撤銷)。 |
 | `rag.embedding.{model,dimension,base_url}` | `intfloat/multilingual-e5-large`、`1024`、`:7075/v1` | embedding 模型;`dimension` **必須**等於模型實際輸出維度。 |
 | `rag.llm.{model,base_url}` | `openai/gpt-oss-120b`、`:5052/v1` | Contextual Retrieval 與 `answer` 路徑用的 LLM。 |
 | `rag.rerank.{model,base_url}` | `mixedbread-ai/mxbai-rerank-base-v2`、`:8787` | cross-encoder 重排器。 |
@@ -174,6 +175,34 @@ Folio_product-docs  mode="search"  query="要怎麼輪替簽章金鑰?"
 | `rag.<role>.{timeout,max_retries}` | 各角色不同 | 每個模型角色的請求逾時與重試（429 / 5xx / 逾時,含退避）。 |
 
 GPU 選擇是 `uv sync --extra local --group {rocm-r714|rocm-r713|cuda|cpu}` 的取捨 —— 見 `pyproject.toml` 開頭,每個 group 對應到各自的 PyTorch index。
+
+### Token 撤銷
+
+Folio 以離線方式驗證 MCP Gate 的 token,因此預設情況下,在 MCP Gate 撤銷的 token 在這裡會一直有效到過期為止——而 PAT 最長可活一年。啟用 **revocation feed** 後,Folio 會在背景輪詢 MCP Gate 的 `POST /oauth/revoked`(每 `poll_interval_sec` 秒,帶 jitter 與錯誤退避),在記憶體保存「已撤銷但尚未過期」的 `jti`,並在所有路徑拒絕它們:`/mcp`(401 `invalid_token`)、REST API(401)、主控台登入,以及既有主控台 session 的每一個請求(session 以 401 `token_revoked` 結束)。撤銷約在一個輪詢間隔內生效。
+
+| 設定 | 預設 | 用途 |
+|------|------|------|
+| `auth.revocation.enabled` | `false`(`FOLIO_REVOCATION_ENABLED`) | 開啟 feed。關閉 = 舊行為,不輪詢。 |
+| `auth.revocation.client_id` | `${FOLIO_REVOCATION_CLIENT_ID}` | 在 MCP Gate 註冊的 resource-server client(見下方)。 |
+| `auth.revocation.client_secret` | `${FOLIO_REVOCATION_CLIENT_SECRET}` | 它的 secret。**必須**是 `${ENV_VAR}` 參照——寫成字面值會拒絕啟動。 |
+| `auth.revocation.poll_interval_sec` | `30` | 輪詢頻率(5–3600 秒)。 |
+| `auth.revocation.fail_mode` | `open` | MCP Gate 連不上時:`open` 繼續接受 token 並大聲記錄;`closed` 在連續 `stale_after_intervals` × `poll_interval_sec` 沒有成功輪詢後拒絕所有 token(`/mcp` 與 REST 回 401,主控台回 503),啟動後第一次輪詢成功前也一樣。 |
+| `auth.revocation.stale_after_intervals` | `4` | 清單何時算過期(`/health/detailed` 顯示 `degraded`;`closed` 開始拒絕)。 |
+
+第一次輪詢抓完整清單;之後只問上次以來的撤銷(重疊 30 秒),每小時再完整抓一次。token 本來就會過期之後,項目即被移除。啟動時會記錄 feed 是否啟用,`GET /health/detailed` 的 `checks.revocation` 會顯示 `last_success`、`revoked_count`、`consecutive_failures`、`last_error`、`stale`。
+
+**設定步驟**(每個部署做一次):
+
+1. **在 MCP Gate 註冊 confidential client。** 主控台 → *OAuth Clients* → *Register trusted client*。名稱例如 `Folio revocation feed`;*Redirect URIs* 留空;*Grant types* 只選 `client_credentials`;*Token endpoint authentication*:**Client secret (POST body)**(HTTP Basic 也可以,MCP Gate 兩者都接受);*Resource server for*:**Folio**。註冊後複製 `client_id`(`mcpc_…`)與 client secret——secret 只顯示一次。
+2. **綁定到 Folio**——若步驟 1 已選 *Resource server for* 就已完成。否則在該 client 那一列點伺服器圖示(*Resource server…*),選 Folio 服務後 *Save*;或以主控台管理員呼叫 `PUT /api/oauth/clients/<client_id>/resource-server`,body `{"service_id": "<Folio service id>"}`。該列會顯示 *Resource server for Folio*。feed 只列出 audience 等於該服務 audience 的 token,所以它必須等於 Folio 的 `auth.audience`。
+3. **把憑證交給 Folio**(環境變數或 `.env`),然後重啟:
+   ```bash
+   FOLIO_REVOCATION_ENABLED=true
+   FOLIO_REVOCATION_CLIENT_ID=mcpc_...
+   FOLIO_REVOCATION_CLIENT_SECRET=...
+   ```
+   (若你的 `config/config.yaml` 早於此功能,先從範本複製 `auth.revocation` 區塊。)
+4. **確認。** 啟動 log 會出現 `MCP Gate revocation feed: ENABLED …`;`curl -s localhost:5039/health/detailed | jq .checks.revocation` 會看到最近的 `last_success`。在 MCP Gate 撤銷一個測試 PAT,`poll_interval_sec` 內用它發請求會得到 401。`last_error` 出現 `HTTP 401: invalid_client` 表示憑證錯誤;`HTTP 403: unauthorized_client` 表示 client 尚未綁定伺服器。
 
 ## 雲端 profile
 
@@ -283,7 +312,7 @@ profile 做了什麼:
 
 - **Session 就是那把 token 的身分。** 你看到、能管理的,正好是這把 token 擁有的資料夾(資料夾以它的 `jti` 綁定)—— 也就是它透過 REST 與 MCP 能存取的那些。在主控台建立的資料夾同樣歸它所有。其他 token 的資料夾完全看不到;要管理它們,請用那把 token 登入。
 - **兩個層級。** 任何有效的 token 都能登入並管理自己的資料夾。修改執行期 **Settings**、測試任意端點、讀取設定 **Audit Log** 與全伺服器的儲存用量,需要 **`rag:admin`** scope。沒有它時,Settings 與 System Health 為唯讀(secret 一律遮蔽),Overview / Index Jobs / Query Analytics 只涵蓋自己的資料夾;有它時則涵蓋整台伺服器。
-- **Session** 持續 `auth.console.session_hours`(8 小時)或到 token 到期為止,取較早者。在 MCP Gate 撤銷 token 不會中斷進行中的 session(驗證是離線的)—— 它會在到期或按 *Sign out* 時結束。
+- **Session** 持續 `auth.console.session_hours`(8 小時)或到 token 到期為止,取較早者。啟用 [revocation feed](#token-撤銷) 後,在 MCP Gate 撤銷 token 也會在一個輪詢間隔內結束它的 session;未啟用時,進行中的 session 會持續到到期或按 *Sign out*(驗證是離線的)。
 
 **在 MCP Gate 發 token。** MCP Gate 不需要任何程式修改:
 

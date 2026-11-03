@@ -19,6 +19,7 @@ from db.folderdb import FolderDB
 from src.api.startup_state import record_load_failure
 from src.auth.init_auth import initialize_auth_system
 from src.auth.mcp_gate_auth import build_auth_provider, settings_from_config
+from src.auth.revocation import revocation_lifespan
 from src.config.config_manager import Config
 from src.domain.rag.index_job_manager import IndexingJobManager
 from src.fastmcp_tools.agentic_tools import register_folder_tool
@@ -109,7 +110,9 @@ def create_app(config: BaseModel, transport: str) -> FastAPI:
                     api_logger.info(f"Startup: purged {purged} old terminal IndexJob rows")
             except Exception as e:
                 api_logger.warning(f"Startup IndexJob purge failed (continuing): {e}")
-            yield
+            # MCP Gate revocation-feed poller (no-op unless auth.revocation.enabled).
+            async with revocation_lifespan():
+                yield
 
     # openapi_tags sets Swagger tag order and group descriptions.
     openapi_tags = [

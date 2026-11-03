@@ -7,6 +7,13 @@ to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 ## [Unreleased]
 
 ### Added
+- **MCP Gate revocation feed** (`auth.revocation`, off by default). A background
+  poller mirrors MCP Gate's `POST /oauth/revoked` and rejects revoked tokens on
+  `/mcp`, the REST API, console sign-in and existing console sessions, within one
+  poll interval instead of at expiry (PATs can live a year). Needs a confidential
+  client bound to Folio as its resource server; `fail_mode` `open` (default) or
+  `closed`; status in `/health/detailed` under `checks.revocation`. See README →
+  *Token revocation*.
 - **Per-file Retry and Cancel in the console.** Retry (or Reindex) any idle
   file; cancel a queued or indexing file without stopping the rest of its job
   (`POST …/files/{id}/retry`, `POST …/files/{id}/cancel`, bulk
