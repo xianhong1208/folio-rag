@@ -140,7 +140,7 @@ def create_app(config: BaseModel, transport: str) -> FastAPI:
     fastapi_app.state.auth_settings = settings_from_config(config)
 
     # Auth system: build + register the offline MCP Gate token verifier (used by the
-    # REST middleware and the MCP tool filter via set_remote_verifier).
+    # REST middleware and the MCP tool filter via set_token_verifier).
     initialize_auth_system(config)
 
     # Wire folder event hooks so the MCP tool surface stays in sync on folder

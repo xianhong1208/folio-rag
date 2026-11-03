@@ -29,12 +29,12 @@ ROLES = ("embedding", "llm", *LLM_ROLES, "rerank", "vision", "asr")
 PROBE_TIMEOUT = 20.0
 
 
-def _result(role: str, status: str, detail: str, ms: Optional[int] = None,
-            model: Optional[str] = None) -> Dict[str, Any]:
+def _probe_result(role: str, status: str, detail: str, ms: Optional[int] = None,
+                  model: Optional[str] = None) -> Dict[str, Any]:
     return {"role": role, "status": status, "detail": detail, "latency_ms": ms, "model": model}
 
 
-def _err(exc: BaseException) -> str:
+def _error_label(exc: BaseException) -> str:
     status = getattr(exc, "status_code", None)
     if status is None:
         status = getattr(getattr(exc, "response", None), "status_code", None)
@@ -140,25 +140,25 @@ def probe_role(rag, role: str) -> Dict[str, Any]:
     if role == "llm":
         llm = getattr(rag, "llm", None)
         if llm is None:
-            return _result(role, "unset", "No rag.llm configured")
+            return _probe_result(role, "unset", "No rag.llm configured")
         t0 = time.perf_counter()
         try:
             status, detail = "ok", _probe_chat(llm)
         except Exception as e:  # noqa: BLE001
-            status, detail = "down", _err(e)
-        return _result(role, status, detail, int((time.perf_counter() - t0) * 1000),
+            status, detail = "down", _error_label(e)
+        return _probe_result(role, status, detail, int((time.perf_counter() - t0) * 1000),
                        llm.azure_deployment or llm.model)
     summary = {r["role"]: r for r in role_summary(rag)}[role]
     model = summary.get("model")
     if summary["runs"] == "off":
-        return _result(role, "disabled", "Disabled in settings", model=model)
+        return _probe_result(role, "disabled", "Disabled in settings", model=model)
     if summary["runs"] == "in-process":
         if role == "asr":
             ready = _asr_ready(rag)
-            return _result(role, "local" if ready else "down",
+            return _probe_result(role, "local" if ready else "down",
                            "Local weights found" if ready else "Local weights missing under assets/",
                            model=summary.get("provider"))
-        return _result(role, "local", "Runs in-process (no endpoint to probe)", model=model)
+        return _probe_result(role, "local", "Runs in-process (no endpoint to probe)", model=model)
 
     t0 = time.perf_counter()
     try:
@@ -172,11 +172,11 @@ def probe_role(rag, role: str) -> Dict[str, Any]:
             detail = _probe_rerank(rag.rerank)
         else:
             if not rag.asr.base_url:
-                return _result(role, "unset", "No endpoint configured", model=model)
+                return _probe_result(role, "unset", "No endpoint configured", model=model)
             detail = _probe_asr(rag.asr)
         status = "ok"
     except _Mismatch as e:
         status, detail = "down", str(e)
     except Exception as e:  # noqa: BLE001 — only the status code / class name is reported
-        status, detail = "down", _err(e)
-    return _result(role, status, detail, int((time.perf_counter() - t0) * 1000), model)
+        status, detail = "down", _error_label(e)
+    return _probe_result(role, status, detail, int((time.perf_counter() - t0) * 1000), model)

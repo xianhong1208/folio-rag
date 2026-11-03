@@ -145,7 +145,7 @@ class _PageSource:
 
 # ---------------------------------------------------------------- stitching helpers
 
-def _blocks(md: str) -> List[str]:
+def _split_blocks(md: str) -> List[str]:
     return [b for b in re.split(r"\n\s*\n", md.strip()) if b.strip()]
 
 
@@ -154,11 +154,11 @@ def _is_table(block: str) -> bool:
     return bool(lines) and all(ln.lstrip().startswith("|") for ln in lines)
 
 
-def _columns(line: str) -> int:
+def _column_count(line: str) -> int:
     return len([c for c in line.strip().strip("|").split("|")])
 
 
-def _norm(line: str) -> str:
+def _normalize_row(line: str) -> str:
     return re.sub(r"\s+", " ", line.strip().strip("|")).strip().lower()
 
 
@@ -166,7 +166,7 @@ def _strip_repeated_header(prev_table: str, table: str) -> str:
     """Drop ``table``'s header + separator when it repeats ``prev_table``'s header."""
     prev = prev_table.strip().splitlines()
     cur = table.strip().splitlines()
-    if len(cur) >= 2 and _TABLE_SEP_RE.match(cur[1]) and _norm(cur[0]) == _norm(prev[0]):
+    if len(cur) >= 2 and _TABLE_SEP_RE.match(cur[1]) and _normalize_row(cur[0]) == _normalize_row(prev[0]):
         return "\n".join(cur[2:])
     return table.strip()
 
@@ -179,13 +179,13 @@ def _table_continues(prev_block: str, first_block: str) -> bool:
         return False
     prev = prev_block.strip().splitlines()
     cur = first_block.strip().splitlines()
-    if _columns(prev[0]) != _columns(cur[0]):
+    if _column_count(prev[0]) != _column_count(cur[0]):
         return False
     headerless = not (len(cur) >= 2 and _TABLE_SEP_RE.match(cur[1]))
-    return headerless or _norm(cur[0]) == _norm(prev[0])
+    return headerless or _normalize_row(cur[0]) == _normalize_row(prev[0])
 
 
-def _glue(prev_block: str, first_block: str) -> str:
+def _page_join_separator(prev_block: str, first_block: str) -> str:
     if _is_table(prev_block) and _is_table(first_block):
         return "\n"
     a, b = prev_block.rstrip()[-1:], first_block.lstrip()[:1]
@@ -211,12 +211,12 @@ def stitch_pages(pages: List[PageResult]) -> str:
         if p.failed:
             parts += [mark, f"[Page {p.page_no}: not transcribed — {p.error}]"]
             continue
-        blocks = _blocks(p.markdown)
+        blocks = _split_blocks(p.markdown)
         if not blocks:
             parts.append(mark)
             continue
         prev_content = next((x for x in reversed(parts) if not _MARK_RE.match(x)), None)
-        prev_last = _blocks(prev_content)[-1] if prev_content else ""
+        prev_last = _split_blocks(prev_content)[-1] if prev_content else ""
         continues = bool(prev_content) and (
             p.continues or _table_continues(prev_last, blocks[0]))
         if continues and not prev_last.startswith("[Page "):
@@ -225,7 +225,7 @@ def stitch_pages(pages: List[PageResult]) -> str:
                 first = _strip_repeated_header(prev_last, first)
             idx = max(i for i, x in enumerate(parts) if x is prev_content)
             if first:
-                parts[idx] = prev_content.rstrip() + _glue(prev_last, first) + first
+                parts[idx] = prev_content.rstrip() + _page_join_separator(prev_last, first) + first
             blocks = blocks[1:]
         parts.append(mark)
         if blocks:

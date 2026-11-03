@@ -61,12 +61,12 @@ class SearchSettings:
         try:
             from src.config.config_manager import Config
 
-            ret = getattr(getattr(Config.get_config_model(), "rag", None), "retrieval", None)
+            retrieval_cfg = getattr(getattr(Config.get_config_model(), "rag", None), "retrieval", None)
         except Exception:  # noqa: BLE001
-            ret = None
-        if ret is not None:
+            retrieval_cfg = None
+        if retrieval_cfg is not None:
             def _get(name, default):
-                v = getattr(ret, name, None)
+                v = getattr(retrieval_cfg, name, None)
                 return default if v is None else v
 
             base = cls(
