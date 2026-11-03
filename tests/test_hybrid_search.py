@@ -130,12 +130,13 @@ class TestSearch:
         assert ids(out.nodes) == ["a", "c"]
         assert not out.reranked and out.candidates == 2
 
-    async def test_reranker_gets_three_times_top_k_candidates(self):
+    async def test_reranker_gets_at_least_three_times_top_k_candidates(self):
         dense = [nws(c) for c in "abcdefgh"]
         rr = FakeReranker({"f": 0.9, "e": 0.8, "h": 1.0})
         s = searcher_with(dense, [], reranker=rr)
-        out = await s.search("q", SearchSettings(top_k=2))
-        assert s.dense.await_args.args[1] == 6          # 3 × top_k
+        # rerank_candidates=1 isolates the 3 × top_k floor (the default pool is 60)
+        out = await s.search("q", SearchSettings(top_k=2, rerank_candidates=1))
+        assert s.dense.await_args.args[1] == 6          # max(3 × top_k, rerank_candidates)
         assert ids(out.nodes) == ["f", "e"] and out.reranked  # h was never a candidate
         assert rr.calls[0][2] == 2
 
@@ -322,3 +323,35 @@ class TestMcpUsesSharedPath:
 
 def test_rerank_candidate_factor_is_three():
     assert hs.RERANK_CANDIDATE_FACTOR == 3
+
+
+class TestRerankCandidatePool:
+    """The reranker's pool must not shrink with top_k (cross-lingual hits sit at fused rank 30-60)."""
+
+    def _searcher(self, reranker):
+        return HybridSearcher(MagicMock(), reranker=reranker, index=MagicMock())
+
+    def test_pool_is_at_least_rerank_candidates(self):
+        s = self._searcher(MagicMock())
+        assert s.candidate_depth(SearchSettings(top_k=10)) == 60       # was 30 = 3 x top_k
+        assert s.candidate_depth(SearchSettings(top_k=5, rerank_candidates=40)) == 40
+
+    def test_large_top_k_still_gets_three_times(self):
+        s = self._searcher(MagicMock())
+        assert s.candidate_depth(SearchSettings(top_k=30, rerank_candidates=60)) == 90
+
+    def test_without_reranker_depth_is_top_k(self):
+        s = self._searcher(None)
+        assert s.candidate_depth(SearchSettings(top_k=10, rerank_candidates=60)) == 10
+
+    def test_read_from_config_and_part_of_the_cache_key(self):
+        from types import SimpleNamespace
+
+        cfg = SimpleNamespace(rag=SimpleNamespace(retrieval=SimpleNamespace(
+            default_top_k=10, default_similarity_cutoff=0.0, rerank_candidates=80)))
+        with patch("src.config.config_manager.Config.get_config_model", return_value=cfg):
+            st = SearchSettings.from_config()
+        assert st.rerank_candidates == 80
+        a = hs.cache_fingerprint("q", SearchSettings(rerank_candidates=60))
+        b = hs.cache_fingerprint("q", SearchSettings(rerank_candidates=80))
+        assert a != b

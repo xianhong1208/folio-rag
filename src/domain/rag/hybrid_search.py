@@ -31,8 +31,12 @@ FUSION_CONCAT = "concat"
 FUSIONS = (FUSION_RRF, FUSION_CONCAT)
 
 # When a reranker is present we retrieve this many times top_k as candidates and
-# let the cross-encoder pick the final top_k.
+# let the cross-encoder pick the final top_k — but never fewer than
+# rag.retrieval.rerank_candidates: a cross-lingual or paraphrased hit often sits at
+# fused rank 30-60, and a pool tied to top_k (30 for the MCP default of 10) never
+# lets the reranker see it. Reranking 60 pairs costs tens of milliseconds.
 RERANK_CANDIDATE_FACTOR = 3
+DEFAULT_RERANK_CANDIDATES = 60
 
 # pgvector's default hnsw.ef_search. An HNSW scan returns at most ef_search rows,
 # so a dense query deeper than this would be silently cut short; the dense query
@@ -68,6 +72,7 @@ class SearchSettings:
     fusion: str = FUSION_RRF
     rrf_k: int = 60
     text_search_config: str = "simple"
+    rerank_candidates: int = DEFAULT_RERANK_CANDIDATES
 
     def __post_init__(self):
         if self.fusion not in FUSIONS:
@@ -101,6 +106,7 @@ class SearchSettings:
                 fusion=str(_get("hybrid_fusion", base.fusion)),
                 rrf_k=int(_get("rrf_k", base.rrf_k)),
                 text_search_config=str(_get("text_search_config", base.text_search_config)),
+                rerank_candidates=int(_get("rerank_candidates", base.rerank_candidates)),
             )
         return base.with_overrides(**overrides)
 
@@ -528,8 +534,10 @@ class HybridSearcher:
     # ----------------------------------------------------------------- fusion
     def candidate_depth(self, settings: SearchSettings) -> int:
         """How many fused candidates to produce for this request."""
-        factor = RERANK_CANDIDATE_FACTOR if self._reranker else 1
-        return max(1, settings.top_k) * factor
+        top_k = max(1, settings.top_k)
+        if not self._reranker:
+            return top_k
+        return max(top_k * RERANK_CANDIDATE_FACTOR, int(settings.rerank_candidates or 0))
 
     async def candidates(self, query_text: str, settings: SearchSettings,
                          k: Optional[int] = None) -> Tuple[List[Any], List[Any], List[Any]]:
