@@ -441,7 +441,7 @@ def _crag_grade(query: str, results: list) -> dict:
                 "grading": crag.Grading([])}
     client, model = _answer_llm()
     try:
-        grading = crag.grade(client, model, query, [r.get("text") or "" for r in top])
+        grading = crag.grade(client, model, query, crag.grade_texts(top))
     finally:
         _close_quietly(client)
     if not grading.ok:

@@ -120,6 +120,30 @@ class QueryEngine:
                 "score_type": outcome.score_type}
 
 
+def hit_spans(parent_text: str, leaf_texts) -> List[List[int]]:
+    """``[start, end)`` of each hit leaf inside its merged parent's text, in hit order.
+
+    A parent's text is its leaves joined in order, so a leaf is normally found
+    verbatim; when it is not (e.g. a stored leaf carries a prefix the parent does
+    not), the leaf's tail locates it. Leaves that cannot be found are skipped.
+    """
+    spans: List[List[int]] = []
+    for text in leaf_texts:
+        text = text or ""
+        if not text or not parent_text:
+            continue
+        pos = parent_text.find(text)
+        if pos >= 0:
+            spans.append([pos, pos + len(text)])
+            continue
+        tail = text[-120:]
+        pos = parent_text.find(tail)
+        if pos >= 0:
+            end = pos + len(tail)
+            spans.append([max(0, end - len(text)), end])
+    return spans
+
+
 def _to_result(item) -> RAGSearchResult:
     """A searcher leaf (NodeWithScore) or a merged parent → RAGSearchResult."""
     if isinstance(item, MergeGroup):
@@ -139,6 +163,9 @@ def _to_result(item) -> RAGSearchResult:
                 content_type=prov.get("content_type"),
                 node_role="parent",
                 merged_from=len(item.hits),
+                # Where the hit leaves sit in the section, so consumers (CRAG
+                # answers) can excerpt around them instead of the section's head.
+                hit_spans=hit_spans(parent.text, [h.node.text for h in item.hits]) or None,
             ),
         )
     md = item.node.metadata
