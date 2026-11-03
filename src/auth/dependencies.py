@@ -34,10 +34,10 @@ async def authenticate_bearer_token(request: Request) -> dict:
     global _token_verifier
 
     if _token_verifier is None:
-        logger.error("Remote verifier not initialized")
+        logger.error("Token verifier not initialized")
         raise HTTPException(
             status_code=500,
-            detail={"error": "auth_config_error", "error_description": "Remote authentication not configured"},
+            detail={"error": "auth_config_error", "error_description": "Token verification is not configured"},
         )
 
     auth_header = request.headers.get('Authorization')
@@ -64,14 +64,14 @@ async def authenticate_bearer_token(request: Request) -> dict:
 
     if not result.valid:
         error_msg = result.error or "invalid_token"
-        logger.warning(f"Authentication failed (remote): {error_msg} - {token[:8]}...")
+        logger.warning(f"Authentication failed: {error_msg} - {token[:8]}...")
         raise HTTPException(
             status_code=401,
             detail={"error": error_msg, "error_description": f"Token validation failed: {error_msg}"},
             headers={"WWW-Authenticate": "Bearer"},
         )
 
-    logger.info(f"Token validation succeeded (remote): {token[:8]}... (path: {request.url.path})")
+    logger.info(f"Token validation succeeded: {token[:8]}... (path: {request.url.path})")
     return {
         "user_name": result.user_name,
         "scopes": result.scopes,
