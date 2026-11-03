@@ -32,6 +32,8 @@ from src.domain.rag.hierarchy import build_hierarchy
 from src.domain.rag.chunk_identity import (
     CHUNK_PIPELINE_VERSION,
     breadcrumb,
+    cap_breadcrumb,
+    fit_retrieval_text,
     chunk_hash,
     embedding_key,
     leaf_node_id,
@@ -157,6 +159,18 @@ def _table_heads(leaf_docs: List[Document]) -> List[Optional[int]]:
     return heads
 
 
+def _embedding_input_limit() -> int:
+    """``rag.embedding.max_input_tokens`` (live), 512 when unset or unreadable."""
+    try:
+        from src.config.config_manager import Config
+
+        rag = getattr(Config.get_config_model(), "rag", None)
+        value = getattr(getattr(rag, "embedding", None), "max_input_tokens", None)
+        return int(value) if value else 512
+    except Exception:
+        return 512
+
+
 def _prefix_warning(failed: int, total: int) -> Optional[str]:
     """File warning for chunks indexed without their contextual prefix."""
     if not failed:
@@ -223,6 +237,33 @@ class HierarchicalIndexer:
         retrieval text directly. Reads the global config; 'simple' when unavailable.
         """
         return configured_text_search_config()
+
+    def _fit_embedding_window(self, leaf_docs: List[Document],
+                              prefixes: List[Optional[str]], file_name: str) -> None:
+        """Shorten breadcrumbs / prefixes in place so every leaf's embedding input fits
+        ``rag.embedding.max_input_tokens`` (special tokens and passage_prefix included)."""
+        limit = _embedding_input_limit()
+        model = self._embed_model if self._embed_model is not None else Settings.embed_model
+        passage = getattr(model, "_passage_prefix", "") or ""
+
+        def count(text: str) -> int:
+            return self._count_tokens(passage + text) + 2  # + <s> </s>
+
+        adjusted = 0
+        for i, ld in enumerate(leaf_docs):
+            crumb = ld.metadata.get("breadcrumb") or ""
+            prefix = prefixes[i] or ""
+            new_prefix, new_crumb = fit_retrieval_text(prefix, crumb, ld.text, count, limit)
+            if (new_prefix, new_crumb) == (prefix, crumb):
+                continue
+            adjusted += 1
+            ld.metadata["breadcrumb"] = new_crumb
+            if prefixes[i]:
+                prefixes[i] = new_prefix
+        if adjusted:
+            logger.info(
+                f"{file_name}: shortened the breadcrumb / prefix of {adjusted} leaf(s) to fit "
+                f"the {limit}-token embedding window")
 
     @staticmethod
     def _flag_fts_rebuild(vector_store, file_name: str, segmenter_name: Optional[str]) -> str:
@@ -330,7 +371,8 @@ class HierarchicalIndexer:
         leaf_ids: List[str] = []
         seen_hashes: Dict[str, int] = {}
         for ld in leaf_docs:
-            crumb = breadcrumb(file_name, ld.metadata.get("headings"))
+            crumb = cap_breadcrumb(breadcrumb(file_name, ld.metadata.get("headings")),
+                                   self._count_tokens)
             chash = chunk_hash(ld.text, crumb)
             occurrence = seen_hashes.get(chash, 0)
             seen_hashes[chash] = occurrence + 1
@@ -408,6 +450,11 @@ class HierarchicalIndexer:
                 "one — a re-index retries them"
             )
 
+        # The embedding model sees passage_prefix + prefix + breadcrumb + text; fit that
+        # into its window by shortening the breadcrumb, then the prefix, never the text
+        # (the server would otherwise silently cut the chunk's tail).
+        self._fit_embedding_window(leaf_docs, prefixes, file_name)
+
         for ld, prefix in zip(leaf_docs, prefixes):
             if prefix:
                 ld.metadata["context_prefix"] = prefix
@@ -454,13 +501,16 @@ class HierarchicalIndexer:
 
         leaf_texts = [search_texts[n.node_id] for n in to_embed]
         n_leaves = len(leaf_texts)
-        n_batches = (n_leaves + _EMBEDDING_BATCH_SIZE - 1) // _EMBEDDING_BATCH_SIZE
+        # One request per batch: the model's own batch size (rag.embedding.embed_batch_size).
+        batch_size = getattr(embed_model, "embed_batch_size", None)
+        batch_size = batch_size if isinstance(batch_size, int) and batch_size > 0 else _EMBEDDING_BATCH_SIZE
+        n_batches = (n_leaves + batch_size - 1) // batch_size
         _report_chunk_progress(progress_cb, "embedding", 0, n_leaves)
         leaf_embeddings: list = []
         for i in range(n_batches):
             _raise_if_aborted(should_abort, file_name, "embedding")
-            batch_start = i * _EMBEDDING_BATCH_SIZE
-            batch_end = min(batch_start + _EMBEDDING_BATCH_SIZE, n_leaves)
+            batch_start = i * batch_size
+            batch_end = min(batch_start + batch_size, n_leaves)
             batch_texts = leaf_texts[batch_start:batch_end]
             try:
                 batch_embeddings = await _embed_batch_with_retry(

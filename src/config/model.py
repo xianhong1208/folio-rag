@@ -212,6 +212,12 @@ class RAGEmbeddingConfig(BaseModel):
     request_dimensions: bool = False
     timeout: float = Field(60.0, gt=0)  # per-request timeout (seconds)
     max_retries: int = Field(3, ge=0, le=10)  # 429 / 5xx / timeout retries (SDK backoff)
+    # Texts per embedding request (llama-index defaults to 10, i.e. 5 requests per batch of 50).
+    embed_batch_size: int = Field(64, ge=1, le=2048)
+    # The model's input window. Before embedding, a leaf's retrieval text (prefix +
+    # breadcrumb + text, plus passage_prefix) is fitted into it by shortening the
+    # breadcrumb, then the prefix — never the chunk text. 512 for e5 / bge-large.
+    max_input_tokens: int = Field(512, ge=64)
 
 
 class RAGChunkingConfig(BaseModel):

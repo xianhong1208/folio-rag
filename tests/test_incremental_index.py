@@ -352,3 +352,68 @@ async def test_fts_flag_failure_is_not_fatal(env, monkeypatch):
     monkeypatch.setattr("src.domain.rag.vector_store_manager.stamp_tsv_segmenter", _boom)
     stats = await _index(env, _doc())
     assert "Rebuild FTS" in stats["warning"]
+
+
+async def test_embedding_input_fits_the_window(env, monkeypatch):
+    """A leaf whose prefix + breadcrumb + text exceeds max_input_tokens loses breadcrumb /
+    prefix length, never chunk text; what is embedded stays inside the window (L1)."""
+    from src.domain.rag.chunk_tokenizer import get_chunk_tokenizer
+
+    tok = get_chunk_tokenizer(None)
+    monkeypatch.setattr(hi, "_embedding_input_limit", lambda: 128)
+    body = "The hardware warranty covers parts and labour for the full term. " * 6
+    long_prefix = "This passage of the Aurora manual explains warranty coverage terms " * 4
+
+    async def _long(chunks, **kw):
+        return [long_prefix for _ in chunks]
+
+    env.gen.generate_prefixes = lambda chunks, full_document, file_name, **kw: _long(chunks)
+    doc = Document(text="full", metadata={"file_id": "W1", "file_name": "Aurora.docx",
+                                          "_docling_chunks": [{"text": body.strip(),
+                                                               "headings": ["Aurora", "5. Warranty"]}]})
+    full = f"{long_prefix.strip()}\nAurora › 5. Warranty\n{body.strip()}"
+    assert len(tok.encode(full)) + 2 > 128  # would overflow without fitting
+    await _index(env, doc)
+    leaf = next(n for n in env.store.rows["W1"] if n.metadata["node_role"] == "leaf")
+    assert leaf.text == body.strip()
+    embedded = env.embed.texts[0]
+    assert len(tok.encode(embedded)) + 2 <= 128
+    assert embedded.endswith(body.strip())
+
+
+async def test_embedding_batches_follow_the_model_batch_size(env, monkeypatch):
+    sizes = []
+
+    async def _embed_batch(model, texts, *a, **k):
+        sizes.append(len(texts))
+        return [[1.0, 1.0] for _ in texts]
+
+    monkeypatch.setattr(hi, "_embed_batch_with_retry", _embed_batch)
+    env.embed.embed_batch_size = 2
+    await _index(env, _doc())
+    assert sizes == [2, 1]
+
+
+def test_embedding_input_limit_reads_config(monkeypatch):
+    monkeypatch.setattr("src.config.config_manager.Config.get_config_model",
+                        lambda: SimpleNamespace(rag=SimpleNamespace(
+                            embedding=SimpleNamespace(max_input_tokens=8192))))
+    assert hi._embedding_input_limit() == 8192
+    monkeypatch.setattr("src.config.config_manager.Config.get_config_model",
+                        lambda: (_ for _ in ()).throw(RuntimeError("x")))
+    assert hi._embedding_input_limit() == 512
+
+
+async def test_long_breadcrumb_is_capped(env):
+    from src.domain.rag.chunk_identity import BREADCRUMB_MAX_TOKENS
+    from src.domain.rag.chunk_tokenizer import get_chunk_tokenizer
+
+    tok = get_chunk_tokenizer(None)
+    headings = ["Aurora"] + [f"Chapter {i}: a rather long and descriptive heading title" for i in range(5)]
+    doc = Document(text="full", metadata={"file_id": "B1", "file_name": "Aurora.docx",
+                                          "_docling_chunks": [{"text": "Idle power is 11 W.",
+                                                               "headings": headings}]})
+    await _index(env, doc)
+    leaf = next(n for n in env.store.rows["B1"] if n.metadata["node_role"] == "leaf")
+    assert len(tok.encode(leaf.metadata["breadcrumb"])) <= BREADCRUMB_MAX_TOKENS
+    assert leaf.metadata["breadcrumb"].endswith("Chapter 4: a rather long and descriptive heading title")
