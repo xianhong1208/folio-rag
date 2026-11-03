@@ -16,9 +16,11 @@ concurrent requests that ask for different ``top_k`` / cutoff / fusion values.
 from __future__ import annotations
 
 import asyncio
+import contextvars
 import re
+import time
 from dataclasses import dataclass, field, replace
-from typing import Any, List, Optional, Sequence, Tuple
+from typing import Any, Dict, List, Optional, Sequence, Tuple
 
 from src.log import get_api_logger
 
@@ -31,6 +33,29 @@ FUSIONS = (FUSION_RRF, FUSION_CONCAT)
 # When a reranker is present we retrieve this many times top_k as candidates and
 # let the cross-encoder pick the final top_k.
 RERANK_CANDIDATE_FACTOR = 3
+
+# pgvector's default hnsw.ef_search. An HNSW scan returns at most ef_search rows,
+# so a dense query deeper than this would be silently cut short; the dense query
+# raises it (transaction-local) to max(DEFAULT_EF_SEARCH, k).
+DEFAULT_EF_SEARCH = 40
+
+# How long a folder's segmenter stamp is trusted before it is read again (a
+# Rebuild FTS re-stamps the table; queries follow within this many seconds).
+SEGMENTER_STAMP_TTL_S = 60.0
+
+# Per-request stage timings (ms). Set by HybridSearcher.search for the duration of
+# one call; the concurrent dense / BM25 tasks inherit the same dict through the
+# context, so each records its own stage without shared searcher state.
+_STAGE_TIMINGS: contextvars.ContextVar[Optional[Dict[str, float]]] = contextvars.ContextVar(
+    "folio_stage_timings", default=None)
+
+
+def record_stage(stage: str, started: float) -> None:
+    """Add the time since ``started`` (perf_counter) to ``stage`` of the current
+    request's timings; a no-op outside a timed search."""
+    timings = _STAGE_TIMINGS.get()
+    if timings is not None:
+        timings[stage] = round(timings.get(stage, 0.0) + (time.perf_counter() - started) * 1000, 1)
 
 
 @dataclass(frozen=True)
@@ -128,6 +153,20 @@ class SearchOutcome:
     dense: List[Any] = field(default_factory=list)
     sparse: List[Any] = field(default_factory=list)
     fused: List[Any] = field(default_factory=list)
+    fusion: str = FUSION_RRF             # how candidates were fused (see score_type)
+    # Per-stage wall time in ms: embed, dense, segment, bm25, fuse, rerank (the
+    # MCP retriever adds merge / expand). dense and bm25 run concurrently.
+    timings: Dict[str, float] = field(default_factory=dict)
+
+    @property
+    def score_type(self) -> str:
+        """What ``score`` means on the final nodes: ``rerank`` (cross-encoder
+        relevance, 0..1), ``rrf`` (reciprocal-rank fusion, ~0.01-0.03, only the
+        order is meaningful) or ``vector`` (legacy concat fusion: cosine for dense
+        hits, ts_rank for keyword-only hits)."""
+        if self.reranked:
+            return "rerank"
+        return "vector" if self.fusion == FUSION_CONCAT else "rrf"
 
 
 def is_leaf(node_with_score) -> bool:
@@ -226,14 +265,94 @@ def to_tsquery_text(lexemes: Sequence[str], op: str) -> str:
 
 
 def _bm25_statement(table: str):
+    """One statement for both keyword passes: rows matching ANY term, rows that
+    match ALL terms first, then by ts_rank. (It used to be an AND query plus an
+    OR query to fill up to k — two round trips whenever AND came up short.)"""
     from sqlalchemy import text as _sql
 
     # table is server-generated (folder id + uuid), never user input.
     return _sql(
-        f'SELECT node_id, text, metadata_, ts_rank(text_search_tsv, q) AS rank '
-        f'FROM "{table}", to_tsquery(CAST(:cfg AS regconfig), :q) AS q '
-        f'WHERE text_search_tsv @@ q AND {_LEAF_ONLY_SQL} '
-        f'ORDER BY rank DESC LIMIT :k')
+        f'SELECT node_id, text, metadata_, ts_rank(text_search_tsv, q_any) AS rank '
+        f'FROM "{table}", to_tsquery(CAST(:cfg AS regconfig), :q_any) AS q_any, '
+        f'to_tsquery(CAST(:cfg AS regconfig), :q_all) AS q_all '
+        f'WHERE text_search_tsv @@ q_any AND {_LEAF_ONLY_SQL} '
+        f'ORDER BY (text_search_tsv @@ q_all) DESC, rank DESC LIMIT :k')
+
+
+def _dense_statement(table: str):
+    """Cosine top-k over the folder table (parents are dropped in Python, as before:
+    a WHERE filter would make the HNSW scan return fewer than k rows)."""
+    from sqlalchemy import text as _sql
+
+    return _sql(
+        f'SELECT node_id, text, metadata_, '
+        f'1 - (embedding <=> CAST(:emb AS vector)) AS similarity '
+        f'FROM "{table}" ORDER BY embedding <=> CAST(:emb AS vector) LIMIT :k')
+
+
+def _vector_literal(embedding: Sequence[float]) -> str:
+    return "[" + ",".join(repr(float(x)) for x in embedding) + "]"
+
+
+# ---------------------------------------------------- bigram query terms
+#
+# The bigram segmenter pairs every two adjacent CJK characters, so a question
+# such as 請問公司的年假規定是什麼 also yields pairs that straddle particles and
+# question words (問公, 司的, 的年, 定是, 是什 …). Those pairs are noise in an AND
+# query. On the query side we drop every pair that touches a particle — unless
+# that would leave a content character with no pair at all (現在 keeps 現在, so
+# 現 is still searchable). The index keeps all pairs, so a pruned query is always
+# a subset of what was indexed and matches the same rows.
+_PARTICLE_WORDS = tuple(sorted({
+    "請問", "请问", "什麼", "甚麼", "什么", "為什麼", "为什么", "怎麼", "怎么", "如何",
+    "是否", "哪些", "哪裡", "哪里", "一下",
+}, key=len, reverse=True))
+_PARTICLE_CHARS = frozenset("的了是在和與与及或嗎吗呢吧啊呀")
+_CJK_CLASS = "㐀-䶿一-鿿豈-﫿぀-ヿ가-힯"
+_QUERY_RUN = re.compile(rf"([{_CJK_CLASS}]+)|([^\W_{_CJK_CLASS}]+)")
+
+
+def _particle_mask(run: str) -> List[bool]:
+    mask = [False] * len(run)
+    i = 0
+    while i < len(run):
+        word = next((w for w in _PARTICLE_WORDS if run.startswith(w, i)), None)
+        if word:
+            for j in range(i, i + len(word)):
+                mask[j] = True
+            i += len(word)
+            continue
+        mask[i] = run[i] in _PARTICLE_CHARS
+        i += 1
+    return mask
+
+
+def _run_bigrams(run: str) -> List[str]:
+    if len(run) == 1:
+        return [run]
+    plain = [run[i:i + 2] for i in range(len(run) - 1)]
+    mask = _particle_mask(run)
+    if not any(mask) or all(mask):
+        return plain
+    starts = [i for i in range(len(run) - 1) if not mask[i] and not mask[i + 1]]
+    covered = {j for i in starts for j in (i, i + 1)}
+    for j, is_particle in enumerate(mask):
+        if is_particle or j in covered:
+            continue
+        # A content character with no clean pair keeps the pair it forms with a
+        # neighbour: the preceding one (和平與 → 和平, 的確 → 的確), or the
+        # following one at the start of the run (現在 → 現在).
+        starts.append(j - 1 if j > 0 else j)
+        covered.update((starts[-1], starts[-1] + 1))
+    return [run[i:i + 2] for i in sorted(set(starts))]
+
+
+def bigram_query_terms(text: str) -> List[str]:
+    """Query-side bigrams: like the bigram segmenter, minus particle-straddling pairs."""
+    out: List[str] = []
+    for cjk, word in _QUERY_RUN.findall(text or ""):
+        out.extend(_run_bigrams(cjk) if cjk else [word])
+    return out
 
 
 def _row_to_node(row):
@@ -265,6 +384,8 @@ class HybridSearcher:
 
             index = VectorStoreIndex.from_vector_store(vector_store)
         self._index = index
+        # table name -> (segmenter stamp or None, monotonic expiry)
+        self._stamp_cache: Dict[str, Tuple[Optional[str], float]] = {}
 
     @property
     def vector_store(self):
@@ -275,63 +396,130 @@ class HybridSearcher:
         return self._reranker
 
     # ------------------------------------------------------------------ dense
-    async def dense(self, query_text: str, k: int) -> List[Any]:
-        """Vector search, leaves only (parents carry a zero vector, but be explicit)."""
-        from llama_index.core.retrievers import VectorIndexRetriever
+    async def embed_query(self, query_text: str) -> List[float]:
+        """The query embedding, from the index's embedding model."""
+        t0 = time.perf_counter()
+        try:
+            return await self._index._embed_model.aget_query_embedding(query_text)
+        finally:
+            record_stage("embed", t0)
 
-        retriever = VectorIndexRetriever(
-            index=self._index, similarity_top_k=k, vector_store_query_mode="default")
-        nodes = await retriever.aretrieve(query_text)
+    async def dense(self, query_text: str, k: int) -> List[Any]:
+        """Vector search, leaves only (parents carry a zero vector, but be explicit).
+
+        Runs its own cosine query rather than llama-index's: llama-index never
+        raises ``hnsw.ef_search`` (and would do it with a session-wide ``SET`` that
+        leaks to the next user of the pooled connection), and an HNSW scan returns
+        at most ef_search (default 40) rows — a deeper k was silently truncated.
+        Here ``SET LOCAL`` scopes the raise to this query's transaction.
+        """
+        from src.domain.rag.chunk_lookup import ChunkLookup
+
+        embedding = await self.embed_query(query_text)
+        table = ChunkLookup._get_table_name(self._vector_store)
+        ef = max(DEFAULT_EF_SEARCH, int(k))
+        t0 = time.perf_counter()
+        async with self._dense_engine().begin() as conn:
+            await conn.execute(_sql_text(f"SET LOCAL hnsw.ef_search = {ef}"))
+            rows = (await conn.execute(_dense_statement(table), {
+                "emb": _vector_literal(embedding), "k": int(k)})).fetchall()
+        record_stage("dense", t0)
+        nodes = [_row_to_node(r) for r in rows]
         return [n for n in nodes if is_leaf(n)]
 
     # ----------------------------------------------------------------- sparse
-    async def segment_query(self, query_text: str, settings: SearchSettings) -> str:
+    def _dense_engine(self):
+        """llama-index's own async engine for this store when it has built one (the
+        dense query has always run on that pool), else the shared async engine."""
+        try:
+            from sqlalchemy.ext.asyncio import AsyncEngine
+
+            eng = getattr(self._vector_store, "_async_engine", None)
+            if isinstance(eng, AsyncEngine):
+                return eng
+        except Exception:  # noqa: BLE001  # pragma: no cover - import guard
+            pass
+        from db.db import get_async_engine
+
+        return get_async_engine()
+
+    async def segment_query(self, query_text: str, settings: SearchSettings,
+                            segmenter_name: Optional[str] = None) -> str:
         """Space-separated query terms, tokenised the way the index was.
 
         With ``text_search_config == "simple"`` the stored tsvector holds
-        Python-segmented tokens, so the query goes through the same configured
-        segmenter (``rag.retrieval.segmenter``: ckip / jieba / bigram).
+        Python-segmented tokens, so the query goes through the segmenter that
+        built the folder's index (``segmenter_name``, from the table's stamp) or,
+        when the folder has no stamp, the configured one (ckip / jieba / bigram).
+        Bigram queries drop particle-straddling pairs (see bigram_query_terms).
         Any other config keeps Postgres's own tsvector, whose parser splits on
         whitespace and punctuation — the raw words are what it needs.
         """
         if settings.text_search_config != "simple":
             return query_text
+        t0 = time.perf_counter()
         try:
             from src.domain.rag.text_segmenter import get_segmenter
 
-            seg = await asyncio.to_thread(get_segmenter().segment, query_text)
-            return seg or query_text
+            seg = get_segmenter(segmenter_name)
+            if getattr(seg, "name", None) == "bigram":
+                return " ".join(bigram_query_terms(query_text)) or query_text
+            out = await asyncio.to_thread(seg.segment, query_text)
+            return out or query_text
         except Exception as e:  # noqa: BLE001
             logger.debug(f"query segmentation failed, using raw text: {e}")
             return query_text
+        finally:
+            record_stage("segment", t0)
+
+    async def folder_segmenter(self, engine, table: str) -> Optional[str]:
+        """The segmenter to tokenise this folder's queries with: the one stamped on
+        its keyword index, else None (= the configured one). A CKIP stamp under
+        ``profile: cloud`` (where the CKIP model may not be loaded) also falls back
+        to the configured segmenter. Cached per table for SEGMENTER_STAMP_TTL_S."""
+        now = time.monotonic()
+        cached = self._stamp_cache.get(table)
+        if cached is not None and cached[1] > now:
+            stamp = cached[0]
+        else:
+            try:
+                from src.domain.rag.vector_store_manager import read_tsv_segmenter
+
+                async with engine.connect() as conn:
+                    stamp = await conn.run_sync(lambda c: read_tsv_segmenter(c, table))
+            except Exception as e:  # noqa: BLE001
+                logger.debug(f"segmenter stamp unreadable for {table}: {e}")
+                stamp = None
+            self._stamp_cache[table] = (stamp, now + SEGMENTER_STAMP_TTL_S)
+        return _usable_segmenter(stamp)
 
     async def sparse(self, query_text: str, k: int, settings: SearchSettings) -> List[Any]:
-        """BM25 over leaf chunks: all terms (AND) first, then any term (OR) to fill k.
+        """BM25 over leaf chunks in one statement: rows matching every term first,
+        then rows matching any term, each by ts_rank.
 
-        A row matching every term is usually the best keyword hit, and AND matches
-        far fewer rows than OR, so ranking is cheaper. Parents are excluded in SQL:
-        their long concatenated text otherwise wins ``ts_rank`` and fills the
-        LIMIT. Failure degrades to "no BM25 hits" (dense results still return).
+        Parents are excluded in SQL: their long concatenated text otherwise wins
+        ``ts_rank`` and fills the LIMIT. Failure degrades to "no BM25 hits"
+        (dense results still return).
         """
-        lexemes = query_lexemes(await self.segment_query(query_text, settings))
-        if not lexemes:
-            return []
         try:
             from src.domain.rag.chunk_lookup import ChunkLookup
             from db.db import get_async_engine
 
             table = ChunkLookup._get_table_name(self._vector_store)
-            stmt = _bm25_statement(table)
-            async with get_async_engine().connect() as conn:
-                async def run(op: str):
-                    params = {"cfg": settings.text_search_config,
-                              "q": to_tsquery_text(lexemes, op), "k": k}
-                    return list((await conn.execute(stmt, params)).fetchall())
-
-                rows = await run("&") if len(lexemes) > 1 else []
-                if len(rows) < k:
-                    seen = {r[0] for r in rows}
-                    rows += [r for r in await run("|") if r[0] not in seen]
+            engine = get_async_engine()
+            seg_name = (await self.folder_segmenter(engine, table)
+                        if settings.text_search_config == "simple" else None)
+            lexemes = query_lexemes(await self.segment_query(query_text, settings, seg_name))
+            if not lexemes:
+                return []
+            t0 = time.perf_counter()
+            async with engine.connect() as conn:
+                rows = list((await conn.execute(_bm25_statement(table), {
+                    "cfg": settings.text_search_config,
+                    "q_any": to_tsquery_text(lexemes, "|"),
+                    "q_all": to_tsquery_text(lexemes, "&"),
+                    "k": k})).fetchall())
+                record_stage("bm25", t0)
         except Exception as e:  # noqa: BLE001
             logger.warning(f"BM25 search skipped ({type(e).__name__}: {e}); dense results only")
             return []
@@ -356,33 +544,46 @@ class HybridSearcher:
             self.dense(query_text, k),
             self.sparse(query_text, max(k, int(settings.sparse_top_k or 0)), settings))
         dense_raw, sparse_raw = _snapshot(dense), _snapshot(sparse)
+        t0 = time.perf_counter()
         if settings.fusion == FUSION_CONCAT:
             fused = concat_fuse(dense, sparse, settings.similarity_cutoff)
         else:
             fused = rrf_fuse([dense, sparse], k, settings.rrf_k)
+        record_stage("fuse", t0)
         # Expose the raw per-path scores even though RRF overwrote node.score.
         return fused, _with_scores(dense, dense_raw), _with_scores(sparse, sparse_raw)
 
     # ----------------------------------------------------------------- search
     async def search(self, query_text: str, settings: SearchSettings) -> SearchOutcome:
-        """Candidates → rerank (if configured) → top_k leaves."""
-        fused, dense, sparse = await self.candidates(query_text, settings)
-        # Snapshot the fused order and scores: rerank rewrites node.score in place.
-        outcome = SearchOutcome(nodes=[], candidates=len(fused), dense=dense, sparse=sparse,
-                                fused=_with_scores(fused, _snapshot(fused)))
-        if self._reranker and fused:
-            from src.domain.rag.rerank_policy import rerank
+        """Candidates → rerank (if configured) → top_k leaves.
 
-            rr = await rerank(self._reranker, query_text, list(fused), settings.top_k)
-            outcome.nodes = rr.nodes
-            outcome.top_score = rr.top_score
-            outcome.reranked = not rr.failed
-            outcome.rerank_failed = rr.failed
+        ``outcome.timings`` holds this call's per-stage milliseconds.
+        """
+        timings: Dict[str, float] = {}
+        token = _STAGE_TIMINGS.set(timings)
+        try:
+            fused, dense, sparse = await self.candidates(query_text, settings)
+            # Snapshot the fused order and scores: rerank rewrites node.score in place.
+            outcome = SearchOutcome(nodes=[], candidates=len(fused), dense=dense, sparse=sparse,
+                                    fused=_with_scores(fused, _snapshot(fused)),
+                                    fusion=settings.fusion, timings=timings)
+            if self._reranker and fused:
+                from src.domain.rag.rerank_policy import rerank
+
+                t0 = time.perf_counter()
+                rr = await rerank(self._reranker, query_text, list(fused), settings.top_k)
+                record_stage("rerank", t0)
+                outcome.nodes = rr.nodes
+                outcome.top_score = rr.top_score
+                outcome.reranked = not rr.failed
+                outcome.rerank_failed = rr.failed
+                return outcome
+            # No reranker: RRF scores are rank-based (≈0.03), so the similarity cutoff
+            # does not apply; concat already applied it to its dense half.
+            outcome.nodes = list(fused)[: settings.top_k]
             return outcome
-        # No reranker: RRF scores are rank-based (≈0.03), so the similarity cutoff
-        # does not apply; concat already applied it to its dense half.
-        outcome.nodes = list(fused)[: settings.top_k]
-        return outcome
+        finally:
+            _STAGE_TIMINGS.reset(token)
 
 
 class _ScoredView:
@@ -401,6 +602,30 @@ class _ScoredView:
     @property
     def text(self):
         return self.node.text
+
+
+def _usable_segmenter(stamp: Optional[str]) -> Optional[str]:
+    """``stamp`` when queries can use it, else None (the configured segmenter)."""
+    from src.domain.rag.text_segmenter import SEGMENTERS, configured_segmenter_name
+
+    if not stamp or stamp not in SEGMENTERS:
+        return None
+    if stamp == "ckip" and configured_segmenter_name() != "ckip":
+        try:
+            from src.config.config_manager import Config
+
+            profile = getattr(getattr(Config.get_config_model(), "rag", None), "profile", "local")
+        except Exception:  # noqa: BLE001
+            profile = "local"
+        if profile == "cloud":
+            return None
+    return stamp
+
+
+def _sql_text(sql: str):
+    from sqlalchemy import text as _sql
+
+    return _sql(sql)
 
 
 def _with_scores(nodes: Sequence[Any], snapshot) -> List[Any]:

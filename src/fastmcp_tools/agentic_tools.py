@@ -9,14 +9,16 @@ not change when the project was renamed to Folio.) It does two things:
 2. Provides the _query function — injected as the backend when
    dynamic_tool_manager registers a tool.
 
-When config.rag.retrieval.return_resource_files is True and mode='search',
-the returned list appends the raw binary File objects of the hit files after
-the first JSON text block, so an MCP client (e.g. an agent builder) can turn
-them into artifacts.
+When config.rag.retrieval.return_resource_files is True (default False) and
+mode='search', the returned list appends the original file of the top-ranked hit
+after the first JSON text block — one file, and only when it is no larger than
+rag.retrieval.resource_file_max_bytes — so an MCP client (e.g. an agent builder)
+can turn it into an artifact.
 """
 
 from __future__ import annotations
 
+import asyncio
 import json
 import time
 from pathlib import Path
@@ -280,63 +282,74 @@ class RagFile(File):
         )
 
 
-def _build_resource_files(response: dict) -> List[File]:
-    """Extract unique files from a search response's results, read their raw bytes,
-    and wrap them as RagFile objects.
+def _build_resource_files(response: dict, max_bytes: Optional[int] = None) -> List[File]:
+    """The original file of the top-ranked hit, as a RagFile (at most one file).
+
+    Attaching every hit file used to add tens of thousands of tokens to a search
+    response; the agent rarely needs more than the best source. A file larger
+    than ``max_bytes`` (None = no cap) is not attached.
 
     Args:
-        response: The dict produced by handle_search; must contain results[],
-            each with file_id/file_name.
+        response: The dict produced by handle_search; results[] best first, each
+            with file_id/file_name.
+        max_bytes: Size cap for the attached file.
 
     Returns:
-        A deduplicated list of File objects, sorted by hit count (most-hit files first).
+        ``[RagFile]`` or ``[]``.
     """
     results = response.get("results", []) if isinstance(response, dict) else []
-    if not results:
+    fid = next((r.get("file_id") for r in results if r.get("file_id")), None)
+    if not fid:
         return []
 
-    # Count hits per file_id (used for sorting), preserving order of appearance
-    hits: Dict[str, int] = {}
-    for r in results:
-        fid = r.get("file_id")
-        if fid:
-            hits[fid] = hits.get(fid, 0) + 1
-
-    if not hits:
+    record = FileDB.get_by_ids([fid]).get(fid)
+    if not record:
+        logger.warning(f"File record missing for id={fid}, skipping artifact")
         return []
+    size = getattr(record, "file_size", None)
+    if max_bytes is not None and isinstance(size, int) and size > max_bytes:
+        logger.info(f"Not attaching {record.file_name}: {size} bytes > cap {max_bytes}")
+        return []
+    try:
+        file_bytes = FileStorage.read_file(record.file_path)
+    except Exception as e:
+        logger.warning(f"Failed to read file {record.file_name} (id={fid}): {e}")
+        return []
+    if max_bytes is not None and len(file_bytes) > max_bytes:
+        logger.info(f"Not attaching {record.file_name}: {len(file_bytes)} bytes > cap {max_bytes}")
+        return []
+    p = Path(record.file_name)
+    ext = p.suffix.lstrip('.').lower()
+    logger.debug(f"Attached artifact: {record.file_name} ({len(file_bytes)} bytes, ext={ext})")
+    return [RagFile(
+        data=file_bytes,
+        format=ext or "bin",
+        name=p.stem,
+        mime_type=_EXT_TO_MIME.get(ext),
+    )]
 
-    # Most-hit first, so the artifact order the agent sees reflects relevance
-    sorted_fids = sorted(hits.keys(), key=lambda x: hits[x], reverse=True)
 
-    file_records = FileDB.get_by_ids(sorted_fids)
+def _retrieval_config():
+    rag = getattr(Config.get_config_model(), "rag", None)
+    return getattr(rag, "retrieval", None) if rag is not None else None
 
-    files: List[File] = []
-    for fid in sorted_fids:
-        record = file_records.get(fid)
-        if not record:
-            logger.warning(f"File record missing for id={fid}, skipping artifact")
-            continue
-        try:
-            file_bytes = FileStorage.read_file(record.file_path)
-            p = Path(record.file_name)
-            ext = p.suffix.lstrip('.').lower()
-            name_without_ext = p.stem
-            standard_mime = _EXT_TO_MIME.get(ext)
 
-            files.append(RagFile(
-                data=file_bytes,
-                format=ext or "bin",
-                name=name_without_ext,
-                mime_type=standard_mime,
-            ))
-            logger.debug(
-                f"Attached artifact: {record.file_name} "
-                f"({len(file_bytes)} bytes, ext={ext}, hits={hits[fid]})"
-            )
-        except Exception as e:
-            logger.warning(f"Failed to read file {record.file_name} (id={fid}): {e}")
+def resolve_search_defaults(top_k: Optional[int], expand_context: Optional[bool]):
+    """Fill in omitted search knobs from the live config (runtime setting changes
+    apply to the next call), then bound top_k to 1..MAX_TOP_K."""
+    from src.domain.rag.agentic_handlers import clamp_top_k
 
-    return files
+    retrieval = None
+    try:
+        retrieval = _retrieval_config()
+    except Exception:  # noqa: BLE001
+        pass
+    if top_k is None:
+        top_k = getattr(retrieval, "default_top_k", None) or 5
+    if expand_context is None:
+        value = getattr(retrieval, "expand_context_default", True)
+        expand_context = True if value is None else bool(value)
+    return clamp_top_k(top_k), expand_context
 
 
 def register_agentic_tools(mcp: FastMCP) -> None:
@@ -351,9 +364,10 @@ async def _query(
     mode: str,
     query: str,
     file_id: Optional[str],
-    top_k: int,
-    similarity_cutoff: float,
-    expand_context: bool,
+    top_k: Optional[int],
+    similarity_cutoff: Optional[float],
+    expand_context: Optional[bool],
+    offset: Optional[int] = None,
 ) -> list:
     """Shared backend query for all per-folder MCP tools.
 
@@ -365,9 +379,12 @@ async def _query(
         mode: One of ``search`` / ``list`` / ``read``.
         query: Query string (may be empty for mode=list).
         file_id: Required for mode=read; ignored for other modes.
-        top_k: Return the top K results.
-        similarity_cutoff: Similarity threshold (ignored when the reranker is enabled).
-        expand_context: True -> for mode=search, unmerged leaves expand their neighbors.
+        top_k: Return the top K results (None = rag.retrieval.default_top_k; 1..20).
+        similarity_cutoff: Deprecated, accepted and ignored (no effect on rank
+            fusion / rerank scores).
+        expand_context: True -> for mode=search, unmerged leaves expand their
+            neighbors (None = rag.retrieval.expand_context_default).
+        offset: mode=read page start (chunk index).
 
     Returns:
         ``list[str | RagFile]`` — the first element is a JSON string (metadata +
@@ -383,6 +400,7 @@ async def _query(
 
     try:
         token = extract_token()
+        top_k, expand_context = resolve_search_defaults(top_k, expand_context)
         adapter = get_rag_adapter()
         response = await adapter.query(
             folder_name=folder_name,
@@ -393,15 +411,18 @@ async def _query(
             similarity_cutoff=similarity_cutoff,
             expand_context=expand_context,
             token=token,
+            offset=offset,
         )
 
         content_blocks: list = [json.dumps(response, ensure_ascii=False)]
 
         # Only search mode attaches artifacts (list/read do not need them)
         if mode == "search":
-            rag_config = Config.get_config_model().rag
-            if rag_config and getattr(rag_config.retrieval, "return_resource_files", False):
-                resource_files = _build_resource_files(response)
+            retrieval = _retrieval_config()
+            if retrieval is not None and getattr(retrieval, "return_resource_files", False):
+                cap = getattr(retrieval, "resource_file_max_bytes", None)
+                resource_files = await asyncio.to_thread(
+                    _build_resource_files, response, cap if isinstance(cap, int) else None)
                 content_blocks.extend(resource_files)
                 attached_files = len(resource_files)
                 attached_bytes = sum(len(f.data) for f in resource_files if hasattr(f, "data"))
@@ -450,7 +471,7 @@ async def _query(
             response={}, attached_files=0, attached_bytes=0,
             elapsed_ms=elapsed_ms, error=error_msg,
         ))
-        logger.error(f"Tool exception traceback:", exc_info=True)
+        logger.error("Tool exception traceback:", exc_info=True)
         return [json.dumps(
             {"error": "internal_error", "detail": f"Query failed: {exc}"},
             ensure_ascii=False,

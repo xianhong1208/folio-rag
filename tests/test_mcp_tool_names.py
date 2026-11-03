@@ -73,7 +73,7 @@ def test_register_uses_safe_name_and_reverse_maps(manager):
         assert manager.register_folder_tool("產品 手冊", MagicMock(), user_token="jti-a")
     (tool_name,) = manager.get_tools_by_token("jti-a")
     assert _VALID.match(tool_name)
-    assert manager._mcp.tool.call_args.kwargs["name"] == tool_name
+    assert manager._mcp.add_tool.call_args.args[0].name == tool_name
     assert manager.get_folder_name_from_tool(tool_name) == "產品 手冊"
 
 
@@ -91,7 +91,7 @@ def test_tool_description_is_english(manager):
                return_value=[SimpleNamespace(name="docs")]):
         manager.register_folder_tool("docs", MagicMock(), folder_description="Specs",
                                      user_token="jti-a")
-    desc = manager._mcp.tool.call_args.kwargs["description"]
+    desc = manager._mcp.add_tool.call_args.args[0].description
     assert not re.search(r"[一-鿿]", desc), desc
     assert "mode" in desc and "Specs" in desc
 

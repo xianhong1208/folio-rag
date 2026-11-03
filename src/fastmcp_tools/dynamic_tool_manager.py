@@ -7,9 +7,10 @@ The tool carries a mode parameter (search/list/read) plus expand_context.
 import hashlib
 import re
 import unicodedata
-from typing import Callable, Dict, Literal, Optional
+from typing import Annotated, Callable, Dict, Literal, Optional
 
 from fastmcp import FastMCP
+from pydantic import Field
 
 from src.config.config_manager import Config
 from src.log import get_mcptools_logger, mask_token
@@ -30,6 +31,62 @@ def _slug(text: str) -> str:
 
 
 DEFAULT_TOOL_PREFIX = "Folio"
+
+# Mirrors agentic_handlers.MAX_TOP_K (the MCP search cap, same as the REST API's).
+MAX_TOP_K = 20
+
+# Parameters the tool still accepts but no longer advertises. similarity_cutoff
+# had no effect on rank-fusion / reranked scores; older clients that send it must
+# not get a validation error, so it stays in the signature and is ignored.
+HIDDEN_PARAMETERS = ("similarity_cutoff",)
+
+
+def _make_tool_func(folder_name: str, query_function: Callable):
+    """The per-folder tool. Every optional search knob defaults to None, which the
+    backend resolves from the live config at call time."""
+
+    async def folder_tool(
+        query: Annotated[str, Field(description="Natural-language question (mode=search)")] = "",
+        mode: Literal["search", "list", "read"] = "search",
+        file_id: Annotated[Optional[str], Field(
+            description="File to read (mode=read), from list or search results")] = None,
+        top_k: Annotated[Optional[int], Field(
+            description=f"mode=search: number of results, 1-{MAX_TOP_K} "
+                        "(default: server setting)")] = None,
+        expand_context: Annotated[Optional[bool], Field(
+            description="mode=search: add neighbouring chunks of the same section "
+                        "(default: server setting)")] = None,
+        offset: Annotated[Optional[int], Field(
+            description="mode=read: chunk index to start from; pass the previous "
+                        "page's next_offset")] = None,
+        similarity_cutoff: Optional[float] = None,
+    ) -> list:
+        return await query_function(
+            folder_name=folder_name,
+            mode=mode,
+            query=query,
+            file_id=file_id,
+            top_k=top_k,
+            similarity_cutoff=similarity_cutoff,
+            expand_context=expand_context,
+            offset=offset,
+        )
+
+    return folder_tool
+
+
+def _hide_parameters(tool, names):
+    """A copy of ``tool`` whose advertised input schema omits ``names``.
+
+    Arguments are validated against the function signature, not this schema, so
+    a client that still sends a hidden parameter is accepted (and it is ignored).
+    """
+    params = dict(tool.parameters or {})
+    props = {k: v for k, v in (params.get("properties") or {}).items() if k not in names}
+    params["properties"] = props
+    if "required" in params:
+        params["required"] = [r for r in params["required"] if r not in names]
+    return tool.model_copy(update={"parameters": params})
 
 
 def configured_tool_prefix() -> str:
@@ -124,8 +181,10 @@ class DynamicToolManager:
 
         Args:
             folder_name: Folder name.
-            query_function: Async function with signature (folder_name, mode, query,
-                file_id, top_k, expand_context, similarity_cutoff).
+            query_function: Async function with keyword arguments (folder_name, mode,
+                query, file_id, top_k, similarity_cutoff, expand_context, offset);
+                top_k / expand_context / offset arrive as None when the caller
+                left them out.
             folder_description: Description written into the tool description to
                 guide the agent.
             user_token: Token (required) — used for ACL filtering (only this token
@@ -168,13 +227,8 @@ class DynamicToolManager:
             )
             return True
 
-        # Build the tool description (the interface doc the agent sees)
-        config = Config.get_config_model()
-        retrieval = config.rag.retrieval
-        default_top_k = retrieval.default_top_k
-        default_cutoff = retrieval.default_similarity_cutoff
-        default_expand = getattr(retrieval, "expand_context_default", True)
-
+        # Build the tool description (the interface doc the agent sees). Defaults are
+        # not baked in: they are read from the live config on every call.
         desc_parts = [
             f"**Search tool for the '{folder_name}' folder**",
             "",
@@ -188,7 +242,7 @@ class DynamicToolManager:
             "",
             "### `mode=\"search\"` (default; the right choice almost every time)",
             "Natural-language retrieval. Hits are auto-merged with sibling chunks of the same",
-            "section and expanded with neighbouring chunks for full context.",
+            "section and expanded with neighbouring chunks of that section for context.",
             "**Use when**:",
             "- the user asks what something is, what a rule says, or whether X is mentioned",
             "- you need an answer, a lead or a passage from this folder",
@@ -202,7 +256,8 @@ class DynamicToolManager:
             "- do NOT call it just to look around before searching — search directly",
             "",
             "### `mode=\"read\"` (whole file; use sparingly)",
-            "Loads the full text of one file (up to ~30000 tokens).",
+            "Returns the text of one file, up to ~30000 tokens per call; a longer file comes",
+            "in pages (the response's next_offset is the offset of the next page).",
             "**Only when**:",
             "- the user explicitly asks for the complete content, a transcript or the whole document",
             "- the user wants the whole file translated or summarised line by line",
@@ -211,54 +266,35 @@ class DynamicToolManager:
             "**Never use read**:",
             "- to answer a specific question — use search",
             "- for vague \"tell me more about this file\" requests — search for what matters",
-            "- because search results were weak — rephrase the query or lower the cutoff",
+            "- because search results were weak — rephrase the query instead",
             "- to browse — use list",
             "",
-            "**Why**: one read puts ~3000-30000 tokens into your context, mostly unrelated to",
+            "**Why**: one read puts up to ~30000 tokens into your context, mostly unrelated to",
             "the question. search already merges and expands context and is usually enough.",
             "",
             "## Parameters",
             "- `query` (str): required for mode=search; ignored by list/read",
             "- `mode` (str): search / list / read, default search",
             "- `file_id` (str): required for mode=read (from list or search results)",
-            f"- `top_k` (int): mode=search, default {default_top_k}",
-            f"- `similarity_cutoff` (float): mode=search, default {default_cutoff}",
-            f"- `expand_context` (bool): mode=search, default {str(default_expand).lower()}",
+            f"- `top_k` (int, 1-{MAX_TOP_K}): mode=search, number of results; default: server setting",
+            "- `expand_context` (bool): mode=search, add neighbouring chunks; default: server setting",
+            "- `offset` (int): mode=read, chunk index to start from (next_offset of the previous page)",
             "",
-            "Response: JSON with mode, results and _hint (suggested next step)",
+            "Response: JSON with mode, results, score_type (what score means: rerank =",
+            "relevance 0-1, rrf = rank fusion — compare scores only within one response)",
+            "and _hint (suggested next step).",
         ])
         description = "\n".join(desc_parts)
 
-        # Build the tool function
-        def create_tool_func(top_k, similarity_cutoff, expand_context):
-            async def folder_tool(
-                query: str = "",
-                mode: Literal["search", "list", "read"] = "search",
-                file_id: Optional[str] = None,
-                top_k: int = top_k,
-                similarity_cutoff: float = similarity_cutoff,
-                expand_context: bool = expand_context,
-            ) -> list:
-                return await query_function(
-                    folder_name=folder_name,
-                    mode=mode,
-                    query=query,
-                    file_id=file_id,
-                    top_k=top_k,
-                    similarity_cutoff=similarity_cutoff,
-                    expand_context=expand_context,
-                )
-            return folder_tool
-
-        tool_func = create_tool_func(default_top_k, default_cutoff, default_expand)
+        tool_func = _make_tool_func(folder_name, query_function)
         tool_func.__name__ = tool_name
         tool_func.__doc__ = f"Folio tool for folder '{folder_name}' (search / list / read modes)"
 
-        self._mcp.tool(
-            name=tool_name,
-            description=description,
-            output_schema=None,
-        )(tool_func)
+        from fastmcp.tools import Tool
+
+        tool = Tool.from_function(
+            tool_func, name=tool_name, description=description, output_schema=None)
+        self._mcp.add_tool(_hide_parameters(tool, HIDDEN_PARAMETERS))
 
         self._registered_tools[tool_name] = tool_func
         self._token_folder_to_tool[token_folder_key] = tool_name

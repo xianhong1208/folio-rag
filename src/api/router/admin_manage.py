@@ -382,7 +382,9 @@ async def admin_query_folder(folder_id: int,
     # answer=true: follow retrieval with CRAG answer generation.
     if body.answer:
         try:
-            gen = _generate_answer(q, resp["data"].get("results", []))
+            # Two blocking LLM calls: keep them off the event loop.
+            from starlette.concurrency import run_in_threadpool
+            gen = await run_in_threadpool(_generate_answer, q, resp["data"].get("results", []))
             resp["data"]["answer"] = gen.get("answer")
             resp["data"]["rag_gate"] = {k: gen[k] for k in
                                         ("confidence", "kept", "dropped", "note", "citations",
@@ -439,7 +441,7 @@ def _crag_grade(query: str, results: list) -> dict:
                 "grading": crag.Grading([])}
     client, model = _answer_llm()
     try:
-        grading = crag.grade(client, model, query, [r.get("text") or "" for r in top])
+        grading = crag.grade(client, model, query, crag.grade_texts(top))
     finally:
         _close_quietly(client)
     if not grading.ok:
