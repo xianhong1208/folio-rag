@@ -88,6 +88,13 @@ def create_app(config: BaseModel, transport: str) -> FastAPI:
     @asynccontextmanager
     async def lifespan(app: FastAPI):
         async with mcp_app.lifespan(app):
+            # Indexing's blocking work gets its own bounded thread pool so it cannot
+            # occupy the default executor the query path's to_thread calls rely on.
+            try:
+                from src.domain.rag import indexing_executor
+                indexing_executor.install()
+            except Exception as e:
+                api_logger.warning(f"Startup indexing thread pool install failed (continuing): {e}")
             manager = IndexingJobManager.get_instance()
             try:
                 flipped = manager.mark_interrupted_on_startup()
@@ -99,17 +106,20 @@ def create_app(config: BaseModel, transport: str) -> FastAPI:
                 manager.start_watchdog()
             except Exception as e:
                 api_logger.warning(f"Startup watchdog start failed (continuing): {e}")
-            # Terminal job rows have no other reclamation path (the TTLCache only
-            # governs memory), so purge expired ones once at startup to keep the
-            # IndexJobs table from growing without bound.
+            # IndexJobs (terminal rows), QueryLogs and SettingsAudit have no other
+            # reclamation path, so a background task purges rows past
+            # database.retention at startup and then daily (batched deletes).
+            retention_task = None
             try:
-                from db.indexjobdb import IndexJobDB
-                purged = IndexJobDB.purge_terminal_older_than(days=30)
-                if purged:
-                    api_logger.info(f"Startup: purged {purged} old terminal IndexJob rows")
+                from src.utils import retention_scheduler
+                retention_task = retention_scheduler.start()
             except Exception as e:
-                api_logger.warning(f"Startup IndexJob purge failed (continuing): {e}")
-            yield
+                api_logger.warning(f"Startup retention scheduler failed (continuing): {e}")
+            try:
+                yield
+            finally:
+                if retention_task is not None:
+                    retention_task.cancel()
 
     # openapi_tags sets Swagger tag order and group descriptions.
     openapi_tags = [

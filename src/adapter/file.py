@@ -13,6 +13,7 @@ from db.folderdb import FolderDB
 from sqlalchemy.exc import NoResultFound
 from uuid import UUID, uuid4
 from src.log import get_adapter_logger
+from src.adapter.db_offload import run_db
 from src.adapter.model import FileConfigData, FileDownloadData
 from src.storage.file_storage import FileStorage
 logger = get_adapter_logger()
@@ -48,6 +49,35 @@ class FileAdapter():
             actual_file_count = len(files_in_folder)
             actual_total_size = sum(f.file_size for f in files_in_folder)
             FolderDB.update(folder_id, file_count=actual_file_count, total_size=actual_total_size)
+
+    @staticmethod
+    def _store_file(folder, file_content: bytes, file_name: str,
+                    description: Optional[str], tags: Optional[List[str]]):
+        """Validate, save and record one uploaded file (blocking). Returns (validation, record)."""
+        validation_result = FileDB._validate_file_content(file_content, file_name)
+
+        # Generate the UUID up front so the file is saved and the DB
+        # record created against the same id in a single pass.
+        file_id = uuid4()
+        file_path = FileStorage.save_file(folder.user_token, folder.name, str(file_id), file_content)
+
+        file_record = FileDB.create(
+            id=file_id,
+            folder_id=folder.id,
+            file_name=file_name,
+            file_path=file_path,
+            file_size=validation_result['file_size'],
+            mime_type=validation_result['mime_type'],
+            description=description,
+            tags=tags,
+            content_hash=validation_result.get('content_hash'),
+        )
+        return validation_result, file_record
+
+    @staticmethod
+    def _file_ids_in_folder(folder_id: int) -> list:
+        with DBSession() as session:
+            return [row.id for row in session.query(File.id).filter(File.folder_id == folder_id).all()]
 
     @staticmethod
     def _build_upload_response(is_batch: bool, successful_uploads: list, failed_uploads: list, 
@@ -95,7 +125,7 @@ class FileAdapter():
             Batch upload: a dict with upload result statistics.
         """
 
-        folder = FileAdapter._verify_folder_ownership(folder_id, user_token)
+        folder = await run_db(FileAdapter._verify_folder_ownership, folder_id, user_token)
         is_batch = isinstance(files_data, list)
         files_list = files_data if is_batch else [files_data]
 
@@ -113,24 +143,10 @@ class FileAdapter():
 
                 logger.info(f"Processing file: {file_name}, description: {description}, tags: {tags}")
 
-                validation_result = FileDB._validate_file_content(file_content, file_name)
-
-                # Generate the UUID up front so the file is saved and the DB
-                # record created against the same id in a single pass.
-                file_id = uuid4()
-                file_path = FileStorage.save_file(folder.user_token, folder.name, str(file_id), file_content)
-
-                file_record = FileDB.create(
-                    id=file_id,
-                    folder_id=folder.id,
-                    file_name=file_name,
-                    file_path=file_path,
-                    file_size=validation_result['file_size'],
-                    mime_type=validation_result['mime_type'],
-                    description=description,
-                    tags=tags,
-                    content_hash=validation_result.get('content_hash'),
-                )
+                # Validation (hashing), the disk write and the INSERT all block: one
+                # worker-thread hop per file.
+                validation_result, file_record = await run_db(
+                    FileAdapter._store_file, folder, file_content, file_name, description, tags)
 
                 total_size_added += validation_result['file_size']
 
@@ -165,7 +181,7 @@ class FileAdapter():
                     raise
 
         if len(successful_uploads) > 0 or not is_batch:
-            FileAdapter._update_folder_stats(folder.id)
+            await run_db(FileAdapter._update_folder_stats, folder.id)
 
         return FileAdapter._build_upload_response(
             is_batch, successful_uploads, failed_uploads, skipped_uploads, 
@@ -180,9 +196,9 @@ class FileAdapter():
             user_token: User token
             **kwargs: Query filters (including folder_id)
         """
-        FileAdapter._verify_folder_ownership(kwargs.get('folder_id'), user_token)
+        await run_db(FileAdapter._verify_folder_ownership, kwargs.get('folder_id'), user_token)
 
-        file_dict = FileDB.get(**kwargs)
+        file_dict = await run_db(FileDB.get, **kwargs)
             
         return [FileConfigData(
             id=file.id,
@@ -214,14 +230,14 @@ class FileAdapter():
             A record containing the file content and metadata.
         """
         try:
-            FileAdapter._verify_folder_ownership(folder_id, user_token)
+            await run_db(FileAdapter._verify_folder_ownership, folder_id, user_token)
 
-            file_record = FileDB.get(folder_id=folder_id, id=file_id)
+            file_record = await run_db(FileDB.get, folder_id=folder_id, id=file_id)
 
             if not file_record:
                 raise NoResultFound(f"File {file_id} not found in folder {folder_id}")
 
-            file_content = FileStorage.read_file(file_record[0].file_path)
+            file_content = await run_db(FileStorage.read_file, file_record[0].file_path)
             
             return [FileDownloadData(
                 id=file_record[0].id,
@@ -260,9 +276,9 @@ class FileAdapter():
         Returns:
             List of updated file configuration data.
         """
-        folder = FileAdapter._verify_folder_ownership(folder_id, user_token)
+        folder = await run_db(FileAdapter._verify_folder_ownership, folder_id, user_token)
 
-        file_list = FileDB.get(folder_id=folder.id, id=file_id)
+        file_list = await run_db(FileDB.get, folder_id=folder.id, id=file_id)
         if not file_list:
             raise NoResultFound(f"File id {file_id} does not exist in folder {folder_id}")
 
@@ -271,7 +287,7 @@ class FileAdapter():
             update_data['description'] = description
         if tags is not None:
             update_data['tags'] = tags
-        updated_file = FileDB.update(file_id, **update_data)
+        updated_file = await run_db(FileDB.update, file_id, **update_data)
         logger.info(f"Successfully updated file metadata: file_id={updated_file.id}")
         return [FileConfigData(
             id=updated_file.id,
@@ -307,15 +323,11 @@ class FileAdapter():
         """
         from src.adapter.rag import get_rag_adapter
 
-        folder = FileAdapter._verify_folder_ownership(folder_id, user_token)
+        folder = await run_db(FileAdapter._verify_folder_ownership, folder_id, user_token)
         is_batch = isinstance(file_ids, list) or delete_all
 
         if delete_all:
-            with DBSession() as session:
-                files_to_delete = session.query(File).filter(
-                    File.folder_id == folder.id
-                ).all()
-            files_to_delete_ids = [f.id for f in files_to_delete]
+            files_to_delete_ids = await run_db(FileAdapter._file_ids_in_folder, folder.id)
         elif isinstance(file_ids, list):
             files_to_delete_ids = file_ids
         else:
@@ -333,7 +345,7 @@ class FileAdapter():
         
         for file_id in files_to_delete_ids:
             try:
-                file_record = FileDB.get(folder_id=folder_id, id=file_id)
+                file_record = await run_db(FileDB.get, folder_id=folder_id, id=file_id)
 
                 # Pass user_token so the index delete goes through ACL rather
                 # than bypassing permission checks.
@@ -345,9 +357,9 @@ class FileAdapter():
                         # Index cleanup failure must not fail the whole deletion.
                         logger.warning(f"Failed to delete RAG index for file {file_id}: {idx_error}")
 
-                FileStorage.delete_file(file_record[0].file_path)
+                await run_db(FileStorage.delete_file, file_record[0].file_path)
 
-                FileDB.delete(folder_id=folder_id, id=file_id)
+                await run_db(FileDB.delete, folder_id=folder_id, id=file_id)
 
                 # Best-effort: abort any in-flight indexing of this file so it
                 # stops at the next checkpoint instead of wasting context-gen /
@@ -387,7 +399,7 @@ class FileAdapter():
                     raise
 
         if total_size_freed > 0:
-            FolderDB.update(folder.id,
+            await run_db(FolderDB.update, folder.id,
                         file_count=max(0, folder.file_count - len(deleted_files if is_batch else [file_ids])),
                         total_size=max(0, folder.total_size - total_size_freed))
 

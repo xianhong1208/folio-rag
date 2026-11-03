@@ -128,10 +128,10 @@ class IndexJobDB(BaseDB):
 
     @classmethod
     def purge_terminal_older_than(cls, days: int = 30) -> int:
-        """Purge terminal job rows older than the retention period (called at startup to prevent unbounded growth).
+        """Purge terminal job rows older than the retention period (batched).
 
-        Timestamps are ISO-8601 UTC strings; within the same format, lexical order equals
-        chronological order, so string comparison is used directly.
+        Delegates to db.retention_db, which the startup/daily retention task uses for
+        every append-only table.
 
         Args:
             days: Retention window; terminal rows with last_updated_at earlier than now-days are deleted.
@@ -140,26 +140,8 @@ class IndexJobDB(BaseDB):
             Number of rows deleted; 0 on DB failure.
         """
         try:
-            from datetime import datetime, timedelta, timezone
-            cutoff = (
-                datetime.now(timezone.utc) - timedelta(days=days)
-            ).isoformat()
-            orm = cls.get_orm_class()
-            with DBSession() as session:
-                deleted = (
-                    session.query(orm)
-                    .filter(orm.status.in_(
-                        ["succeeded", "partial_success", "failed", "cancelled", "interrupted"]
-                    ))
-                    .filter(orm.last_updated_at < cutoff)
-                    .delete(synchronize_session=False)
-                )
-                session.commit()
-                if deleted:
-                    cls.get_log().info(
-                        f"Purged {deleted} terminal IndexJob row(s) older than {days}d"
-                    )
-                return deleted
+            from db.retention_db import purge_older_than
+            return purge_older_than("index_jobs", days)
         except Exception as e:
             cls.get_log().warning(f"IndexJobDB.purge_terminal_older_than failed: {e}")
             return 0
