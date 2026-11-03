@@ -30,7 +30,7 @@ def _ensure_bound() -> None:
     get_engine()
 
 
-def _owned(q, folder_id_col, owner: Optional[str]):
+def _filter_to_owner(q, folder_id_col, owner: Optional[str]):
     """Restrict a query to folders bound to ``owner`` (None = every folder)."""
     if owner is None:
         return q
@@ -46,18 +46,18 @@ def overview(owner: Optional[str] = None) -> Dict[str, Any]:
     """
     _ensure_bound()
     with Session() as s:
-        folders = _owned(s.query(func.count(Folder.id)), Folder.id, owner).scalar() or 0
-        files, total_size = _owned(s.query(
+        folders = _filter_to_owner(s.query(func.count(Folder.id)), Folder.id, owner).scalar() or 0
+        files, total_size = _filter_to_owner(s.query(
             func.count(File.id), func.coalesce(func.sum(File.file_size), 0)
         ), File.folder_id, owner).one()
-        idx_rows = _owned(s.query(
+        idx_rows = _filter_to_owner(s.query(
             FileIndex.status, func.count(FileIndex.id), func.coalesce(func.sum(FileIndex.num_chunks), 0)
         ), FileIndex.folder_id, owner).group_by(FileIndex.status).all()
         by_status = {r[0]: {"files": r[1], "chunks": int(r[2])} for r in idx_rows}
-        job_rows = _owned(s.query(IndexJob.status, func.count(IndexJob.job_id)),
+        job_rows = _filter_to_owner(s.query(IndexJob.status, func.count(IndexJob.job_id)),
                           IndexJob.folder_id, owner).group_by(IndexJob.status).all()
         jobs_by_status = {r[0]: r[1] for r in job_rows}
-        running = _owned(s.query(IndexJob), IndexJob.folder_id, owner) \
+        running = _filter_to_owner(s.query(IndexJob), IndexJob.folder_id, owner) \
             .filter(IndexJob.status.in_(_JOB_ACTIVE)) \
             .order_by(IndexJob.last_updated_at.desc()).limit(5).all()
     indexed = by_status.get("indexed", {"files": 0, "chunks": 0})
@@ -176,7 +176,7 @@ def indexing_trend(days: int = 7, owner: Optional[str] = None) -> List[Dict[str,
     from datetime import datetime, timedelta, timezone
     since = datetime.now(timezone.utc) - timedelta(days=days - 1)
     with Session() as s:
-        rows = _owned(s.query(
+        rows = _filter_to_owner(s.query(
             _f.date(FileIndex.indexed_at).label("d"), _f.count(FileIndex.id)
         ), FileIndex.folder_id, owner) \
          .filter(FileIndex.status == "indexed", FileIndex.indexed_at >= since) \

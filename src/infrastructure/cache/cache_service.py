@@ -4,7 +4,7 @@ Simple TTL-based in-memory cache with LRU eviction and hit/miss statistics.
 """
 
 from abc import ABC, abstractmethod
-from typing import Optional, Any, List
+from typing import Optional, Any
 import time
 import fnmatch
 from threading import Lock
@@ -204,27 +204,12 @@ class CacheKeys:
         return f"files:folder:{folder_id}"
 
     @staticmethod
-    def file_by_id(file_id: str) -> str:
-        return f"file:id:{file_id}"
-
-    @staticmethod
     def rag_query(folder_id: int, query_hash: str) -> str:
         return f"query:{folder_id}:{query_hash}"
-
-    @staticmethod
-    def auth_token(token: str) -> str:
-        return f"auth:{token}"
-
-    @staticmethod
-    def index_status(file_id: str) -> str:
-        return f"index:file:{file_id}"
 
 
 class CacheTTL:
     """Recommended TTL values in seconds."""
     FOLDER = 300
     FILE_LIST = 180
-    FILE_DETAIL = 300
     QUERY_RESULT = 300
-    AUTH_TOKEN = 3600
-    INDEX_STATUS = 600

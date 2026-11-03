@@ -30,7 +30,7 @@ from fastmcp.server.dependencies import get_http_request
 
 from db.folderdb import FolderDB
 from src.log import get_api_logger, mask_token
-from src.auth.dependencies import get_remote_verifier_instance
+from src.auth.dependencies import get_token_verifier
 from src.auth.owner_key import owner_key_from_bearer
 from src.fastmcp_tools.dynamic_tool_manager import DynamicToolManager, configured_tool_prefix
 
@@ -41,8 +41,7 @@ api_logger = get_api_logger()
 
 # Cache filtered tool lists per token — every MCP list_tools call previously did
 # token-verify + FolderDB.get round-trip. With many MCP clients polling list_tools
-# this dominated request latency. TTL matches auth.cache_ttl (60s) — if it gets
-# out of sync slightly that's OK, worst case is a stale tool list for <1min.
+# this dominated request latency. Worst case is a stale tool list for <1min.
 _FILTER_CACHE_TTL = 60
 _FILTER_CACHE_MAX = 1024
 _filter_cache: "TTLCache[str, list]" = TTLCache(maxsize=_FILTER_CACHE_MAX, ttl=_FILTER_CACHE_TTL)
@@ -115,7 +114,7 @@ class AuthFilteredFastMCP(FastMCP):
         Returns:
             The filtered tool list with descriptions injected.
         """
-        _remote_verifier = get_remote_verifier_instance()
+        token_verifier = get_token_verifier()
 
         try:
             request = get_http_request()
@@ -136,13 +135,13 @@ class AuthFilteredFastMCP(FastMCP):
             if cached is not None:
                 return cached
 
-            if _remote_verifier is None:
+            if token_verifier is None:
                 api_logger.warning(
-                    "Remote verifier not initialized, hiding all per-folder tools"
+                    "Token verifier not initialized, hiding all per-folder tools"
                 )
                 return [t for t in all_tools if not self._is_dynamic_folder_tool(t.name)]
 
-            result = await _remote_verifier.verify(token)
+            result = await token_verifier.verify(token)
             if not result.valid:
                 api_logger.warning(f"list_tools invalid token: {mask_token(token)}")
                 return [t for t in all_tools if not self._is_dynamic_folder_tool(t.name)]

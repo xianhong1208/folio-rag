@@ -12,32 +12,32 @@ from fastapi import Depends, Request, HTTPException
 from fastapi.security import HTTPBearer
 
 from src.log import get_api_logger
-from .remote_auth import RemoteTokenVerifier
+from .mcp_gate_auth import McpGateTokenVerifier
 
 logger = get_api_logger()
 security = HTTPBearer()
 
-_remote_verifier: Optional[RemoteTokenVerifier] = None
+_token_verifier: Optional[McpGateTokenVerifier] = None
 
 
-def set_remote_verifier(verifier: RemoteTokenVerifier) -> None:
-    global _remote_verifier
-    _remote_verifier = verifier
+def set_token_verifier(verifier: McpGateTokenVerifier) -> None:
+    global _token_verifier
+    _token_verifier = verifier
 
 
-def get_remote_verifier_instance() -> Optional[RemoteTokenVerifier]:
-    return _remote_verifier
+def get_token_verifier() -> Optional[McpGateTokenVerifier]:
+    return _token_verifier
 
 
-async def authenticate_request_remote(request: Request) -> dict:
-    """Authenticate via remote Token Server (supports JWT and Opaque Token)"""
-    global _remote_verifier
+async def authenticate_bearer_token(request: Request) -> dict:
+    """Verify the request's bearer token with the registered MCP Gate verifier (401 on failure)."""
+    global _token_verifier
 
-    if _remote_verifier is None:
-        logger.error("Remote verifier not initialized")
+    if _token_verifier is None:
+        logger.error("Token verifier not initialized")
         raise HTTPException(
             status_code=500,
-            detail={"error": "auth_config_error", "error_description": "Remote authentication not configured"},
+            detail={"error": "auth_config_error", "error_description": "Token verification is not configured"},
         )
 
     auth_header = request.headers.get('Authorization')
@@ -60,18 +60,18 @@ async def authenticate_request_remote(request: Request) -> dict:
             headers={"WWW-Authenticate": "Bearer"},
         )
 
-    result = await _remote_verifier.verify(token)
+    result = await _token_verifier.verify(token)
 
     if not result.valid:
         error_msg = result.error or "invalid_token"
-        logger.warning(f"Authentication failed (remote): {error_msg} - {token[:8]}...")
+        logger.warning(f"Authentication failed: {error_msg} - {token[:8]}...")
         raise HTTPException(
             status_code=401,
             detail={"error": error_msg, "error_description": f"Token validation failed: {error_msg}"},
             headers={"WWW-Authenticate": "Bearer"},
         )
 
-    logger.info(f"Token validation succeeded (remote): {token[:8]}... (path: {request.url.path})")
+    logger.info(f"Token validation succeeded: {token[:8]}... (path: {request.url.path})")
     return {
         "user_name": result.user_name,
         "scopes": result.scopes,
@@ -81,4 +81,4 @@ async def authenticate_request_remote(request: Request) -> dict:
 
 async def authenticate_request(request: Request, credentials=Depends(security)):
     """Unified authentication dependency for FastAPI routers"""
-    return await authenticate_request_remote(request)
+    return await authenticate_bearer_token(request)

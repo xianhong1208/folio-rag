@@ -5,9 +5,8 @@ fetches its JWKS once and verifies every bearer token OFFLINE. Two consumers use
 module:
 
 - The REST API + MCP tool filter go through ``McpGateTokenVerifier`` (PyJWT-based),
-  registered via ``set_remote_verifier`` so the existing middleware / tool-filter keep
-  working unchanged — they only rely on the ``TokenVerifyResult`` shape and the
-  ``async verify(token)`` contract.
+  registered via ``set_token_verifier``; they only rely on the ``TokenVerifyResult``
+  shape and the ``async verify(token)`` contract.
 - The FastMCP ``/mcp`` transport uses ``build_auth_provider`` (FastMCP's
   ``RemoteAuthProvider`` + ``JWTVerifier``), which also publishes
   ``/.well-known/oauth-protected-resource/mcp`` so OAuth-capable MCP clients can
@@ -23,9 +22,23 @@ from typing import Optional
 import jwt
 
 from src.log import get_auth_logger
-from src.auth.remote_auth import TokenVerifyResult
 
 logger = get_auth_logger()
+
+
+@dataclass
+class TokenVerifyResult:
+    """Token verification result."""
+    valid: bool
+    user_name: Optional[str] = None
+    scopes: Optional[list] = None
+    expires_at: Optional[int] = None
+    error: Optional[str] = None
+    # JWT ID of the verified token (per-token owner key); None for opaque tokens.
+    jti: Optional[str] = None
+    # Machine-readable failure reason (e.g. "token_expired", "wrong_audience"),
+    # set by the offline verifier so callers can explain a rejection.
+    error_code: Optional[str] = None
 
 
 @dataclass(frozen=True)
@@ -118,9 +131,8 @@ def _error_code(exc: Exception) -> str:
 class McpGateTokenVerifier:
     """Offline RS256 JWT verifier for MCP Gate access tokens.
 
-    Exposes the SAME async interface as the legacy ``RemoteTokenVerifier``
-    (``async verify(token) -> TokenVerifyResult`` plus a no-op ``close``), so the
-    middleware, dependencies and MCP tool filter need no changes.
+    Its contract is ``async verify(token) -> TokenVerifyResult``; the REST
+    dependencies and the MCP tool filter rely on nothing else.
 
     Verification is done with PyJWT + ``jwt.PyJWKClient`` (the robust, well-documented
     path — no dependency on FastMCP internals). The PyJWKClient is created once and
@@ -179,10 +191,6 @@ class McpGateTokenVerifier:
     async def verify(self, token: str) -> TokenVerifyResult:
         """Verify a bearer token offline. Non-blocking (PyJWT runs in a thread)."""
         return await asyncio.to_thread(self._verify_sync, token)
-
-    def close(self) -> None:
-        """No-op: kept for interface parity with RemoteTokenVerifier."""
-        return None
 
 
 def build_auth_provider(config):

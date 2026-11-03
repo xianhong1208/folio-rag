@@ -218,39 +218,6 @@ class RAGQueryService:
             r["metadata"]["folder_name"] = folder.name
         return trace
 
-    async def query_rag_by_folder_name(
-        self,
-        query: str,
-        folder_name: str,
-        token: str,
-        top_k: int = 5,
-        similarity_cutoff: float = 0.7,
-        sparse_top_k: Optional[int] = None,
-        hybrid_alpha: Optional[float] = None,
-    ) -> RAGQueryResult:
-        """Query by folder name (with authentication; delegates to query_rag)."""
-        try:
-            folder = self._ctx.indexing_service.get_folder_by_name(folder_name, token)
-            log_op(
-                logger, "QUERY_BY_NAME",
-                folder_id=folder.id, token=token,
-                msg=f"folder_name={folder_name}",
-            )
-            return await self.query_rag(
-                query=query,
-                folder_id=folder.id,
-                token=token,
-                top_k=top_k,
-                similarity_cutoff=similarity_cutoff,
-                sparse_top_k=sparse_top_k,
-                hybrid_alpha=hybrid_alpha,
-            )
-        except DomainException:
-            raise
-        except Exception as e:
-            log_err(logger, "QUERY_BY_NAME_FAIL", e, token=token)
-            raise ValueError(f"Failed to query RAG by folder name: {str(e)}")
-
     async def query_agentic(
         self,
         *,

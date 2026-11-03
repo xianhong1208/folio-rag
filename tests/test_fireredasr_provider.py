@@ -164,7 +164,6 @@ class TestModelPlumbing:
         M.from_pretrained.assert_called_once_with("aed", str(tmp_path))
 
     def test_transcribe_segments_per_segment_calls(self, tmp_path, monkeypatch):
-        import src.domain.rag.fireredasr_provider as fp
         fake_model = type("M", (), {})()
         calls = []
 

@@ -70,7 +70,7 @@ _CACHE_TTL_SEC = 300
 _cache: dict[str, tuple[float, dict]] = {}
 
 
-def _settings(request: Request) -> AuthSettings:
+def _auth_settings_or_404(request: Request) -> AuthSettings:
     settings = getattr(request.app.state, "auth_settings", None)
     if settings is None:
         raise HTTPException(status_code=404, detail="authentication is disabled")
@@ -111,14 +111,14 @@ def clear_cache() -> None:
 
 @router.get("/.well-known/oauth-protected-resource")
 async def oauth_protected_resource(request: Request) -> JSONResponse:
-    return JSONResponse(protected_resource_metadata(_settings(request)))
+    return JSONResponse(protected_resource_metadata(_auth_settings_or_404(request)))
 
 
 @router.get("/.well-known/oauth-authorization-server")
 async def oauth_authorization_server(request: Request) -> JSONResponse:
-    return JSONResponse(await fetch_issuer_document(_settings(request), "oauth-authorization-server"))
+    return JSONResponse(await fetch_issuer_document(_auth_settings_or_404(request), "oauth-authorization-server"))
 
 
 @router.get("/.well-known/openid-configuration")
 async def openid_configuration(request: Request) -> JSONResponse:
-    return JSONResponse(await fetch_issuer_document(_settings(request), "openid-configuration"))
+    return JSONResponse(await fetch_issuer_document(_auth_settings_or_404(request), "openid-configuration"))

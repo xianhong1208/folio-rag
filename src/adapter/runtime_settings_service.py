@@ -96,7 +96,7 @@ def _profile_view(rag, effective: Dict[str, Any]) -> Dict[str, Any]:
 
 def _secret_value(rag, path: str):
     from types import SimpleNamespace
-    parent, field = ro._resolve(SimpleNamespace(rag=rag), path, create=False)
+    parent, field = ro._resolve_parent(SimpleNamespace(rag=rag), path, create=False)
     return getattr(parent, field, None) if parent is not None else None
 
 

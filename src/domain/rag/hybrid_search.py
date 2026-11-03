@@ -61,12 +61,12 @@ class SearchSettings:
         try:
             from src.config.config_manager import Config
 
-            ret = getattr(getattr(Config.get_config_model(), "rag", None), "retrieval", None)
+            retrieval_cfg = getattr(getattr(Config.get_config_model(), "rag", None), "retrieval", None)
         except Exception:  # noqa: BLE001
-            ret = None
-        if ret is not None:
+            retrieval_cfg = None
+        if retrieval_cfg is not None:
             def _get(name, default):
-                v = getattr(ret, name, None)
+                v = getattr(retrieval_cfg, name, None)
                 return default if v is None else v
 
             base = cls(
@@ -78,6 +78,18 @@ class SearchSettings:
                 text_search_config=str(_get("text_search_config", base.text_search_config)),
             )
         return base.with_overrides(**overrides)
+
+
+def configured_text_search_config() -> str:
+    """``rag.retrieval.text_search_config`` from the live config; 'simple' when it is
+    unset or the config is unavailable."""
+    try:
+        from src.config.config_manager import Config
+
+        retrieval_cfg = getattr(getattr(Config.get_config_model(), "rag", None), "retrieval", None)
+        return getattr(retrieval_cfg, "text_search_config", "simple") or "simple"
+    except Exception:  # noqa: BLE001
+        return "simple"
 
 
 def cache_fingerprint(query_text: str, settings: SearchSettings, *, reranker=None,

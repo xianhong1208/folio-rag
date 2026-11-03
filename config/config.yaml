@@ -14,11 +14,11 @@ server:
   port: 5039
   transport: "http"
 
-# Authentication — verify MCP Center OAuth 2.1 access tokens (offline RS256 JWKS)
+# Authentication — verify MCP Gate OAuth 2.1 access tokens (offline RS256 JWKS)
 auth:
   enabled: true
-  issuer: "http://localhost:4568"          # MCP Center base URL (RS256 JWKS issuer)
-  audience: "http://127.0.0.1:5039/mcp"     # must equal the token aud (how MCP Center registered this server)
+  issuer: "http://localhost:4568"          # MCP Gate base URL (RS256 JWKS issuer)
+  audience: "http://127.0.0.1:5039/mcp"     # must equal the token aud (how MCP Gate registered this server)
   required_scopes: []                        # scopes every token must carry (empty = none)
   cache_ttl: 60                              # JWKS cache TTL (seconds)
   dynamic_tools:

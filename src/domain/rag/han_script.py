@@ -29,7 +29,7 @@ _ODD_SPACES = dict.fromkeys(
 )
 _HAN = re.compile(r"[㐀-䶿一-鿿豈-﫿]")
 
-_cc_lock = threading.Lock()
+_converters_lock = threading.Lock()
 _converters: dict = {}
 
 
@@ -40,8 +40,8 @@ def strip_invisible(text: str) -> str:
     return text.translate(_INVISIBLE).translate(_ODD_SPACES)
 
 
-def _cc(config: str):
-    with _cc_lock:
+def _opencc_converter(config: str):
+    with _converters_lock:
         if config not in _converters:
             import opencc  # core dependency (no torch), so it works under profile: cloud too
 
@@ -50,12 +50,12 @@ def _cc(config: str):
 
 
 @lru_cache(maxsize=8192)
-def _kind(ch: str) -> int:
+def _variant_kind(ch: str) -> int:
     """+1 Traditional-only, -1 Simplified-only, 0 shared / not convertible."""
     try:
-        if _cc("t2s").convert(ch) != ch:
+        if _opencc_converter("t2s").convert(ch) != ch:
             return 1
-        if _cc("s2tw").convert(ch) != ch:
+        if _opencc_converter("s2tw").convert(ch) != ch:
             return -1
     except Exception:  # pragma: no cover - opencc missing
         return 0
@@ -66,7 +66,7 @@ def variant_counts(text: str) -> Tuple[int, int]:
     """(Traditional-only, Simplified-only) Han characters in ``text``."""
     trad = simp = 0
     for ch in _HAN.findall(text or ""):
-        k = _kind(ch)
+        k = _variant_kind(ch)
         if k > 0:
             trad += 1
         elif k < 0:
@@ -92,12 +92,12 @@ def fix_simplified(generated: str, document_text: str) -> str:
         return generated
     doc_chars = set(_HAN.findall(document_text))
     targets = [i for i, ch in enumerate(generated)
-               if _HAN.match(ch) and ch not in doc_chars and _kind(ch) < 0]
+               if _HAN.match(ch) and ch not in doc_chars and _variant_kind(ch) < 0]
     if not targets:
         return generated
-    converted = _cc("s2tw").convert(generated)
+    converted = _opencc_converter("s2tw").convert(generated)
     if len(converted) != len(generated):  # phrase mapping changed the length: go char by char
-        converted = "".join(_cc("s2tw").convert(ch) for ch in generated)
+        converted = "".join(_opencc_converter("s2tw").convert(ch) for ch in generated)
     chars = list(generated)
     for i in targets:
         chars[i] = converted[i]

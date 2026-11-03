@@ -172,7 +172,7 @@ def _segmenters():
     return SEGMENTERS
 
 
-def _choices(path: str):
+def _allowed_values(path: str):
     if path == "rag.embedding.provider":
         from src.domain.rag.embedding.factory import EmbeddingProviderFactory
         return tuple(EmbeddingProviderFactory.list_supported_providers())
@@ -201,10 +201,10 @@ def _check_constraints(path: str, value: Any) -> Any:
     if value is None or (value == "" and path in _NULLABLE):
         if path in _NULLABLE:
             return None
-        if path in _RANGES or _choices(path):
+        if path in _RANGES or _allowed_values(path):
             raise ValueError("a value is required")
         return value
-    choices = _choices(path)
+    choices = _allowed_values(path)
     if choices and value not in choices:
         raise ValueError(f"must be one of {', '.join(choices)} (got {value!r})")
     if path in _RANGES:
@@ -274,7 +274,7 @@ def _resolve_secret(path: str, value: Any) -> Tuple[Any, Optional[str]]:
     return expand_env_vars(value.strip()), m.group(1)
 
 
-def _resolve(config_model, path: str, create: bool = True):
+def _resolve_parent(config_model, path: str, create: bool = True):
     """Dotted path -> (parent object, field name).
 
     create=True: intermediate None optional segments are built up with default values (for the
@@ -306,7 +306,7 @@ def get_effective(config_model, mask_secrets: bool = True) -> Dict[str, Any]:
     out: Dict[str, Any] = {}
     for path in EDITABLE:
         try:
-            parent, field = _resolve(config_model, path, create=False)
+            parent, field = _resolve_parent(config_model, path, create=False)
             v = getattr(parent, field) if parent is not None else None
         except Exception:
             v = None
@@ -344,7 +344,7 @@ def validate_and_apply(config_model, patch: Dict[str, Any]) -> Tuple[Dict[str, A
             written = value
             if path in SECRET_PATHS:
                 value, pending_refs[path] = _resolve_secret(path, value)
-            parent, field = _resolve(config_model, path)
+            parent, field = _resolve_parent(config_model, path)
             section_cls = type(parent)
             data = parent.model_dump()
             data[field] = value
@@ -362,7 +362,7 @@ def validate_and_apply(config_model, patch: Dict[str, Any]) -> Tuple[Dict[str, A
         from src.config.profile import check_profile
         trial = SimpleNamespace(rag=rag.model_copy(deep=True))
         for _parent, field, value, path, _w in staged:
-            t_parent, t_field = _resolve(trial, path)
+            t_parent, t_field = _resolve_parent(trial, path)
             setattr(t_parent, t_field, value)
         report = check_profile(trial.rag, refs=_effective_refs(pending_refs))
         if report.errors:

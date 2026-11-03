@@ -7,7 +7,7 @@ The tool carries a mode parameter (search/list/read) plus expand_context.
 import hashlib
 import re
 import unicodedata
-from typing import Any, Callable, Dict, Literal, Optional
+from typing import Callable, Dict, Literal, Optional
 
 from fastmcp import FastMCP
 

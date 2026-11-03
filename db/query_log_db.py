@@ -9,7 +9,7 @@ zero-result rate), top queries, zero-result queries, and the daily trend.
 from __future__ import annotations
 
 from datetime import datetime, timedelta, timezone
-from typing import Any, Dict, Iterable, List, Optional
+from typing import Any, Dict, Iterable, Optional
 
 from sqlalchemy import and_, func, or_
 

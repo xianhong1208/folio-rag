@@ -13,7 +13,7 @@ from db.filedb import FileDB
 from db.db import get_engine
 from sqlalchemy import text
 from sqlalchemy.exc import NoResultFound
-from src.log import get_adapter_logger, log_op, log_err, log_warn, mask_token
+from src.log import get_adapter_logger
 from src.adapter.model import FolderConfigData
 from src.domain.rag.vector_store_manager import VectorStoreManager  # physical-table drop is centralized here
 from src.storage.file_storage import FileStorage
