@@ -229,11 +229,10 @@ class ContextGenerator:
 
         response = client.chat.completions.create(**kwargs)
         msg = response.choices[0].message
-        # Read content first; if empty, fall back to reasoning_content (reasoning models)
-        raw_content = msg.content
-        if not raw_content:
-            raw_content = getattr(msg, 'reasoning_content', None)
-        return raw_content
+        # Only the answer. A reasoning model that ran out of completion budget leaves
+        # ``content`` empty and its chain of thought in ``reasoning_content``; using
+        # that as the prefix embedded and indexed the model's scratch work.
+        return msg.content
 
     def _admit_tokens(self, prompt: str) -> bool:
         """Charge an estimated cost (prompt chars / 4 + max_tokens) to today's prefix budget."""
@@ -249,6 +248,24 @@ class ContextGenerator:
                 f"Contextual-prefix daily token budget ({limit}) exhausted — "
                 "remaining chunks get no prefix until UTC midnight (a later re-index fills them in)")
         return False
+
+    def _postprocess(self, raw_content: Optional[str], chunk_text: str,
+                     script_reference: str) -> Optional[str]:
+        """Clean the model's answer into a prefix; None when it is unusable (empty,
+        or in another script than the chunk)."""
+        if not raw_content or not raw_content.strip():
+            return None
+        # Zero-width characters split keyword tokens ("ROC\u200bm"); Simplified
+        # characters in a Traditional document never match Traditional queries.
+        context = " ".join(strip_invisible(raw_content).split())
+        context = fix_simplified(context, script_reference)
+        # A script-mismatched prefix+chunk drifts in embedding space and tanks the
+        # chunk's hit rate on same-language queries.
+        if not context or _is_script_mismatch(chunk_text, context):
+            return None
+        if len(context) > self._max_context_length:
+            context = context[:self._max_context_length]
+        return context
 
     async def _generate_one(
         self,
@@ -268,9 +285,9 @@ class ContextGenerator:
         (its section, see context_scope); ``outline`` the document's heading paths;
         ``script_reference`` the document text used to repair Simplified drift.
 
-        Returns the prefix, "" when the model's answer was unusable (wrong script), or
-        None when no answer was obtained (empty response, error, abort) so a later
-        re-index can try again. There is no file-name fallback any more: the chunk's
+        Returns the prefix, or None when no usable answer was obtained (empty or
+        wrong-script answer twice, error, budget, abort): a None prefix is never cached,
+        so a later re-index tries again. There is no file-name fallback: the chunk's
         breadcrumb already carries the file name.
 
         When should_abort holds, skip the LLM — after an abort the whole batch's results
@@ -293,39 +310,27 @@ class ContextGenerator:
                 section=section,
                 chunk_text=chunk_text,
             )
-            if not self._admit_tokens(prompt):
-                return None  # daily budget spent: no prefix now, a later re-index retries
-
-            async with semaphore:
-                # A chunk queued behind the semaphore may have waited a while; re-check once it acquires the slot
-                if should_abort and should_abort():
-                    return None
-                raw_content = await asyncio.to_thread(self._call_llm_sync, prompt, client)
-
-            if not raw_content:
+            # An empty answer or one in the wrong script is a failure, not a prefix:
+            # ask once more (a reasoning model's use of its completion budget varies),
+            # then give up with None so the next re-index retries it.
+            for attempt in (1, 2):
+                if not self._admit_tokens(prompt):
+                    return None  # daily budget spent: no prefix now, a later re-index retries
+                async with semaphore:
+                    # A chunk queued behind the semaphore may have waited a while; re-check once it acquires the slot
+                    if should_abort and should_abort():
+                        return None
+                    raw_content = await asyncio.to_thread(self._call_llm_sync, prompt, client)
+                context = self._postprocess(raw_content, chunk_text, script_reference or section)
+                if context:
+                    return context
                 logger.warning(
-                    f"LLM returned empty content for chunk in '{file_name}'; no prefix"
+                    f"Unusable context prefix for chunk in '{file_name}' "
+                    f"(attempt {attempt}/2): "
+                    + ("empty answer" if not (raw_content or "").strip()
+                       else f"script mismatch, preview={(raw_content or '')[:60]!r}")
                 )
-                return None
-
-            # Zero-width characters split keyword tokens ("ROC\u200bm"); Simplified
-            # characters in a Traditional document never match Traditional queries.
-            context = " ".join(strip_invisible(raw_content).split())
-            context = fix_simplified(context, script_reference or section)
-
-            # A script-mismatched prefix+chunk drifts in bge-m3 space and tanks the
-            # chunk's hit rate on same-language queries; prefer the fallback instead.
-            if _is_script_mismatch(chunk_text, context):
-                logger.warning(
-                    f"LLM produced script-mismatched prefix for chunk in '{file_name}',"
-                    f" discarding. context_preview={context[:60]!r}"
-                )
-                return ""
-
-            if len(context) > self._max_context_length:
-                context = context[:self._max_context_length]
-
-            return context
+            return None
 
         except Exception as e:
             logger.warning(f"Context generation failed for chunk in '{file_name}': {e}")
@@ -364,8 +369,8 @@ class ContextGenerator:
             language: the document's language name, e.g. "Traditional Chinese".
 
         Returns:
-            A list the same length as chunks: each chunk's prefix, "" when the answer was
-            discarded, None when no answer was obtained (see _generate_one).
+            A list the same length as chunks: each chunk's prefix, or None when no
+            usable answer was obtained (see _generate_one).
         """
         total = len(chunks)
 
