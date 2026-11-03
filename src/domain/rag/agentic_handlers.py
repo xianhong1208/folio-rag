@@ -412,7 +412,9 @@ async def handle_read(
         )
         return {"mode": "read", "error": "file_id is required for read mode"}
 
-    file_records = FileDB.get_by_ids([file_id])
+    import asyncio
+
+    file_records = await asyncio.to_thread(FileDB.get_by_ids, [file_id])
     file_record = file_records.get(file_id) if file_records else None
     if not file_record:
         log_warn(
@@ -440,7 +442,6 @@ async def handle_read(
 
     try:
         # Offload the sync SQL fetch (hundreds of ms for large files) to a thread to keep the loop free
-        import asyncio
         full = await asyncio.to_thread(
             ChunkLookup.fetch_file_full,
             vector_store=vector_store,

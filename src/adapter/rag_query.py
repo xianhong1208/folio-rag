@@ -226,25 +226,29 @@ class RAGQueryService:
         query: str,
         file_id: Optional[str],
         top_k: int,
-        similarity_cutoff: float,
+        similarity_cutoff: Optional[float],
         expand_context: bool,
         token: str,
     ) -> Dict[str, Any]:
         """MCP query entry point — unified interface for three modes (search / list / read).
+
+        ``similarity_cutoff`` is accepted for backward compatibility and ignored
+        (see handle_search).
 
         Returns:
             JSON-serializable dict — wrapped into an MCP content block by agentic_tools.
         """
         # Orchestration and folder ACL live in the domain layer so the adapter
         # need not import back into the fastmcp delivery layer.
-        from src.domain.rag.agentic_handlers import handle_list, handle_read, handle_search
-        from src.domain.rag.folder_acl import verify_folder_access
+        from src.domain.rag import agentic_handlers as handlers
+        from src.domain.rag.folder_acl import averify_folder_access
 
         ctx = self._ctx
-        folder = verify_folder_access(token=token, folder_name=folder_name)
+        # Sync DB lookups run in worker threads: they must not stall the event loop.
+        folder = await averify_folder_access(token=token, folder_name=folder_name)
 
         if mode == "list":
-            return handle_list(folder=folder)
+            return await asyncio.to_thread(handlers.handle_list, folder=folder)
 
         vector_store = ctx.vector_store_manager.get_or_create(
             folder_id=folder.id,
@@ -253,7 +257,7 @@ class RAGQueryService:
 
         if mode == "read":
             async with _get_query_semaphore():
-                return await handle_read(
+                return await handlers.handle_read(
                     file_id=file_id,
                     folder=folder,
                     vector_store=vector_store,
@@ -270,7 +274,7 @@ class RAGQueryService:
             )
             started = time.perf_counter()
             async with _get_query_semaphore():
-                response = await handle_search(
+                response = await handlers.handle_search(
                     query=query,
                     folder=folder,
                     retriever=retriever,
