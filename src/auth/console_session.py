@@ -11,9 +11,10 @@ The session itself is a short HS256-signed JWT in an HttpOnly cookie::
     {typ: "rag-console-session", jti, sub, scopes, iat, exp}
 
 It never contains (or echoes) the raw token. ``exp`` is the earlier of the token's
-own expiry and ``now + auth.console.session_hours``. Being stateless, a session
-stays valid until it expires even if the token is revoked in MCP Gate — the same
-offline-revocation trade-off the bearer path already accepts.
+own expiry and ``now + auth.console.session_hours``. The session is stateless, but
+every request re-checks its ``jti`` against MCP Gate's revocation list (when
+``auth.revocation`` is enabled), so revoking the token in MCP Gate also ends the
+console sessions created from it within a poll interval.
 
 Guards:
 
@@ -43,6 +44,7 @@ from urllib.parse import urlsplit
 import jwt
 from fastapi import HTTPException, Request
 
+from src.auth.revocation import UNAVAILABLE, check_revoked
 from src.log import get_auth_logger
 
 logger = get_auth_logger()
@@ -76,6 +78,11 @@ _REJECTIONS: dict[str, str] = {
     ),
     "insufficient_scope": "The token lacks a scope this server requires.",
     "jwks_unavailable": "Cannot reach MCP Gate to fetch its signing keys. Try again shortly.",
+    "token_revoked": "This token has been revoked in MCP Gate. Issue a new one and sign in again.",
+    "revocation_unavailable": (
+        "Cannot confirm with MCP Gate that this token is still valid (its revocation feed is "
+        "unreachable). Try again shortly."
+    ),
     "invalid_token": "The token could not be verified.",
 }
 
@@ -182,7 +189,7 @@ class ConsoleAuth:
         if not result.valid:
             code = getattr(result, "error_code", None) or "invalid_token"
             logger.warning(f"Console token rejected: {code}")
-            raise _auth_error(503 if code == "jwks_unavailable" else 401, code)
+            raise _auth_error(503 if code in ("jwks_unavailable", UNAVAILABLE) else 401, code)
         if not getattr(result, "jti", None):
             raise _auth_error(401, "missing_jti")
         return self._identity(via="bearer", jti=result.jti, sub=result.user_name,
@@ -312,6 +319,12 @@ async def resolve_identity(request: Request, *, enforce_csrf: bool = True) -> Co
     if not value:
         raise _auth_error(401, "login_required", "Sign in to use the console.")
     ident = auth.read_session(value)
+    # Sessions are stateless: re-check the token they came from on every request, so
+    # revoking it in MCP Gate signs the console out too.
+    reason = check_revoked(ident.jti)
+    if reason:
+        logger.warning(f"Console session rejected: {reason} (jti {ident.jti_prefix})")
+        raise _auth_error(503 if reason == UNAVAILABLE else 401, reason)
     if enforce_csrf and request.method.upper() not in _SAFE_METHODS:
         check_csrf(request)
     return ident
