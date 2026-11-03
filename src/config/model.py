@@ -19,6 +19,19 @@ class ServerConfig(BaseModel):
     transport: str
 
 
+class RetentionConfig(BaseModel):
+    """How long append-only tables keep rows (days; 0 = keep for ever).
+
+    Purged at startup and then every ``interval_hours`` (db/retention_db.py),
+    ``batch_size`` rows per transaction.
+    """
+    index_jobs_days: int = Field(30, ge=0)        # terminal IndexJobs rows only
+    query_logs_days: int = Field(90, ge=0)        # the console analytics window goes up to 90 days
+    settings_audit_days: int = Field(365, ge=0)
+    batch_size: int = Field(5000, ge=100, le=100000)
+    interval_hours: float = Field(24, gt=0, le=24 * 7)
+
+
 class DatabaseConfig(BaseModel):
     """Database configuration."""
     url: str = Field(repr=False)  # usually embeds the password
@@ -39,6 +52,7 @@ class DatabaseConfig(BaseModel):
     vector_store_engines: Literal["shared", "per_folder"] = "shared"
     # Max PGVectorStore objects kept in the LRU cache (least recently used evicted).
     vector_store_cache_size: int = Field(64, ge=1, le=10000)
+    retention: RetentionConfig = Field(default_factory=RetentionConfig)
 
 
 class DynamicToolsConfig(BaseModel):
