@@ -2,8 +2,9 @@
 """Document Loader — three-way loading of a file into a llama_index Document.
 
 Paths:
-1. Plain-text family (.txt/.json/.csv/...): read directly via read_text_robust with encoding
-   tolerance, bypassing docling.
+1. Plain-text family (.txt/.json/...): read directly via read_text_robust with encoding
+   tolerance, bypassing docling. A .csv is read the same way and turned into a Markdown
+   table chunked as a table, so every chunk repeats the header row.
 2. PDFs / images when rag.parsing selects cloud (the default under profile: cloud):
    cloud_parser — a vision model transcribes every page; the pages are re-assembled into
    one document and chunked by the same chunker as the docling path.
@@ -61,6 +62,39 @@ def clean_text(text: str) -> str:
     return cleaned
 
 
+def _md_cell(value: str) -> str:
+    return " ".join((value or "").split()).replace("|", "\\|")
+
+
+def csv_to_markdown(content: str) -> Optional[str]:
+    """CSV text -> Markdown table (first row = header), or None when it is not a table
+    (fewer than two rows or columns, or unparseable)."""
+    import csv
+    import io
+
+    text = (content or "").lstrip("\ufeff")
+    if not text.strip():
+        return None
+    try:
+        dialect = csv.Sniffer().sniff(text[:8192], delimiters=",;\t|")
+    except csv.Error:
+        dialect = csv.excel
+    try:
+        rows = [r for r in csv.reader(io.StringIO(text), dialect) if any(c.strip() for c in r)]
+    except csv.Error:
+        return None
+    if len(rows) < 2:
+        return None
+    width = max(len(r) for r in rows)
+    if width < 2:
+        return None
+    rows = [r + [""] * (width - len(r)) for r in rows]
+    lines = ["| " + " | ".join(_md_cell(c) for c in rows[0]) + " |",
+             "| " + " | ".join("---" for _ in range(width)) + " |"]
+    lines += ["| " + " | ".join(_md_cell(c) for c in r) + " |" for r in rows[1:]]
+    return "\n".join(lines)
+
+
 class DocumentLoader:
     """File loader (composed into HierarchicalIndexer; logic factored out of its load_document_from_file)."""
 
@@ -114,6 +148,11 @@ class DocumentLoader:
             base_metadata.update({k: v for k, v in metadata.items() if v is not None})
 
         doc_id = f"file_{file_id}"
+
+        if file_extension == ".csv":
+            from src.utils.text_io import read_text_robust
+            content = clean_text(read_text_robust(resolved_path, file_name))
+            return self._load_csv(content, base_metadata, doc_id, file_name)
 
         if file_extension in text_extensions:
             # Encoding tolerance: UTF-16 (Windows Notepad "Unicode") / Big5 txt·csv are common in
@@ -208,6 +247,33 @@ class DocumentLoader:
             shutil.copy2(resolved_path, temp_file_path)
             return self._load_via_simple_reader(
                 temp_dir, file_name, base_metadata, doc_id)
+
+    def _load_csv(self, content: str, base_metadata: Dict[str, Any], doc_id: str,
+                  file_name: str) -> Document:
+        """CSV -> a Markdown table chunked as one table.
+
+        Read as plain text, a CSV was split into chunks of which only the first carried
+        the header row, so every later chunk was a list of bare values. As a table, an
+        oversized CSV is split at row boundaries with the header repeated on every piece
+        (and its pieces share one contextual prefix). Content that does not parse as a
+        table with a header and at least one row stays plain text.
+        """
+        table = csv_to_markdown(content)
+        doc = Document(text=table or content, metadata=base_metadata, doc_id=doc_id)
+        if not table:
+            return doc
+        from src.domain.rag.docling_loader import (
+            _refine_chunks_for_token_budget,
+            get_hf_tokenizer,
+        )
+        budget, table_budget = token_budgets(self._leaf_chunk_size, self._has_context_generator)
+        doc.metadata["_docling_chunks"] = _refine_chunks_for_token_budget(
+            [{"text": table, "content_type": "table"}],
+            get_hf_tokenizer(self._embedding_model_name), budget,
+            table_max_tokens=table_budget,
+        )
+        logger.info(f"CSV {file_name}: {len(doc.metadata['_docling_chunks'])} table chunk(s)")
+        return doc
 
     @staticmethod
     def _cloud_parser_for(file_name: str):

@@ -1222,11 +1222,16 @@ def _refine_chunks_for_token_budget(
         pending_tokens = 0
 
     for chunk in raw_chunks:
-        # Accept a HierarchicalChunker chunk object or a bare string (used by the fallback splitting path)
-        text = (chunk.text if hasattr(chunk, "text") else chunk).strip()
+        # Accept a HierarchicalChunker chunk object, a record dict ({"text", "headings",
+        # "page_no", "content_type"}, e.g. a CSV table) or a bare string (fallback path).
+        if isinstance(chunk, dict):
+            text = (chunk.get("text") or "").strip()
+            meta = {k: chunk.get(k) for k in ("headings", "page_no", "content_type")}
+        else:
+            text = (chunk.text if hasattr(chunk, "text") else chunk).strip()
+            meta = _chunk_provenance(chunk, doc) if text else None
         if not text:
             continue
-        meta = _chunk_provenance(chunk, doc)
 
         token_count = _count_tokens(tokenizer, text)
         is_table = meta.get("content_type") == "table"
