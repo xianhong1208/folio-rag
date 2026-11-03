@@ -66,8 +66,6 @@ async def main() -> int:
         return 2
 
     from db.folderdb import FolderDB
-    from db.db import get_engine
-    from src.domain.rag.vector_store_manager import VectorStoreManager
 
     folder = FolderDB.create(
         name=f"eval-{date.today().isoformat()}-{uuid.uuid4().hex[:6]}",

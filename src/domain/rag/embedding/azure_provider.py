@@ -44,7 +44,6 @@ class AzureOpenAIEmbeddingProvider(IEmbeddingProvider):
         """
         self._model_name = model_name
         self._dimension = dimension
-        self._api_version = api_version
         self._azure_deployment = azure_deployment or model_name
 
         # Get API key from parameter or environment

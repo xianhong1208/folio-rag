@@ -30,7 +30,6 @@ Security design:
 from __future__ import annotations
 
 import re
-from typing import Optional
 
 from sqlalchemy import create_engine, text
 from sqlalchemy.engine import make_url

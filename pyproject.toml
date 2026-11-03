@@ -155,7 +155,6 @@ omit = [
     "src/fastmcp_tools/*",
     "src/auth/dependencies.py",
     "src/auth/init_auth.py",
-    "src/middleware/auth_middleware.py",
     # other wiring
     "src/log.py",
     "src/utils/db_bootstrap.py",

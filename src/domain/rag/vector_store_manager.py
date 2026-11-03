@@ -312,14 +312,6 @@ class VectorStoreManager:
         self.clear_cache()
         logger.info(f"[RUNTIME] embed_dim {old} → {embed_dim} (store cache cleared)")
 
-    def get_cache_stats(self) -> dict:
-        """Get cache statistics."""
-        return {
-            'cached_stores': len(self._vector_stores),
-            'table_names': list(self._vector_stores.keys()),
-            'embed_dim': self._embed_dim
-        }
-
     # Physical table deletion
     @staticmethod
     def physical_table_name(folder_id: int, vector_table_uuid) -> str:

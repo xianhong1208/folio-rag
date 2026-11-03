@@ -94,7 +94,3 @@ class OllamaEmbeddingProvider(IEmbeddingProvider):
 
         if self._dimension <= 0:
             raise ValueError(f"Invalid dimension: {self._dimension}")
-
-    def get_base_url(self) -> str:
-        """Get Ollama server base URL"""
-        return self._base_url

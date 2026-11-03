@@ -1,6 +1,6 @@
 
 from datetime import datetime
-from typing import Optional, List, Dict, Any
+from typing import Optional, List
 from pydantic import BaseModel
 from uuid import UUID
 
@@ -58,18 +58,5 @@ class RAGQueryResult(BaseModel):
     retrieval_time_ms: Optional[float] = None
     # Best rerank score before the threshold (None: no reranker / rerank failed).
     top_score: Optional[float] = None
-
-
-class FileIndexData(BaseModel):
-    """File index information model."""
-    file_id: UUID
-    file_name: str
-    folder_id: int
-    num_chunks: int
-    indexed_at: datetime
-    status: str
-    embedding_model: str
-    chunk_size: int
-    chunk_overlap: int
 
 

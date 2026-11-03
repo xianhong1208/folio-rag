@@ -12,7 +12,6 @@ scope.
 import shutil
 import subprocess
 import zipfile
-from pathlib import Path
 
 import pytest
 

@@ -132,7 +132,8 @@ class ChunkLookup:
 
         Uses an OR-chain of parameterized range conditions, then splits by window on
         the Python side; overlapping windows each take their own rows. Returns a list
-        the same length/order as requests, each in fetch_neighbor_window's format.
+        the same length/order as requests, each shaped
+        ``{"text": joined passage, "index_range": [start, end], "chunks": [{"chunk_index", "text"}, ...]}``.
         """
         empty = lambda c: {"text": "", "index_range": [c, c], "chunks": []}  # noqa: E731
         if not requests:
@@ -192,27 +193,6 @@ class ChunkLookup:
         return results
 
     @staticmethod
-    def get_parent_children_count(vector_store: PGVectorStore, parent_id: str) -> int:
-        """Read chunk_count from a parent node's metadata (written by hierarchy.build_hierarchy)."""
-        table = ChunkLookup._get_table_name(vector_store)
-        engine = ChunkLookup._get_engine(vector_store)
-
-        query = sql_text(f"""
-            SELECT (metadata_->>'chunk_count')::int AS cnt
-            FROM "{table}"
-            WHERE node_id = :node_id
-              AND metadata_->>'node_role' = 'parent'
-            LIMIT 1
-        """)
-        try:
-            with engine.connect() as conn:
-                row = conn.execute(query, {"node_id": parent_id}).first()
-                return int(row[0]) if row and row[0] is not None else 0
-        except Exception as e:
-            logger.warning(f"get_parent_children_count failed for {parent_id[:8]}: {e}")
-            return 0
-
-    @staticmethod
     def fetch_node(vector_store: PGVectorStore, node_id: str) -> Optional[TextNode]:
         """Fetch the full content of a single node (leaf or parent)."""
         table = ChunkLookup._get_table_name(vector_store)
@@ -237,62 +217,6 @@ class ChunkLookup:
         except Exception as e:
             logger.warning(f"fetch_node failed for {node_id[:8]}: {e}")
             return None
-
-    @staticmethod
-    def fetch_neighbor_window(
-        vector_store: PGVectorStore,
-        file_id: str,
-        center_chunk_index: int,
-        n: int,
-    ) -> dict:
-        """Fetch the (file_id, chunk_index ± n) leaf chunks and join them in order.
-
-        Returns:
-            {
-                "text": "the joined, expanded passage",
-                "index_range": [start, end],
-                "chunks": [{"chunk_index": i, "text": "..."}, ...]
-            }
-        """
-        table = ChunkLookup._get_table_name(vector_store)
-        engine = ChunkLookup._get_engine(vector_store)
-
-        start = max(center_chunk_index - n, 0)
-        end = center_chunk_index + n
-
-        # Backward compatibility: legacy chunks (old flat index) have no node_role; treat them as leaves and fetch too
-        query = sql_text(f"""
-            SELECT
-                node_id,
-                text,
-                (metadata_->>'chunk_index')::int AS idx
-            FROM "{table}"
-            WHERE metadata_->>'file_id' = :file_id
-              AND COALESCE(metadata_->>'node_role', 'leaf') = 'leaf'
-              AND (metadata_->>'chunk_index')::int BETWEEN :start AND :end
-            ORDER BY idx ASC
-        """)
-        try:
-            with engine.connect() as conn:
-                rows = conn.execute(query, {
-                    "file_id": str(file_id),
-                    "start": start,
-                    "end": end,
-                }).fetchall()
-
-            if not rows:
-                return {"text": "", "index_range": [center_chunk_index, center_chunk_index], "chunks": []}
-
-            chunks = [{"chunk_index": r[2], "text": r[1]} for r in rows]
-            joined = "\n\n".join(c["text"] for c in chunks)
-            return {
-                "text": joined,
-                "index_range": [chunks[0]["chunk_index"], chunks[-1]["chunk_index"]],
-                "chunks": chunks,
-            }
-        except Exception as e:
-            logger.warning(f"fetch_neighbor_window failed for file={file_id} center={center_chunk_index}: {e}")
-            return {"text": "", "index_range": [center_chunk_index, center_chunk_index], "chunks": []}
 
     @staticmethod
     def fetch_file_full(vector_store: PGVectorStore, file_id: str, max_tokens: int = 30000) -> dict:

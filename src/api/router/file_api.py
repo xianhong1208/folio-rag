@@ -6,7 +6,7 @@ Supports space- and folder-based file management.
 """
 import traceback
 from uuid import UUID
-from fastapi import APIRouter, HTTPException, UploadFile, File, Form, Query, Depends, Request
+from fastapi import APIRouter, HTTPException, UploadFile, File, Form, Query, Depends
 from fastapi.responses import StreamingResponse
 from typing import Optional, List
 from sqlalchemy.exc import IntegrityError, NoResultFound

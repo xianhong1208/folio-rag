@@ -7,7 +7,6 @@ functions _truncate / _visual_width / _center_line / _format_search_body.
 DB / network, so it is safe to import.)
 """
 
-import pytest
 
 from src.fastmcp_tools.agentic_tools import (
     _BOX_WIDTH,

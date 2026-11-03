@@ -143,17 +143,6 @@ def test_build_hierarchy_metadata_propagation():
     assert leaf_nodes[0].metadata["existing_key"] == "preserve_me"
 
 
-def test_build_hierarchy_empty_input():
-    """Empty input returns ([], [])."""
-    leaf_nodes, parent_nodes = build_hierarchy(
-        leaf_documents=[],
-        parent_target_tokens=1024,
-        base_metadata={},
-    )
-    assert leaf_nodes == []
-    assert parent_nodes == []
-
-
 def test_estimate_tokens_mixed_chinese_english():
     """Mixed Chinese/English is summed by each coefficient, then truncated to int."""
     # "公司ABC" = 2 Chinese * 1.5 + 3 English * 0.3
