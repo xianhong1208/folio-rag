@@ -21,9 +21,14 @@ import re
 from dataclasses import dataclass, field
 from typing import Iterable, List, Optional, Sequence
 
+from src.domain.rag.token_budget import excerpt, truncate_to_tokens
+
 MAX_CONTEXTS = 6
-GRADE_CHARS = 600
-CONTEXT_CHARS = 1200
+# Per-chunk token budgets (estimated, see token_budget.py). A merged section is
+# often 3-4k characters; grading and generation see an excerpt centred on the
+# leaves that were actually hit (metadata.hit_spans), not the section's head.
+GRADE_TOKENS = 400
+CONTEXT_TOKENS = 900
 
 CONF_NONE = "none"
 CONF_LOW = "low"
@@ -87,10 +92,22 @@ def parse_grades(content: Optional[str], n: int) -> Grading:
     return Grading(out)
 
 
+def result_excerpt(result: dict, max_tokens: int) -> str:
+    """A result's text cut to ``max_tokens`` around its hit leaves (when known)."""
+    md = (result or {}).get("metadata") or {}
+    return excerpt((result or {}).get("text") or "", md.get("hit_spans") or (), max_tokens)
+
+
+def grade_texts(results: Sequence[dict]) -> List[str]:
+    """What the grader sees for each result."""
+    return [result_excerpt(r, GRADE_TOKENS) for r in results]
+
+
 def grade_prompt(query: str, texts: Sequence[str]) -> str:
     return ("Grade whether each numbered context can help answer the question. "
             "Reply ONLY a JSON array of booleans (one per context, true = relevant).\n\n"
-            + "\n\n".join(f"[{i + 1}] {t[:GRADE_CHARS]}" for i, t in enumerate(texts))
+            + "\n\n".join(f"[{i + 1}] {truncate_to_tokens(t, GRADE_TOKENS)[0]}"
+                          for i, t in enumerate(texts))
             + f"\n\nQuestion: {query}\n\nJSON:")
 
 
@@ -125,14 +142,16 @@ def source_label(result: dict) -> str:
 
 
 def contexts_for(results: Sequence[dict], keep: Iterable[bool]) -> List[Context]:
-    """Kept results with their original 1-based result-list numbers."""
-    return [Context(number=i + 1, text=(r.get("text") or ""), source=source_label(r))
+    """Kept results with their original 1-based result-list numbers, each cut to
+    CONTEXT_TOKENS around its hit leaves."""
+    return [Context(number=i + 1, text=result_excerpt(r, CONTEXT_TOKENS), source=source_label(r))
             for i, (r, k) in enumerate(zip(results, keep)) if k]
 
 
 def answer_prompt(query: str, contexts: Sequence[Context]) -> str:
     ctx = "\n\n".join(
-        f"[{c.number}]" + (f" ({c.source})" if c.source else "") + f" {c.text[:CONTEXT_CHARS]}"
+        f"[{c.number}]" + (f" ({c.source})" if c.source else "")
+        + f" {truncate_to_tokens(c.text, CONTEXT_TOKENS)[0]}"
         for c in contexts)
     return ("You are a helpful assistant. Answer the question using ONLY the context below. "
             "Cite sources inline with their bracketed numbers, e.g. [2]. If the context lacks "
@@ -184,7 +203,7 @@ def answer(client, model: str, query: str, results: Sequence[dict]) -> dict:
         return {"answer": None, "confidence": CONF_NONE, "kept": 0, "dropped": 0,
                 "note": "No chunks retrieved"}
     top = list(results[:MAX_CONTEXTS])
-    grading = grade(client, model, query, [r.get("text") or "" for r in top])
+    grading = grade(client, model, query, grade_texts(top))
     contexts = contexts_for(top, grading.grades)
     dropped = len(top) - len(contexts)
     base = {"kept": len(contexts), "dropped": dropped}
