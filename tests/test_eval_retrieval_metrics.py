@@ -302,3 +302,94 @@ class TestHarnessHelpers:
         v = harness.variance([s, s])
         assert v["mcp.recall@5"]["max_abs_diff"] == 0
         assert harness.rank_flips([rows, rows]) == {"mcp": [], "mcp_k20": [], "trace": []}
+
+
+class TestRelevanceSweep:
+    ROWS = [
+        {"answerable": True, "group": "keyword", "top_relevance": 0.99, "n_results": 5,
+         "recall@5": 1.0, "recall@10": 1.0},
+        {"answerable": True, "group": "paraphrase", "top_relevance": 0.93, "n_results": 5,
+         "recall@5": 1.0, "recall@10": 1.0},
+        {"answerable": True, "group": "table", "top_relevance": 0.6, "n_results": 2,
+         "recall@5": 0.0, "recall@10": 1.0},
+        {"answerable": False, "group": "unanswerable", "top_relevance": 0.97, "n_results": 5},
+        {"answerable": False, "group": "out_of_scope", "top_relevance": 0.4, "n_results": 1},
+        {"answerable": False, "group": "out_of_scope", "top_relevance": 0.02, "n_results": 0},
+    ]
+
+    def test_rejected_at(self):
+        assert rm.rejected_at(0.5, 0, 0.0) is True           # nothing came back
+        assert rm.rejected_at(0.5, 3, 0.0) is False          # cutoff off
+        assert rm.rejected_at(0.5, 3, 0.9) is True
+        assert rm.rejected_at(0.95, 3, 0.9) is False
+        assert rm.rejected_at(None, 3, 0.9) is False         # not reranked: no signal
+
+    def test_sweep(self):
+        s0, s5, s95 = rm.relevance_sweep(self.ROWS, (0.0, 0.5, 0.95))
+        assert s0["by_group"]["out_of_scope"] == {"n": 2, "rejected": 0.5}
+        assert s0["answerable_rejected"] == 0.0 and s0["recall@5"] == round(2 / 3, 4)
+        assert s5["by_group"]["out_of_scope"]["rejected"] == 1.0
+        assert s5["by_group"]["unanswerable"]["rejected"] == 0.0
+        assert s5["unanswerable_rejected"] == round(2 / 3, 4) and s5["lost@5"] == 0
+        # 0.95 rejects the 0.93 answerable question, which had a top-5 hit.
+        assert s95["answerable_rejected"] == round(2 / 3, 4) and s95["lost@5"] == 1
+        assert s95["recall@5"] == round(1 / 3, 4) and s95["recall@10"] == round(1 / 3, 4)
+        assert s95["unanswerable_rejected"] == round(2 / 3, 4)  # 0.97 near miss passes
+
+    def test_sweep_empty_groups(self):
+        (row,) = rm.relevance_sweep([], (0.5,))
+        assert row["unanswerable_rejected"] is None and row["answerable_rejected"] is None
+        assert row["recall@5"] is None and row["by_group"] == {}
+
+
+class TestHarnessRelevance:
+    def _row(self, i, typ, top, low, n=3, r5=1.0):
+        mcp = {"first_rank": 1 if typ not in ("unanswerable", "out_of_scope") else None,
+               "top_score": top, "ms": 100.0, "tokens": 500.0, "dup_ratio": 0.0,
+               "roles": ["leaf"], "n_results": n, "top_relevance": top,
+               "low_relevance": low, "min_relevance": 0.9}
+        ans = typ not in ("unanswerable", "out_of_scope")
+        if ans:
+            mcp.update({"recall@5": r5, "recall@10": 1.0, "mrr@10": 1.0, "ndcg@10": 1.0,
+                        "file_recall@5": 1.0})
+        s = {k: v for k, v in mcp.items() if k in ("first_rank", "top_score", "recall@5")}
+        return {"id": f"q{i}", "type": typ, "lang": "en", "answerable": ans, "mcp": mcp,
+                "mcp_k20": dict(s), "trace": dict(s, ms=50.0, stage_ranks={})}
+
+    def test_summary_and_markdown(self, harness):
+        rows = [self._row(1, "keyword", 0.99, False), self._row(2, "table", 0.95, False),
+                self._row(3, "unanswerable", 0.97, False),
+                self._row(4, "out_of_scope", 0.3, True), self._row(5, "out_of_scope", 0.02, True, n=0)]
+        s = harness.summarise(rows)
+        # Out-of-scope rows stay out of the golden-set numbers.
+        assert s["n"] == 3 and s["n_unanswerable"] == 1 and s["n_out_of_scope"] == 2
+        assert s["mcp"]["thresholds"]["false_accept@0.5"] == 1.0
+        rel = s["relevance"]
+        assert rel["served"]["min_relevance"] == 0.9
+        assert rel["served"]["low_relevance_rate"] == {
+            "answerable": 0.0, "unanswerable": 0.0, "out_of_scope": 1.0}
+        assert rel["sweep"]["0.9"]["by_group"]["out_of_scope"]["rejected"] == 1.0
+        assert rel["sweep"]["0.98"]["lost@5"] == 1
+        md = "\n".join(harness.relevance_markdown(s))
+        assert "| 0.9 | 100.0% | 0.0% | 66.7% | 0.0% |" in md
+        assert "out_of_scope 100.0%" in md
+        assert harness.relevance_markdown({}) == []
+
+    def test_served_rates_without_the_signal(self, harness):
+        rows = [self._row(1, "keyword", None, None)]
+        rel = harness.summarise_relevance(rows)
+        assert rel["served"]["low_relevance_rate"]["answerable"] is None
+        assert rel["served"]["low_relevance_rate"]["out_of_scope"] is None
+
+    def test_out_of_scope_loader(self, harness, tmp_path):
+        f = tmp_path / "oos.yaml"
+        f.write_text("- {id: h-1, type: x, lang: en, question: 'Who painted it?', evidence: [a]}\n"
+                     "- {id: h-2, lang: en}\n", encoding="utf-8")
+        (q,) = harness.load_out_of_scope(f)
+        assert q["type"] == "out_of_scope" and q["evidence"] == [] and q["id"] == "h-1"
+        assert harness.load_out_of_scope(tmp_path / "missing.yaml") == []
+
+    def test_committed_out_of_scope_set(self, harness):
+        qs = harness.load_out_of_scope()
+        assert len(qs) == 20 and len({q["id"] for q in qs}) == 20
+        assert {q["lang"] for q in qs} == {"en", "zh"}
