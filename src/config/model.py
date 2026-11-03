@@ -287,6 +287,8 @@ class RAGRetrievalConfig(BaseModel):
     default_top_k: int
     default_similarity_cutoff: float
     default_sparse_top_k: int = 12
+    # Fused candidates handed to the reranker: max(3 x top_k, this). Ignored without a reranker.
+    rerank_candidates: int = 60
     default_hybrid_alpha: float = 0.75
     hybrid_search: bool
     text_search_config: str = "simple"  # Chinese is segmented in Python; Postgres tokenizes the space-joined result with `simple`
