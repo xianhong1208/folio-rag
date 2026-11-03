@@ -1,7 +1,8 @@
 """Folio MCP Server — FastAPI + FastMCP application assembly.
 
-Exposes MCP RAG queries (no file/folder REST API), wires auth and request-id
-middleware, and registers a per-folder MCP tool for each (folder, user_token) pair.
+Loads the REST routers and MCP tool modules listed in config.modules, wires auth,
+error-boundary and request-id middleware, and registers a per-folder MCP tool for
+each (folder, user_token) pair.
 """
 
 from __future__ import annotations
@@ -140,7 +141,7 @@ def create_app(config: BaseModel, transport: str) -> FastAPI:
     fastapi_app.state.auth_settings = settings_from_config(config)
 
     # Auth system: build + register the offline MCP Gate token verifier (used by the
-    # REST middleware and the MCP tool filter via set_token_verifier).
+    # REST auth dependency and the MCP tool filter via set_token_verifier).
     initialize_auth_system(config)
 
     # Wire folder event hooks so the MCP tool surface stays in sync on folder

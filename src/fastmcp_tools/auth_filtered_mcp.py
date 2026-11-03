@@ -41,8 +41,7 @@ api_logger = get_api_logger()
 
 # Cache filtered tool lists per token — every MCP list_tools call previously did
 # token-verify + FolderDB.get round-trip. With many MCP clients polling list_tools
-# this dominated request latency. TTL matches auth.cache_ttl (60s) — if it gets
-# out of sync slightly that's OK, worst case is a stale tool list for <1min.
+# this dominated request latency. Worst case is a stale tool list for <1min.
 _FILTER_CACHE_TTL = 60
 _FILTER_CACHE_MAX = 1024
 _filter_cache: "TTLCache[str, list]" = TTLCache(maxsize=_FILTER_CACHE_MAX, ttl=_FILTER_CACHE_TTL)

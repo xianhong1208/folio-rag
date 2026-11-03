@@ -80,10 +80,11 @@ class AuthConfig(BaseModel):
     # (kept only so old configs still validate). Use `issuer` instead.
     token_server_url: Optional[str] = None
 
-    # -- Connection / cache settings (JWKS caching still benefits from cache_ttl) --
-    cache_ttl: int = 60  # Verification-result cache TTL (seconds)
-    request_timeout: float = 5.0  # HTTP request timeout (seconds); e.g. JWKS fetch
-    retry_count: int = 2  # Retry count (legacy; unused by the offline verifier)
+    # -- Unused since the offline verifier replaced the token server; kept so existing
+    # configs still validate. --
+    cache_ttl: int = 60
+    request_timeout: float = 5.0
+    retry_count: int = 2
     dynamic_tools: Optional[DynamicToolsConfig] = None
     # Admin-console login (session cookie, admin scope). Defaults apply when omitted.
     console: ConsoleAuthConfig = Field(default_factory=ConsoleAuthConfig)
