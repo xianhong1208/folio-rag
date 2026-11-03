@@ -245,6 +245,8 @@ class RAGRetrievalConfig(BaseModel):
     # profile: cloud (which loads no in-process model; explicit ckip is rejected there).
     # Changing it flags existing folders for Rebuild FTS (no re-embedding needed).
     segmenter: Optional[Literal["ckip", "jieba", "bigram"]] = None
+    # Device for the CKIP segmenter: cpu | cuda | cuda:N | auto (cuda:0 when available).
+    ckip_device: str = "cpu"
     # "rrf" = Reciprocal Rank Fusion (BM25 affects ordering); "concat" = llama_index native
     # (dense dominates, effectively vector-only; legacy).
     hybrid_fusion: str = "rrf"

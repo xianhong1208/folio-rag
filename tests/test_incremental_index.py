@@ -299,3 +299,56 @@ async def test_parents_are_sized_with_the_chunk_tokenizer(env):
                                           "_docling_chunks": chunks})
     stats = await _index(env, doc)
     assert stats["parents"] == 2
+
+
+class _ReportingSeg:
+    name = "ckip"
+
+    def __init__(self, fail):
+        self.fail = fail
+
+    def segment_batch(self, texts):
+        return self.segment_batch_report(texts)[0]
+
+    def segment_batch_report(self, texts):
+        return (list(texts), True) if self.fail else ([t.lower() for t in texts], False)
+
+
+@pytest.mark.parametrize("fail", [True, False])
+async def test_segmenter_fallback_flags_rebuild_fts(env, monkeypatch, fail):
+    stamps, seen = [], {}
+
+    def _replace(vector_store, file_id, nodes, search_texts, cfg, segment, segmenter_name=None):
+        seen["segmented"] = segment(["ABC"])
+        return len(nodes)
+
+    monkeypatch.setattr(hi, "replace_file_chunks", _replace)
+    monkeypatch.setattr(hi.HierarchicalIndexer, "_text_search_config", staticmethod(lambda: "simple"))
+    monkeypatch.setattr("src.domain.rag.text_segmenter.get_segmenter",
+                        lambda name=None: _ReportingSeg(fail))
+    monkeypatch.setattr("src.domain.rag.vector_store_manager.stamp_tsv_segmenter",
+                        lambda engine, table, name: stamps.append((table, name)))
+    stats = await _index(env, _doc())
+    if fail:
+        assert stamps == [("t", "ckip-degraded")]
+        assert "Rebuild FTS" in stats["warning"]
+    else:
+        assert stamps == [] and stats["warning"] is None
+        assert seen["segmented"] == ["abc"]
+
+
+async def test_fts_flag_failure_is_not_fatal(env, monkeypatch):
+    def _replace(vector_store, file_id, nodes, search_texts, cfg, segment, segmenter_name=None):
+        segment(["x"])
+        return len(nodes)
+
+    def _boom(*a):
+        raise RuntimeError("db down")
+
+    monkeypatch.setattr(hi, "replace_file_chunks", _replace)
+    monkeypatch.setattr(hi.HierarchicalIndexer, "_text_search_config", staticmethod(lambda: "simple"))
+    monkeypatch.setattr("src.domain.rag.text_segmenter.get_segmenter",
+                        lambda name=None: _ReportingSeg(True))
+    monkeypatch.setattr("src.domain.rag.vector_store_manager.stamp_tsv_segmenter", _boom)
+    stats = await _index(env, _doc())
+    assert "Rebuild FTS" in stats["warning"]

@@ -156,6 +156,7 @@ rag:
     default_hybrid_alpha: 0.75                  # 0=pure BM25, 1=pure vector: lower it for term/code-heavy queries
     hybrid_search: true
     text_search_config: "simple"                # Postgres FTS config; Chinese is segmented in Python via CKIP (ckip-transformers), then tokenized here with `simple`
+    ckip_device: "cpu"                          # CKIP segmenter device: cpu / cuda / cuda:N / auto
 
     # Auto-Merging — automatically promote when multiple hit leaves share one parent
     auto_merging:
