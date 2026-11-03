@@ -188,7 +188,7 @@ async def _global_slot(n: int) -> AsyncIterator[None]:
 
 # Part of every prefix's cache key: bump it whenever the prompt changes so that an
 # incremental re-index regenerates prefixes written by an older prompt.
-PROMPT_VERSION = "2"  # 2: outline + own section, language-neutral prompt, script repair
+PROMPT_VERSION = "3"  # 3: drop prefixes cached from the old reasoning_content fallback; 2: outline + own section, language-neutral prompt, script repair
 
 
 class ContextGenerator:
