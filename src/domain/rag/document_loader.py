@@ -275,6 +275,18 @@ class DocumentLoader:
         logger.info(f"CSV {file_name}: {len(doc.metadata['_docling_chunks'])} table chunk(s)")
         return doc
 
+    def _size_transcript_records(self, records):
+        """Timed transcript records -> leaf-sized records: segments merge and split
+        within their time block (never across), sized in embedding tokens."""
+        from src.domain.rag.docling_loader import (
+            _refine_chunks_for_token_budget,
+            get_hf_tokenizer,
+        )
+        budget, _ = token_budgets(self._leaf_chunk_size, self._has_context_generator)
+        return _refine_chunks_for_token_budget(
+            [r if isinstance(r, dict) else {"text": r} for r in records],
+            get_hf_tokenizer(self._embedding_model_name), budget)
+
     @staticmethod
     def _cloud_parser_for(file_name: str):
         """A CloudDocumentParser when the live config routes this file type to the cloud
@@ -341,10 +353,16 @@ class DocumentLoader:
             if chunk_texts is not None:
                 cleaned_chunks = []
                 for c in chunk_texts:
-                    cleaned, n = _filter_whisper_hallucinations(c)
-                    cleaned_chunks.append(cleaned)
+                    if isinstance(c, dict):  # timed record (segment text + time-block heading)
+                        cleaned, n = _filter_whisper_hallucinations(c.get("text") or "")
+                        cleaned_chunks.append({**c, "text": cleaned})
+                    else:
+                        cleaned, n = _filter_whisper_hallucinations(c)
+                        cleaned_chunks.append(cleaned)
                     n_chunks += n
                 chunk_texts = cleaned_chunks
+                if any(isinstance(c, dict) for c in chunk_texts):
+                    chunk_texts = self._size_transcript_records(chunk_texts)
             if n_full or n_chunks:
                 logger.info(
                     f"Filtered Whisper hallucinations from {file_name}: "
@@ -357,7 +375,8 @@ class DocumentLoader:
 
             doc = Document(text=content, metadata=base_metadata, doc_id=doc_id)
             if chunk_texts is not None:
-                # the docling provider pre-splits chunks; cloud returns None → leaf_splitter plain-text path
+                # docling pre-splits chunks; segment-based providers return timed records
+                # (sized above); None (no timing) → leaf_splitter plain-text path
                 doc.metadata["_docling_chunks"] = chunk_texts
             return doc
         finally:
