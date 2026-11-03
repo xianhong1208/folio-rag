@@ -139,6 +139,24 @@ except Exception:
 
 
 
+def _table_heads(leaf_docs: List[Document]) -> List[Optional[int]]:
+    """For each leaf, the index of the first piece of the split table it continues
+    (None for prose, whole tables and first pieces). Pops the transient
+    ``table_part`` marker so it never reaches stored metadata."""
+    heads: List[Optional[int]] = [None] * len(leaf_docs)
+    head: Optional[int] = None
+    for i, ld in enumerate(leaf_docs):
+        part = ld.metadata.pop("table_part", None)
+        if part == 0:
+            head = i
+        elif (part and head is not None
+              and leaf_docs[head].metadata.get("headings") == ld.metadata.get("headings")):
+            heads[i] = head
+        else:
+            head = None
+    return heads
+
+
 def _prefix_warning(failed: int, total: int) -> Optional[str]:
     """File warning for chunks indexed without their contextual prefix."""
     if not failed:
@@ -275,6 +293,7 @@ class HierarchicalIndexer:
         file_id_meta = str(document.metadata.get("file_id") or "")
         if not file_id_meta:
             raise ValueError(f"{file_name}: document has no file_id; cannot replace its chunks")
+        table_head = _table_heads(leaf_docs)
         hashes: List[str] = []
         leaf_ids: List[str] = []
         seen_hashes: Dict[str, int] = {}
@@ -295,6 +314,7 @@ class HierarchicalIndexer:
 
         prefixes: List[Optional[str]] = [None] * n_chunks
         need_llm: List[int] = []
+        continuations: List[int] = []  # table pieces that take their table's prefix
         for i, chash in enumerate(hashes):
             old = reusable.get(chash)
             # An empty stored prefix under a live generator's key is a failure that an
@@ -304,10 +324,13 @@ class HierarchicalIndexer:
                 prefixes[i] = old.get("context_prefix") or ""
             elif not self._context_generator or not document.text:
                 prefixes[i] = ""
+            elif table_head[i] is not None:
+                continuations.append(i)
             else:
                 need_llm.append(i)
-        n_reused_prefix = n_chunks - len(need_llm)
-        n_prefix_failed = 0
+        # Continuation pieces of a split table make no call: they take the prefix of
+        # the table's first piece (cached or generated below).
+        n_reused_prefix = n_chunks - len(need_llm) - len(continuations)
 
         if need_llm:
             _raise_if_aborted(should_abort, file_name, "contextualizing")
@@ -339,14 +362,19 @@ class HierarchicalIndexer:
                 cleaned = None if prefix is None else self._clean_text(prefix).strip()
                 # Empty after cleaning is a failure too: never cache it under ctx_key.
                 prefixes[i] = cleaned or None
-            n_prefix_failed = sum(1 for i in need_llm if prefixes[i] is None)
-            if n_prefix_failed:
-                logger.warning(
-                    f"{file_name}: {n_prefix_failed} of {len(need_llm)} chunk(s) got no "
-                    "contextual prefix (no usable answer from the model); indexed without "
-                    "one — a re-index retries them"
-                )
-            logger.info(f"Contextual prefixes generated for {len(need_llm)} leaves ({file_name})")
+            logger.info(
+                f"Contextual prefixes generated for {len(need_llm)} leaves "
+                f"(+{len(continuations)} table continuation(s) sharing them) ({file_name})")
+        for i in continuations:
+            prefixes[i] = prefixes[table_head[i]]  # None when the table's prefix failed
+        asked = need_llm + continuations
+        n_prefix_failed = sum(1 for i in asked if prefixes[i] is None)
+        if n_prefix_failed:
+            logger.warning(
+                f"{file_name}: {n_prefix_failed} of {len(asked)} chunk(s) got no "
+                "contextual prefix (no usable answer from the model); indexed without "
+                "one — a re-index retries them"
+            )
 
         for ld, prefix in zip(leaf_docs, prefixes):
             if prefix:

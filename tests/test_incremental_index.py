@@ -230,3 +230,56 @@ async def test_empty_prefix_cached_by_an_older_version_is_regenerated(env):
     again = await _index(env, _doc())
     assert again["llm_calls"] == 1
     assert env.gen.calls == ["The hardware warranty is 36 months."]
+
+
+def _table_doc(n_pieces=4, edit_last=False):
+    chunks = [{"text": "Intro paragraph.", "headings": ["Plan", "Prices"]}]
+    for k in range(n_pieces):
+        row = f"| r{k} | {k * 10 + (1 if edit_last and k == n_pieces - 1 else 0)} |"
+        chunks.append({"text": f"| item | price |\n| --- | --- |\n{row}",
+                       "headings": ["Plan", "Prices"], "content_type": "table", "table_part": k})
+    chunks.append({"text": "Closing note.", "headings": ["Plan", "Prices"]})
+    return Document(text="full text", metadata={"file_id": "T1", "file_name": "Plan.xlsx",
+                                                "_docling_chunks": chunks})
+
+
+async def test_split_table_gets_one_prefix_call(env):
+    stats = await _index(env, _table_doc(4))
+    # intro + table head + closing = 3 calls, not 6
+    assert stats["llm_calls"] == 3
+    assert len(env.gen.calls) == 3
+    leaves = [n for n in env.store.rows["T1"] if n.metadata["node_role"] == "leaf"]
+    table = [n for n in leaves if n.metadata.get("content_type") == "table"]
+    assert len(table) == 4
+    assert len({n.metadata["context_prefix"] for n in table}) == 1
+    assert all("table_part" not in n.metadata for n in leaves)  # transient marker
+    assert all(n.metadata.get("ctx_key") for n in table)
+
+
+async def test_table_continuation_reuses_cached_head_prefix(env):
+    await _index(env, _table_doc(4))
+    again = await _index(env, _table_doc(4, edit_last=True))
+    assert again["llm_calls"] == 0  # only a continuation changed: it takes the head's prefix
+    table = [n for n in env.store.rows["T1"]
+             if n.metadata["node_role"] == "leaf" and n.metadata.get("content_type") == "table"]
+    assert len({n.metadata["context_prefix"] for n in table}) == 1
+
+
+async def test_failed_table_prefix_counts_every_piece(env):
+    async def _fail_tables(chunks, **kw):
+        return [None if "| item |" in c else "ok" for c in chunks]
+
+    env.gen.generate_prefixes = lambda chunks, full_document, file_name, **kw: _fail_tables(chunks)
+    stats = await _index(env, _table_doc(3))
+    assert stats["prefix_failures"] == 3
+
+
+def test_table_heads_need_same_headings():
+    from src.domain.rag.hierarchical_indexer import _table_heads
+
+    docs = [Document(text="a", metadata={"table_part": 0, "headings": ["A"]}),
+            Document(text="b", metadata={"table_part": 1, "headings": ["A"]}),
+            Document(text="c", metadata={"table_part": 1, "headings": ["B"]}),
+            Document(text="d", metadata={}),
+            Document(text="e", metadata={"table_part": 2, "headings": ["A"]})]
+    assert _table_heads(docs) == [None, 0, None, None, None]

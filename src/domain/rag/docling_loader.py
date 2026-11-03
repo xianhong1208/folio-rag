@@ -1187,7 +1187,8 @@ def _refine_chunks_for_token_budget(
 
     ``table_max_tokens`` (default ``max_tokens``) lets a table stay whole up to a
     larger budget than prose; an oversized docling table is split at row
-    boundaries so each piece remains a readable table.
+    boundaries so each piece remains a readable table; its pieces carry
+    ``table_part`` (0, 1, ...) so they can share one contextual prefix.
     """
     from src.domain.rag.chunk_identity import (
         common_headings,
@@ -1242,8 +1243,13 @@ def _refine_chunks_for_token_budget(
                 parts = _split_triplet_table(text, tokenizer, budget)
             else:
                 parts = _split_by_lines(text, tokenizer, budget, header=None)
-            for part in parts:
-                output.append({"text": part, **meta})  # split pieces inherit the source chunk's meta
+            for k, part in enumerate(parts):
+                rec = {"text": part, **meta}  # split pieces inherit the source chunk's meta
+                if is_table and len(parts) > 1:
+                    # Pieces of one table: the indexer writes one contextual prefix for
+                    # the table and reuses it on the continuation pieces.
+                    rec["table_part"] = k
+                output.append(rec)
         elif token_count < merge_flush_threshold:
             # Small — accumulate (both halves stay under max_tokens), flush past the threshold
             pending.append((text, meta))
