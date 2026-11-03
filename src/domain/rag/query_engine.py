@@ -116,7 +116,8 @@ class QueryEngine:
                 },
             })
         return {"results": results, "reranked": outcome.reranked,
-                "candidates": outcome.candidates, "fusion": settings.fusion}
+                "candidates": outcome.candidates, "fusion": settings.fusion,
+                "score_type": outcome.score_type}
 
 
 def _to_result(item) -> RAGSearchResult:
