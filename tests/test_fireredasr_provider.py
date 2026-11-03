@@ -13,6 +13,7 @@ in the evals.
 """
 
 import importlib.util
+import shutil
 import wave
 from unittest.mock import patch
 
@@ -30,6 +31,9 @@ from src.domain.rag.fireredasr_provider import (
     parse_silences,
     plan_segments,
 )
+
+# These two run the real ffmpeg binary (CI installs it); skip on a dev machine without it.
+_needs_ffmpeg = pytest.mark.skipif(shutil.which("ffmpeg") is None, reason="needs the ffmpeg binary")
 
 _FP = "src.domain.rag.fireredasr_provider"
 
@@ -87,6 +91,7 @@ class TestFireRedAsrProvider:
             assert FireRedAsrProvider().available() is False
 
     @_needs_local
+    @_needs_ffmpeg
     def test_transcribe_joins_segments_and_converts_to_traditional(self, tmp_path):
         # A real wav (2s silence, 16k mono) goes through real ffmpeg preprocessing; only model inference is mocked.
         # Segment text is Simplified — assert the output has been converted to Traditional via s2twp (with Taiwan wording).
@@ -107,6 +112,7 @@ class TestFireRedAsrProvider:
         assert r.chunks is None  # AED has no punctuation or structure → leaf_splitter plain-text path
 
     @_needs_local
+    @_needs_ffmpeg
     def test_transcribe_reports_progress(self, tmp_path):
         src = tmp_path / "in.wav"
         with wave.open(str(src), "wb") as w:

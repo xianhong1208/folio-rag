@@ -14,13 +14,13 @@ imports whisper/torch.
 from __future__ import annotations
 
 import re
-import subprocess
 import sys
 import tempfile
 from pathlib import Path
 from typing import Optional
 
 from src.log import get_api_logger
+from src.utils.ffmpeg import run_ffmpeg
 
 logger = get_api_logger()
 
@@ -182,7 +182,7 @@ def _detect_leading_silence_end(src: str) -> float:
     """
     af = f"silencedetect=noise={_SILENCE_THRESHOLD_DB}dB:duration={_SILENCE_MIN_DURATION}"
     cmd = ["ffmpeg", "-hide_banner", "-i", src, "-vn", "-af", af, "-f", "null", "-"]
-    result = subprocess.run(cmd, capture_output=True, text=True, errors="replace")
+    result = run_ffmpeg(cmd, capture_output=True, text=True, errors="replace")
     starts = re.findall(r"silence_start:\s*([\d.]+)", result.stderr)
     ends = re.findall(r"silence_end:\s*([\d.]+)", result.stderr)
     if not starts or not ends or float(starts[0]) > 1.0:
@@ -218,7 +218,11 @@ def _trim_audio_leading_silence(input_path: str, file_name: str) -> Optional[str
         *codec_args,
         out_path,
     ]
-    result = subprocess.run(cmd, capture_output=True, text=True, errors="replace")
+    try:
+        result = run_ffmpeg(cmd, capture_output=True, text=True, errors="replace")
+    except RuntimeError:
+        Path(out_path).unlink(missing_ok=True)
+        raise
     if result.returncode != 0:
         Path(out_path).unlink(missing_ok=True)
         raise RuntimeError(f"ffmpeg seek-trim failed: {result.stderr[:500]}")
