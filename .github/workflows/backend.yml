@@ -55,6 +55,10 @@ env:
   # First-time downloads include ~1 GB of CPU torch wheels.
   UV_HTTP_TIMEOUT: '300'
   HF_HOME: ${{ github.workspace }}/.hf-cache
+  # uv hardlinks packages out of its cache by default. nltk's path guard refuses to open a
+  # multiply-linked file (st_nlink > 1), which breaks llama-index's bundled stopwords in a
+  # hardlinked .venv. Copying costs a little install time and gives ordinary files.
+  UV_LINK_MODE: copy
 
 jobs:
   unit:
@@ -75,6 +79,10 @@ jobs:
           path: .hf-cache
           key: hf-${{ runner.os }}-${{ hashFiles('pyproject.toml') }}
           restore-keys: hf-${{ runner.os }}-
+      - name: Install ffmpeg
+        # Audio transcription shells out to ffmpeg (resample, silence detection, trim);
+        # the tests that exercise it run the real binary.
+        run: sudo apt-get update -q && sudo apt-get install -y -q --no-install-recommends ffmpeg
       - name: Install (local model stack + jieba, CPU torch group, locked)
         # The unit suite covers the in-process providers too, so it needs the `local`
         # extra (and `jieba` for the optional segmenter); torch comes from the cpu group.
@@ -145,6 +153,10 @@ jobs:
           python-version: ${{ env.PYTHON_VERSION }}
           enable-cache: true
           cache-dependency-glob: uv.lock
+      - name: Install ffmpeg
+        # Audio transcription shells out to ffmpeg (resample, silence detection, trim);
+        # the tests that exercise it run the real binary.
+        run: sudo apt-get update -q && sudo apt-get install -y -q --no-install-recommends ffmpeg
       - name: Install (core only, locked)
         run: uv sync --frozen
       - name: Unit tests on the core install

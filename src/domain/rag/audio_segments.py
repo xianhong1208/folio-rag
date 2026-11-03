@@ -9,10 +9,10 @@ library is imported here, so the cloud profile can use it.
 from __future__ import annotations
 
 import re
-import subprocess
 import wave
 from pathlib import Path
 from typing import List, Tuple
+from src.utils.ffmpeg import run_ffmpeg
 
 # FireRedASR's limit (60 s hard cap minus a 5 s margin); cloud providers pass their own.
 MAX_SEGMENT_SECONDS = 55.0
@@ -66,7 +66,7 @@ def plan_segments(
 # Audio preprocessing (ffmpeg)
 
 def _resample_to_wav16k(src: str, dst: Path) -> None:
-    proc = subprocess.run(
+    proc = run_ffmpeg(
         ["ffmpeg", "-nostdin", "-y", "-i", src,
          "-ac", "1", "-ar", "16000", "-c:a", "pcm_s16le", str(dst)],
         capture_output=True, text=True, timeout=600,
@@ -76,7 +76,7 @@ def _resample_to_wav16k(src: str, dst: Path) -> None:
 
 
 def _detect_silences(wav_path: Path) -> List[Tuple[float, float]]:
-    proc = subprocess.run(
+    proc = run_ffmpeg(
         ["ffmpeg", "-nostdin", "-i", str(wav_path),
          "-af", _SILENCE_FILTER, "-f", "null", "-"],
         capture_output=True, text=True, timeout=600,
