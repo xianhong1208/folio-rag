@@ -129,6 +129,7 @@ class TestRetrieverWindows:
         assert out[0].merged_from_leaves == ["a", "b"] and out[0].score == 0.9
         assert out[1].merged_from_leaves == []
         assert fetch.await_count == 1
+        assert {"merge", "expand"} <= set(retr.last_outcome.timings)
 
     async def test_window_skips_a_merged_parents_chunks(self):
         from src.domain.rag.merge_plan import MergeGroup

@@ -256,7 +256,7 @@ class TestDense:
         assert s._dense_engine() is eng
 
 
-class TestScoreType:
+class TestScoreTypeAndTimings:
     def test_score_type(self):
         assert hs.SearchOutcome(nodes=[], reranked=True).score_type == "rerank"
         assert hs.SearchOutcome(nodes=[]).score_type == "rrf"
@@ -264,7 +264,22 @@ class TestScoreType:
         # a failed rerank leaves the fusion scores in place
         assert hs.SearchOutcome(nodes=[], rerank_failed=True).score_type == "rrf"
 
+    async def test_search_records_stage_timings(self):
+        rr = FakeReranker({"a": 0.9})
+        s = searcher_with([nws("a")], [nws("a")], reranker=rr)
+        out = await s.search("q", SearchSettings(top_k=1))
+        assert {"fuse", "rerank"} <= set(out.timings)
+        assert all(v >= 0 for v in out.timings.values())
+        assert out.score_type == "rerank"
 
+    def test_record_stage_outside_a_search_is_a_noop(self):
+        hs.record_stage("dense", 0.0)                           # must not raise
+
+    async def test_concurrent_searches_keep_separate_timings(self):
+        s = searcher_with([nws("a")], [])
+        a, b = await asyncio.gather(s.search("q", SearchSettings(top_k=1)),
+                                    s.search("q", SearchSettings(top_k=1)))
+        assert a.timings is not b.timings
 
 
 # ------------------------------------------------- MCP uses the same path
@@ -291,6 +306,7 @@ class TestMcpUsesSharedPath:
         assert bm25["q_all"] == "'退貨' & '政策'"                 # segmented BM25
         assert {r.node_id for r in out} == {"a", "b"}          # BM25 hit reaches agents
         assert retr.last_outcome is not None
+        assert {"merge"} <= set(retr.last_outcome.timings)
 
     async def test_keyword_args_still_accepted(self):
         from src.domain.rag.auto_merging import AutoMergingRetriever

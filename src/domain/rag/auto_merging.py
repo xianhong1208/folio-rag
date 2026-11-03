@@ -19,6 +19,7 @@ Design trade-offs:
 
 from __future__ import annotations
 
+import time
 from dataclasses import dataclass, field
 from typing import Dict, List, Optional
 
@@ -105,13 +106,17 @@ class AutoMergingRetriever:
         if not leaf_nodes:
             return []
 
+        t0 = time.perf_counter()
         groups = await plan_merges(self._vector_store, leaf_nodes, self._merge_threshold)
         arranged = arrange(leaf_nodes, groups)
+        _timing(outcome, "merge", t0)
 
         expanding = expand_context and self._expand_context_neighbors > 0
         windows_by_leaf: Dict[str, Window] = {}
         if expanding:
+            t0 = time.perf_counter()
             windows_by_leaf = await self._plan_windows(arranged)
+            _timing(outcome, "expand", t0)
 
         results: List[MergedResult] = []
         emitted: set = set()
@@ -167,7 +172,7 @@ class AutoMergingRetriever:
         logger.info(
             f"AutoMerge query done: {len(leaf_nodes)} leaves to {len(results)} results "
             f"({len(groups)} merged to parent, {len(set(map(id, windows_by_leaf.values())))} "
-            f"window(s))")
+            f"window(s)) timings_ms={getattr(outcome, 'timings', {})}")
         return results
 
     async def _plan_windows(self, arranged) -> Dict[str, Window]:
@@ -201,6 +206,12 @@ class AutoMergingRetriever:
             [(h.file_id, *requested_range(h.chunk_index, n)) for h in hits])
         windows = plan_windows(hits, rows, n, blocked)
         return {h.node_id: w for w in windows for h in w.hits}
+
+
+def _timing(outcome, stage: str, started: float) -> None:
+    timings = getattr(outcome, "timings", None)
+    if isinstance(timings, dict):
+        timings[stage] = round((time.perf_counter() - started) * 1000, 1)
 
 
 def _provenance(node) -> dict:
