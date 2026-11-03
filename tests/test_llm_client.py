@@ -162,3 +162,20 @@ class TestEmbeddingBaseUrl:
             assert len(vec) == 8
             assert srv.posts("/embeddings")[0]["model"] == "BAAI/bge-m3"
             assert srv.requests[0][2]["Authorization"] == "Bearer sk-x"
+
+
+class TestEmbeddingBatchSize:
+    @pytest.mark.parametrize("provider", ["vllm", "openai", "ollama"])
+    def test_default_batch_is_64(self, provider):
+        from src.config.model import RAGEmbeddingConfig
+        from src.domain.rag.embedding.factory import EmbeddingProviderFactory
+        cfg = RAGEmbeddingConfig(provider=provider, model="m", dimension=8, api_key="sk-x",
+                                 base_url="http://x/v1")
+        assert EmbeddingProviderFactory.create_from_config(cfg).get_embed_model().embed_batch_size == 64
+
+    def test_configured_batch(self):
+        from src.config.model import RAGEmbeddingConfig
+        from src.domain.rag.embedding.factory import EmbeddingProviderFactory
+        cfg = RAGEmbeddingConfig(provider="vllm", model="m", dimension=8, base_url="http://x/v1",
+                                 embed_batch_size=16)
+        assert EmbeddingProviderFactory.create_from_config(cfg).get_embed_model().embed_batch_size == 16

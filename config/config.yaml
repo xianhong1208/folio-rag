@@ -60,6 +60,8 @@ rag:
     # e5 requires these prefixes; remove them for the bge family
     query_prefix: "query: "
     passage_prefix: "passage: "
+    embed_batch_size: 64                        # texts per embedding request
+    max_input_tokens: 512                       # model input window; breadcrumb / prefix are shortened to fit (never the chunk)
 
   # LLM — generates a context prefix for each chunk at index time (used by Contextual Retrieval)
   llm:

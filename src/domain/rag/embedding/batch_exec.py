@@ -13,7 +13,8 @@ from src.log import get_api_logger
 
 logger = get_api_logger()
 
-_EMBEDDING_BATCH_SIZE = 50
+# Texts per embedding batch when the model does not say (rag.embedding.embed_batch_size).
+_EMBEDDING_BATCH_SIZE = 64
 
 _EMBED_RETRY_ATTEMPTS = 3
 _EMBED_RETRY_BASE_DELAY = 1.0  # seconds; doubles per attempt
