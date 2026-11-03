@@ -5,15 +5,22 @@ Manages the lifecycle and caching of PGVector stores for different folders.
 Each folder gets its own isolated vector store identified by vector_table_uuid.
 """
 
-from typing import Dict, Optional
+import asyncio
+import threading
+from collections import OrderedDict
+from typing import Optional
 from llama_index.vector_stores.postgres import PGVectorStore
 from sqlalchemy import make_url, text
-from db.db import get_engine
+from db.db import get_async_engine, get_engine, pool_kwargs
 from src.utils.db_url import resolve_db_url
 from src.log import get_api_logger
 from src.config.config_manager import Config
 
 logger = get_api_logger()
+
+# Strong references to scheduled async-engine disposals (a bare create_task result
+# can be garbage-collected before it runs).
+_PENDING_DISPOSALS: set = set()
 
 # Column llama-index's PGVectorStore uses for the FTS tsvector when
 # hybrid_search=True (llama-index 0.14 builds it as
@@ -202,11 +209,39 @@ def rebuild_text_search_tsv(
     return updated
 
 
+# Defaults when the database config section does not set them (see DatabaseConfig).
+DEFAULT_CACHE_SIZE = 64
+# Pool for a store's private engines in "per_folder" mode: one steady connection plus a
+# small burst, per engine (sync + async), so 64 cached folders hold at most ~384.
+_PER_FOLDER_POOL = {"pool_size": 1, "max_overflow": 2}
+
+
+def _cache_size_from(db_conf) -> int:
+    size = getattr(db_conf, "vector_store_cache_size", None)
+    return size if isinstance(size, int) and not isinstance(size, bool) and size > 0 \
+        else DEFAULT_CACHE_SIZE
+
+
+def _engine_mode_from(db_conf) -> str:
+    mode = getattr(db_conf, "vector_store_engines", None)
+    return mode if mode in ("shared", "per_folder") else "shared"
+
+
 class VectorStoreManager:
     """Manages PGVector store lifecycle and caching.
 
     Each folder gets its own store (table data_{folder_id}_{uuid}) configured for
-    hybrid (vector + BM25) search; created stores are cached per table name.
+    hybrid (vector + BM25) search. Stores are kept in a bounded LRU cache keyed by
+    table name.
+
+    Connections: by default every store is built on the two shared engines
+    (db.db.get_engine / get_async_engine), so the connection count is bounded by
+    those pools no matter how many folders are touched. Left to itself,
+    PGVectorStore.from_params creates a private sync AND async engine per store,
+    each with SQLAlchemy's default 5 + 10 pool, and the old unbounded dict never
+    released them: ~80-100 folders were enough to exhaust max_connections=200.
+    database.vector_store_engines = "per_folder" restores private engines, but with a
+    1 + 2 pool each, and they are disposed when the store leaves the cache.
     """
 
     def __init__(self, embed_dim: int, text_search_config: str = "simple", hybrid_search: bool = True):
@@ -219,52 +254,80 @@ class VectorStoreManager:
         self._embed_dim = embed_dim
         self._text_search_config = text_search_config
         self._hybrid_search = hybrid_search
-        self._vector_stores: Dict[str, PGVectorStore] = {}
+        # LRU: most recently used at the end. get_or_create may run on worker
+        # threads (adapters offload DB work), hence the lock.
+        self._vector_stores: "OrderedDict[str, PGVectorStore]" = OrderedDict()
+        self._lock = threading.Lock()
 
         # Get database URL from config
         config = Config.get_config_model()
         if config is None or config.database is None:
             raise RuntimeError("Database configuration is not loaded")
 
+        self._db_conf = config.database
         # Resolved once (database.port applied), same as every other connection path.
         self._db_url = resolve_db_url(config.database)
+        self._cache_size = _cache_size_from(config.database)
+        self._engine_mode = _engine_mode_from(config.database)
 
-        logger.info(f"VectorStoreManager initialized (embed_dim={embed_dim}, text_search_config={text_search_config}, hybrid_search={hybrid_search})")
+        logger.info(
+            f"VectorStoreManager initialized (embed_dim={embed_dim}, "
+            f"text_search_config={text_search_config}, hybrid_search={hybrid_search}, "
+            f"engines={self._engine_mode}, cache_size={self._cache_size})"
+        )
+
+    @property
+    def cache_size(self) -> int:
+        return self._cache_size
 
     def get_or_create(
         self,
         folder_id: int,
         vector_table_uuid: str
     ) -> PGVectorStore:
-        """Get existing vector store or create a new one (cache-aside)."""
+        """Get existing vector store or create a new one (cache-aside, LRU-bounded)."""
         table_name = f"{folder_id}_{vector_table_uuid}"
 
-        if table_name in self._vector_stores:
-            logger.debug(f"Vector store cache HIT: {table_name}")
-            return self._vector_stores[table_name]
+        with self._lock:
+            store = self._vector_stores.get(table_name)
+            if store is not None:
+                self._vector_stores.move_to_end(table_name)
+                logger.debug(f"Vector store cache HIT: {table_name}")
+                return store
 
         logger.debug(f"Vector store cache MISS: {table_name}, creating new one")
 
         try:
             vector_store = self._create_vector_store(table_name)
-            self._vector_stores[table_name] = vector_store
-
-            logger.info(
-                f"Vector store created successfully: {table_name} "
-                f"(folder_id={folder_id}, embed_dim={self._embed_dim})"
-            )
-
-            return vector_store
-
         except Exception as e:
             logger.error(f"Failed to create vector store for {table_name}: {e}")
             raise
 
+        evicted = []
+        with self._lock:
+            # Another thread may have created the same store meanwhile: keep theirs.
+            existing = self._vector_stores.get(table_name)
+            if existing is not None:
+                self._vector_stores.move_to_end(table_name)
+                evicted.append(vector_store)
+                vector_store = existing
+            else:
+                self._vector_stores[table_name] = vector_store
+                while len(self._vector_stores) > self._cache_size:
+                    old_name, old_store = self._vector_stores.popitem(last=False)
+                    logger.debug(f"Vector store cache EVICT: {old_name}")
+                    evicted.append(old_store)
+        for old_store in evicted:
+            self._release(old_store)
+
+        logger.info(
+            f"Vector store ready: {table_name} "
+            f"(folder_id={folder_id}, embed_dim={self._embed_dim})"
+        )
+        return vector_store
+
     def _create_vector_store(self, table_name: str) -> PGVectorStore:
         """Create a new PGVector store with hybrid search enabled."""
-        url = make_url(self._db_url)
-        port = url.port or 5432
-
         # Do not build the HNSW index through LlamaIndex — its internal SQL does not
         # quote identifiers containing UUID hyphens and breaks:
         #     CREATE INDEX IF NOT EXISTS data_2_b09d9acf-d049-...
@@ -272,31 +335,85 @@ class VectorStoreManager:
         # Instead, src/utils/db_bootstrap.py:_ensure_hnsw_indexes() scans all data_*
         # tables at server boot and adds HNSW indexes (idempotently), covering both
         # existing tables and tables for folders added later.
-        vector_store = PGVectorStore.from_params(
-            database=url.database,
-            host=url.host,
-            password=url.password,
-            port=int(port),
-            user=url.username,
+        common = dict(
             table_name=table_name,
             embed_dim=self._embed_dim,
             hybrid_search=self._hybrid_search,
             text_search_config=self._text_search_config,
         )
+        if self._engine_mode == "per_folder":
+            async_url = self._db_url.replace("postgresql://", "postgresql+asyncpg://", 1)
+            vector_store = PGVectorStore(
+                connection_string=self._db_url,
+                async_connection_string=async_url,
+                create_engine_kwargs=pool_kwargs(self._db_conf, **_PER_FOLDER_POOL),
+                **common,
+            )
+        else:
+            # PGVectorStore takes ready-made engines (both or neither); it then never
+            # creates its own. The connection strings are informational only, so
+            # they carry no password.
+            masked = make_url(self._db_url).render_as_string(hide_password=True)
+            vector_store = PGVectorStore(
+                connection_string=masked,
+                async_connection_string=masked,
+                engine=get_engine(),
+                async_engine=get_async_engine(),
+                **common,
+            )
 
         logger.debug(
             f"PGVector store created: table={table_name}, "
-            f"hybrid_search={self._hybrid_search}, embed_dim={self._embed_dim} "
+            f"hybrid_search={self._hybrid_search}, embed_dim={self._embed_dim}, "
+            f"engines={self._engine_mode} "
             f"(HNSW auto-managed at boot via db_bootstrap._ensure_hnsw_indexes)"
         )
 
         return vector_store
 
+    def _release(self, store) -> None:
+        """Dispose the engines a store owns ("per_folder" mode only).
+
+        Shared-mode stores run on db.db's engines, which outlive every store, so
+        dropping the reference is all there is to do. A private sync pool is closed
+        right away. A private async engine's connections must be closed on the event
+        loop that opened them: on a running loop the dispose is scheduled there; from
+        a worker thread the pool is dropped without closing (close=False) and asyncpg
+        closes the sockets as they are collected.
+        """
+        if self._engine_mode != "per_folder":
+            return
+        engine = getattr(store, "_engine", None)
+        async_engine = getattr(store, "_async_engine", None)
+        try:
+            if engine is not None:
+                engine.dispose()
+        except Exception as e:
+            logger.warning(f"Vector store sync engine dispose failed: {e}")
+        if async_engine is None:
+            return
+        try:
+            try:
+                loop = asyncio.get_running_loop()
+            except RuntimeError:
+                loop = None
+            if loop is not None:
+                task = loop.create_task(async_engine.dispose())
+                _PENDING_DISPOSALS.add(task)
+                task.add_done_callback(_PENDING_DISPOSALS.discard)
+            else:
+                async_engine.sync_engine.dispose(close=False)
+        except Exception as e:
+            logger.warning(f"Vector store async engine dispose failed: {e}")
+
     def clear_cache(self):
-        """Clear all cached vector stores."""
-        count = len(self._vector_stores)
-        self._vector_stores.clear()
-        logger.info(f"Vector store cache cleared ({count} entries removed)")
+        """Clear all cached vector stores, disposing any engines they own."""
+        with self._lock:
+            stores = list(self._vector_stores.values())
+            self._vector_stores.clear()
+        for store in stores:
+            self._release(store)
+        logger.info(f"Vector store cache cleared ({len(stores)} entries removed)")
 
     def update_embed_dim(self, embed_dim: int) -> None:
         """Change the embedding dimension at runtime (admin hot-change).
@@ -347,7 +464,10 @@ class VectorStoreManager:
     def drop_table(self, folder_id: int, vector_table_uuid) -> bool:
         """DROP a folder's pgvector table and clear the corresponding cache (use this when you have an instance)."""
         # cache key has no data_ prefix (see get_or_create); clear it to avoid a stale store pointing at the dropped table
-        self._vector_stores.pop(f"{folder_id}_{vector_table_uuid}", None)
+        with self._lock:
+            store = self._vector_stores.pop(f"{folder_id}_{vector_table_uuid}", None)
+        if store is not None:
+            self._release(store)
         return self.drop_table_by_name(self.physical_table_name(folder_id, vector_table_uuid))
 
     @staticmethod

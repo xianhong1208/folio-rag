@@ -225,6 +225,43 @@ def ensure_lookup_indexes_for_table(engine, table_name: str, logger=None) -> int
     return created
 
 
+# Data tables in the public schema that have an embedding column but no HNSW index.
+_TABLES_MISSING_HNSW = r"""
+    SELECT c.relname
+    FROM pg_class c
+    JOIN pg_namespace n ON n.oid = c.relnamespace
+    WHERE n.nspname = 'public' AND c.relkind = 'r'
+      AND c.relname LIKE 'data\_%' ESCAPE '\'
+      AND EXISTS (
+        SELECT 1 FROM pg_attribute a
+        WHERE a.attrelid = c.oid AND a.attname = 'embedding' AND NOT a.attisdropped)
+      AND NOT EXISTS (
+        SELECT 1 FROM pg_index i
+        JOIN pg_class ic ON ic.oid = i.indexrelid
+        JOIN pg_am am ON am.oid = ic.relam
+        WHERE i.indrelid = c.oid AND am.amname = 'hnsw')
+"""
+
+HNSW_SWEEP_SQL = r"""
+    DO $$
+    DECLARE
+      t TEXT;
+      new_cnt INT := 0;
+    BEGIN
+      FOR t IN """ + _TABLES_MISSING_HNSW + r"""
+      LOOP
+        EXECUTE format(
+          'CREATE INDEX IF NOT EXISTS %I ON %I USING hnsw (embedding vector_cosine_ops) WITH (m=16, ef_construction=64)',
+          t || '_hnsw_idx',
+          t
+        );
+        new_cnt := new_cnt + 1;
+      END LOOP;
+      RAISE NOTICE 'HNSW sweep done: % vector tables newly indexed', new_cnt;
+    END $$;
+"""
+
+
 def _ensure_hnsw_indexes(db_url: str, logger) -> None:
     """Create HNSW indexes on all PGVector data_* tables (idempotent; works around LlamaIndex's quoting bug).
 
@@ -237,35 +274,11 @@ def _ensure_hnsw_indexes(db_url: str, logger) -> None:
         logger: logger for server-facing logs.
     """
     engine = create_engine(db_url, isolation_level="AUTOCOMMIT")
-    sql = text("""
-        DO $$
-        DECLARE
-          t TEXT;
-          cnt INT := 0;
-          new_cnt INT := 0;
-        BEGIN
-          FOR t IN
-            SELECT tablename FROM pg_tables
-            WHERE schemaname = 'public' AND tablename LIKE 'data\\_%' ESCAPE '\\'
-          LOOP
-            cnt := cnt + 1;
-            -- check whether this table already has an HNSW index
-            IF NOT EXISTS (
-              SELECT 1 FROM pg_indexes
-              WHERE tablename = t
-                AND indexdef ILIKE '%USING hnsw%'
-            ) THEN
-              EXECUTE format(
-                'CREATE INDEX IF NOT EXISTS %I ON %I USING hnsw (embedding vector_cosine_ops) WITH (m=16, ef_construction=64)',
-                t || '_hnsw_idx',
-                t
-              );
-              new_cnt := new_cnt + 1;
-            END IF;
-          END LOOP;
-          RAISE NOTICE 'HNSW sweep done: % vector tables, % newly indexed', cnt, new_cnt;
-        END $$;
-    """)
+    # One round trip, and one catalog query inside it: an anti-join over pg_index /
+    # pg_am picks only the data_* tables that have no HNSW index yet, instead of
+    # scanning the pg_indexes view (which renders every index definition) once per
+    # table. Startup cost no longer grows with the number of already-indexed folders.
+    sql = text(HNSW_SWEEP_SQL)
     try:
         with engine.connect() as conn:
             conn.execute(sql)

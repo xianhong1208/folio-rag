@@ -3,10 +3,19 @@ database:
   url: "${DATABASE_URL:-postgresql://postgres:CHANGE_ME@localhost/agentic_rag}"
   port: 5444
   echo: false
-  pool_size: 5
+  # Two shared pools (sync psycopg2 + async asyncpg) serve the whole app, every
+  # folder's vector store included: at most 2 x (pool_size + max_overflow) connections.
+  pool_size: 10
   max_overflow: 10
   pool_timeout: 30
   pool_recycle: 3600
+  vector_store_engines: shared     # shared | per_folder (private 1+2 pools per cached folder)
+  vector_store_cache_size: 64      # LRU size for per-folder PGVectorStore objects
+  # Days kept in append-only tables (0 = keep for ever); purged at startup, then daily
+  retention:
+    index_jobs_days: 30            # finished indexing jobs
+    query_logs_days: 90            # query analytics
+    settings_audit_days: 365       # settings change history
 
 # Server Configuration
 server:
@@ -106,9 +115,11 @@ rag:
 
   # Indexing background-job behavior (auto-indexing of uploaded files goes through here)
   indexing:
-    # Max concurrent jobs (100 ≈ unlimited); lower it only on GPU OOM / OCR thrash (typically 4-8)
-    # env FOLIO_INDEXING_CONCURRENCY can override this at runtime
-    max_concurrent_jobs: 100
+    # Max files indexed at once across all jobs (1-32; typically 4-8). Higher values starve
+    # queries of DB connections, LLM capacity and threads. env FOLIO_INDEXING_CONCURRENCY overrides.
+    max_concurrent_jobs: 4
+    # Threads reserved for indexing's blocking work, apart from the query path's (1-64)
+    executor_workers: 16
     # Per-file / per-job indexing limit defaults to 10 days (see IndexingConfig in
     # src/config/model.py) — for large-file OCR on slow machines. Change the default
     # in model.py; do not override it here. For temporary tweaks use the env vars:
