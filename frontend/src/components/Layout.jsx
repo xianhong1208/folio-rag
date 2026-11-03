@@ -1,40 +1,13 @@
 import { NavLink, Outlet, useLocation } from 'react-router-dom'
 import { useEffect, useState } from 'react'
-import {
-  Home, Folder, Zap, Search, BarChart3, FlaskConical, Layers, Sparkles,
-  ListTree, ArrowDownUp, Mic, SlidersHorizontal, Activity, ScrollText, Sun, Moon, LogOut, Menu, ScanText,
-} from 'lucide-react'
+import { Home, Library, Search, BarChart3, SlidersHorizontal, Activity, Sun, Moon, LogOut, Menu } from 'lucide-react'
 import { useSession } from '../contexts/SessionContext'
 import { sessionLabel, expiresIn } from '../lib/session'
 import { saveTheme } from '../lib/theme'
+import { NAV, navEntryFor, activeTab, crumbs } from '../lib/nav'
+import PageCap from './PageCap'
 
-const NAV = [
-  { group: 'Console', items: [
-    { to: '/', end: true, icon: Home, label: 'Overview' },
-    { to: '/folders', icon: Folder, label: 'Folders' },
-    { to: '/jobs', icon: Zap, label: 'Index Jobs' },
-  ] },
-  { group: 'Search & Insights', items: [
-    { to: '/search', icon: Search, label: 'Search Playground' },
-    { to: '/analytics', icon: BarChart3, label: 'Query Analytics' },
-    { to: '/eval', icon: FlaskConical, label: 'Evaluation' },
-  ] },
-  { group: 'Settings', items: [
-    { to: '/settings/embedding', icon: Layers, label: 'Embedding' },
-    { to: '/settings/llm', icon: Sparkles, label: 'LLM' },
-    { to: '/settings/contextual', icon: ListTree, label: 'Contextual Retrieval' },
-    { to: '/settings/reranker', icon: ArrowDownUp, label: 'Reranker' },
-    { to: '/settings/parsing', icon: ScanText, label: 'Document Parsing' },
-    { to: '/settings/asr', icon: Mic, label: 'Speech-to-Text' },
-    { to: '/settings/retrieval', icon: SlidersHorizontal, label: 'Retrieval' },
-  ] },
-  { group: 'System', items: [
-    { to: '/health', icon: Activity, label: 'System Health' },
-    { to: '/audit', icon: ScrollText, label: 'Audit Log' },
-  ] },
-]
-
-const ALL = NAV.flatMap((g) => g.items)
+const ICONS = { overview: Home, library: Library, search: Search, insights: BarChart3, settings: SlidersHorizontal, system: Activity }
 
 function UserBadge() {
   const { session, isAdmin, logout } = useSession()
@@ -60,6 +33,17 @@ function UserBadge() {
   )
 }
 
+function SubTabs({ entry }) {
+  if (!entry.tabs) return null
+  return (
+    <nav className="subtabs" aria-label={entry.label}>
+      {entry.tabs.map((t) => (
+        <NavLink key={t.to} to={t.to} className={({ isActive }) => 'subtab' + (isActive ? ' active' : '')}>{t.label}</NavLink>
+      ))}
+    </nav>
+  )
+}
+
 export default function Layout() {
   const loc = useLocation()
   const [theme, setTheme] = useState(document.documentElement.className || 'dark')
@@ -73,9 +57,11 @@ export default function Layout() {
     return () => window.removeEventListener('keydown', onKey)
   }, [navOpen])
 
-  const active = [...ALL].sort((a, b) => b.to.length - a.to.length)
-    .find((i) => (i.end ? loc.pathname === '/' : loc.pathname.startsWith(i.to)))
-  const title = active ? active.label : 'Overview'
+  const entry = navEntryFor(loc.pathname)
+  const tab = activeTab(entry, loc.pathname)
+  const path = crumbs(loc.pathname)
+  // Settings draws its own caption + tab strip (its tabs are part of the form, not routes of their own).
+  const ownCaption = entry.key === 'overview' || entry.key === 'settings'
 
   const toggleTheme = () => {
     const next = theme === 'dark' ? 'light' : 'dark'
@@ -88,32 +74,26 @@ export default function Layout() {
     <>
       <aside id="sidebar" className={navOpen ? 'open' : undefined}>
         <div className="brand">
-          <div className="logo">Folio</div>
-          <div className="sub">Retrieval Terminal</div>
+          <div className="logo">Folio<span className="cursor blink">&#9613;</span></div>
+          <div className="sub">retrieval terminal</div>
         </div>
-        <nav>
-          {NAV.map((g) => (
-            <div key={g.group}>
-              <div className="nav-group">{g.group}</div>
-              {g.items.map((it) => {
-                const Icon = it.icon
-                return (
-                  <NavLink
-                    key={it.to}
-                    to={it.to}
-                    end={it.end}
-                    className={({ isActive }) => 'nav-item' + (isActive ? ' active' : '')}
-                  >
-                    <Icon strokeWidth={1.7} />
-                    {it.label}
-                  </NavLink>
-                )
-              })}
-            </div>
-          ))}
+        <nav className="side-nav">
+          {NAV.map((it, i) => {
+            const Icon = ICONS[it.key]
+            const active = it.key === entry.key
+            return (
+              <NavLink key={it.key} to={it.to} end={it.end} aria-current={active ? 'page' : undefined}
+                className={'nav-item' + (active ? ' active' : '')}>
+                <span className="nav-no">{String(i + 1).padStart(2, '0')}</span>
+                <Icon strokeWidth={1.7} />
+                <span className="nav-label">{it.label}</span>
+                {active && <span className="nav-caret blink" aria-hidden="true">&#9613;</span>}
+              </NavLink>
+            )
+          })}
         </nav>
         <div className="side-foot">
-          <div className="side-ver">Folio v1.1.0</div>
+          <div className="side-ver">folio v1.1.0</div>
           <button className="theme-btn" onClick={toggleTheme}>
             {theme === 'dark' ? <Sun size={14} /> : <Moon size={14} />}
             {theme === 'dark' ? 'Light' : 'Dark'}
@@ -129,11 +109,15 @@ export default function Layout() {
             aria-label="Open navigation" aria-controls="sidebar" aria-expanded={navOpen}>
             <Menu />
           </button>
-          <div className="title">{title}</div>
+          <div className="title crumbs" aria-label={tab ? tab.label : entry.label}>
+            {path.map((p, i) => <span key={i} className={i === path.length - 1 ? 'here' : undefined}>{p}</span>)}
+          </div>
           <div className="grow" />
           <UserBadge />
         </header>
         <div className="content">
+          {!ownCaption && <PageCap title={entry.label} query={entry.query} />}
+          {!ownCaption && <SubTabs entry={entry} />}
           <Outlet />
         </div>
       </main>
