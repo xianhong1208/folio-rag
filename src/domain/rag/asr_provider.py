@@ -100,8 +100,9 @@ def transcript_problem(text: str, seconds: float, speech: float) -> Optional[str
 
 
 def _fmt_ts(seconds: float) -> str:
-    seconds = int(seconds)
-    return f"{seconds // 3600:02d}:{seconds % 3600 // 60:02d}:{seconds % 60:02d}"
+    from src.domain.rag.audio_segments import fmt_timestamp
+
+    return fmt_timestamp(seconds)
 
 
 class OpenAICompatibleAsrProvider(AsrProvider):
@@ -214,7 +215,11 @@ class OpenAICompatibleAsrProvider(AsrProvider):
                                 progress_cb("loading", done, total)
                             except Exception:
                                 pass
-        return AsrResult(text="\n".join(t for t in texts if t), chunks=None)
+        from src.domain.rag.audio_segments import time_block_records
+
+        records = time_block_records(
+            [(start, end, text) for (_, start, end, _), text in zip(segments, texts)])
+        return AsrResult(text="\n".join(t for t in texts if t), chunks=records)
 
 
 def create_asr_provider(asr_cfg: "Optional[AsrConfig]") -> AsrProvider:
