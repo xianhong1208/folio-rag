@@ -283,3 +283,19 @@ def test_table_heads_need_same_headings():
             Document(text="d", metadata={}),
             Document(text="e", metadata={"table_part": 2, "headings": ["A"]})]
     assert _table_heads(docs) == [None, 0, None, None, None]
+
+
+async def test_parents_are_sized_with_the_chunk_tokenizer(env):
+    """Parents group leaves by real tokens: ~200-token CJK leaves, 1024 target -> 5 per parent."""
+    from src.domain.rag.chunk_tokenizer import get_chunk_tokenizer
+
+    tok = get_chunk_tokenizer(None)
+    sent = "第{}條員工因公出差者，應於出發前三日內檢具出差申請單，經直屬主管核准後始得辦理。"
+    chunks = [{"text": "".join(sent.format(i * 10 + k) for k in range(6)), "headings": ["Rules"]}
+              for i in range(10)]
+    sizes = {len(tok.encode(c["text"])) for c in chunks}
+    assert max(sizes) <= 205
+    doc = Document(text="full", metadata={"file_id": "P1", "file_name": "Rules.docx",
+                                          "_docling_chunks": chunks})
+    stats = await _index(env, doc)
+    assert stats["parents"] == 2
