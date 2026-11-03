@@ -14,3 +14,21 @@ export function needsReindex(f) {
 export function countNeedsReindex(files) {
   return (files || []).filter(needsReindex).length
 }
+
+// Folder list: the server's per-folder count of files needing a re-index.
+export function folderStaleCount(folder) {
+  return (folder && folder.reindex_recommended_files) || 0
+}
+
+export function staleFileIds(files) {
+  return (files || []).filter(needsReindex).map((f) => f.id)
+}
+
+// POST /folders/{id}/retry takes at most this many file_ids per request.
+export const RETRY_BATCH = 1000
+
+export function batches(ids, size = RETRY_BATCH) {
+  const out = []
+  for (let i = 0; i < ids.length; i += size) out.push(ids.slice(i, i + size))
+  return out
+}

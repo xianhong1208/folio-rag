@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { isPartial, needsReindex, countNeedsReindex } from './fileStatus'
+import { isPartial, needsReindex, countNeedsReindex, folderStaleCount, staleFileIds, batches, RETRY_BATCH } from './fileStatus'
 
 describe('isPartial', () => {
   it('flags an indexed file that carries a parse warning', () => {
@@ -22,5 +22,29 @@ describe('needsReindex', () => {
   it('counts stale files', () => {
     expect(countNeedsReindex([{ status: 'indexed', reindex_recommended: true }, { status: 'indexed' }])).toBe(1)
     expect(countNeedsReindex(null)).toBe(0)
+  })
+})
+
+describe('folder list stale count', () => {
+  it('reads the server count, defaulting to 0', () => {
+    expect(folderStaleCount({ reindex_recommended_files: 12 })).toBe(12)
+    expect(folderStaleCount({})).toBe(0)
+    expect(folderStaleCount(null)).toBe(0)
+  })
+  it('picks the ids of stale files only', () => {
+    const files = [
+      { id: 'a', status: 'indexed', reindex_recommended: true },
+      { id: 'b', status: 'indexed', reindex_recommended: false },
+      { id: 'c', status: 'failed', reindex_recommended: true },
+      { id: 'd', status: 'indexed', reindex_recommended: true },
+    ]
+    expect(staleFileIds(files)).toEqual(['a', 'd'])
+    expect(staleFileIds(undefined)).toEqual([])
+  })
+  it('splits ids into retry-sized batches', () => {
+    expect(batches([1, 2, 3, 4, 5], 2)).toEqual([[1, 2], [3, 4], [5]])
+    expect(batches([], 2)).toEqual([])
+    const ids = Array.from({ length: RETRY_BATCH + 1 }, (_, i) => i)
+    expect(batches(ids).map((b) => b.length)).toEqual([RETRY_BATCH, 1])
   })
 })

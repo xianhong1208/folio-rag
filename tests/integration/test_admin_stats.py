@@ -119,6 +119,50 @@ class TestPipelineVersionAndWarning:
         assert me["warning"] is None and me["reindex_recommended"] is False
 
 
+    def test_folder_list_counts_files_needing_reindex(self, itest_db, folder):
+        """reindex_recommended_files: indexed files from an older (or unrecorded) pipeline only."""
+        import uuid as _uuid
+        from db import admin_stats
+        from db.filedb import FileDB
+        from db.fileindexdb import FileIndexDB
+        from db.folderdb import FolderDB
+        from src.domain.rag.chunk_identity import CHUNK_PIPELINE_VERSION
+
+        def add(f, version, failed=False):
+            row = FileDB.create(folder_id=f.id, file_name="x.txt",
+                                file_path=f"/tmp/itest/{_uuid.uuid4().hex}",
+                                file_size=1, mime_type="text/plain")
+            if failed:
+                FileIndexDB.mark_failed(row.id, "boom", folder_id=f.id)
+                return
+            FileIndexDB.upsert_indexed(
+                file_id=row.id, folder_id=f.id, index_id="x", vector_store_table="t",
+                num_chunks=1, embedding_model="m", chunk_size=256, chunk_overlap=0,
+                pipeline_version=version)
+
+        add(folder, None)                    # before versions were recorded -> stale
+        add(folder, "2")                     # older pipeline -> stale
+        add(folder, CHUNK_PIPELINE_VERSION)  # current -> fine
+        add(folder, None, failed=True)       # not indexed -> needs a retry, not a re-index
+        other = FolderDB.create(name=f"itest-{_uuid.uuid4().hex[:8]}", description="",
+                                user_token="someone-else")
+        add(other, "1")
+
+        def row(owner):
+            return {f["id"]: f for f in admin_stats.folders_with_index_stats(owner=owner)}
+
+        mine = row("itest-token")
+        assert mine[folder.id]["reindex_recommended_files"] == 2
+        assert mine[folder.id]["indexed_files"] == 3 and mine[folder.id]["failed_files"] == 1
+        assert other.id not in mine  # never another owner's folder
+        assert row("someone-else")[other.id]["reindex_recommended_files"] == 1
+
+    def test_folder_without_index_rows_counts_zero(self, itest_db, folder):
+        from db import admin_stats
+        me = next(f for f in admin_stats.folders_with_index_stats(owner="itest-token")
+                  if f["id"] == folder.id)
+        assert me["reindex_recommended_files"] == 0
+
 class TestSystemResources:
     def test_vector_table_sizes_in_one_query(self, itest_db):
         """Counts and sizes every data_* table (the per-table loop became one query)."""
