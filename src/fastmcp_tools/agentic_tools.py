@@ -26,7 +26,7 @@ from typing import Dict, List, Optional
 
 from fastmcp import FastMCP
 from fastmcp.utilities.types import File
-from mcp.types import Annotations
+from mcp.types import Annotations, TextContent
 
 from collections import Counter
 
@@ -132,6 +132,17 @@ def _format_summary_box(
     lines.append("")
 
     return "\n".join(lines)
+
+
+def _json_block(payload: dict) -> TextContent:
+    """The tool's JSON payload as an explicit MCP text block.
+
+    FastMCP serialises a returned list that holds only plain strings as ONE JSON
+    array, so a bare ``[json.dumps(...)]`` reached clients double-encoded
+    (``["{\\"mode\\": …}"]``) whenever no file was attached. An explicit TextContent
+    is passed through as is, with or without RagFile blocks after it.
+    """
+    return TextContent(type="text", text=json.dumps(payload, ensure_ascii=False))
 
 
 def _format_search_body(response: dict) -> List[str]:
@@ -387,8 +398,8 @@ async def _query(
         offset: mode=read page start (chunk index).
 
     Returns:
-        ``list[str | RagFile]`` — the first element is a JSON string (metadata +
-        hits); subsequent elements are RagFile objects (only for mode=search with
+        ``list[TextContent | RagFile]`` — the first element is the JSON payload
+        (metadata + hits) as a text block; subsequent elements are RagFile objects (only for mode=search with
         return_resource_files enabled in config).
     """
     start = time.perf_counter()
@@ -414,7 +425,7 @@ async def _query(
             offset=offset,
         )
 
-        content_blocks: list = [json.dumps(response, ensure_ascii=False)]
+        content_blocks: list = [_json_block(response)]
 
         # Only search mode attaches artifacts (list/read do not need them)
         if mode == "search":
@@ -451,7 +462,7 @@ async def _query(
             response={}, attached_files=0, attached_bytes=0,
             elapsed_ms=elapsed_ms, error=error_msg,
         ))
-        return [json.dumps({"error": "unauthorized", "detail": str(exc)}, ensure_ascii=False)]
+        return [_json_block({"error": "unauthorized", "detail": str(exc)})]
 
     except UnauthorizedAccessError as exc:
         error_msg = f"ACL_DENY: {exc}"
@@ -461,7 +472,7 @@ async def _query(
             response={}, attached_files=0, attached_bytes=0,
             elapsed_ms=elapsed_ms, error=error_msg,
         ))
-        return [json.dumps({"error": "forbidden", "detail": str(exc)}, ensure_ascii=False)]
+        return [_json_block({"error": "forbidden", "detail": str(exc)})]
 
     except Exception as exc:
         error_msg = f"{type(exc).__name__}: {exc}"
@@ -472,10 +483,7 @@ async def _query(
             elapsed_ms=elapsed_ms, error=error_msg,
         ))
         logger.error("Tool exception traceback:", exc_info=True)
-        return [json.dumps(
-            {"error": "internal_error", "detail": f"Query failed: {exc}"},
-            ensure_ascii=False,
-        )]
+        return [_json_block({"error": "internal_error", "detail": f"Query failed: {exc}"})]
 
 
 def register_folder_tool(folder_name: str, folder_description: Optional[str], user_token: str) -> bool:
