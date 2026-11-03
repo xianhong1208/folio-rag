@@ -106,7 +106,8 @@ class FileIndex(Base):
 
     __table_args__ = (
         Index('idx_fileindices_folder_id', 'folder_id'),
-        Index('idx_fileindices_file_id', 'file_id'),
+        # No separate file_id index: unique=True above already creates one
+        # (idx_fileindices_file_id was dropped as a duplicate, 20261103d0b001).
         Index('idx_fileindices_status', 'status'),
     )
 
