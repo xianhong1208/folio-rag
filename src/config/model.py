@@ -252,7 +252,9 @@ class RAGRetrievalConfig(BaseModel):
     return_resource_files: bool = False
     auto_merging: Optional[AutoMergingConfig] = None
     expand_context_default: bool = True
-    expand_context_neighbors: int = 2
+    # Leaves of context on each side of an unmerged hit (MCP search). Windows stay
+    # inside the hit's section and adjacent windows of a file are merged.
+    expand_context_neighbors: int = 1
     # Max concurrent queries (REST + MCP share one semaphore; excess is queued). 8 keeps every
     # connection pool (5+10 each) within headroom.
     max_concurrent_queries: int = 8
