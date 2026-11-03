@@ -111,7 +111,7 @@ class TestQueryBackend:
         blocks, kw = await self._call(_cfg(default_top_k=4), {"mode": "search", "results": []},
                                       mode="read", offset=30)
         assert kw["top_k"] == 4 and kw["expand_context"] is False and kw["offset"] == 30
-        assert json.loads(blocks[0])["mode"] == "search" and len(blocks) == 1
+        assert json.loads(blocks[0].text)["mode"] == "search" and len(blocks) == 1
 
     async def test_no_resource_files_by_default(self):
         resp = {"results": [{"file_id": "f1"}]}
@@ -138,7 +138,7 @@ class TestQueryBackend:
              patch.object(at, "get_rag_adapter", return_value=adapter):
             blocks = await at._query(folder_name="docs", mode="search", query="q", file_id=None,
                                      top_k=None, similarity_cutoff=None, expand_context=None)
-        assert json.loads(blocks[0])["error"] == "forbidden"
+        assert json.loads(blocks[0].text)["error"] == "forbidden"
 
 
 class TestResourceFiles:
@@ -172,3 +172,38 @@ class TestResourceFiles:
         with patch.object(at.FileDB, "get_by_ids", return_value={"f1": self._record()}), \
              patch.object(at.FileStorage, "read_file", side_effect=OSError("gone")):
             assert at._build_resource_files(resp) == []
+
+
+class TestWireFormat:
+    """What an MCP client actually receives (regression: payload double-encoded as a JSON array)."""
+
+    async def _client_text(self, return_resource_files):
+        from fastmcp import Client, FastMCP
+
+        adapter = MagicMock()
+        adapter.query = AsyncMock(return_value={"mode": "search", "results": [{"file_id": "f1"}]})
+        mcp = FastMCP("t")
+
+        @mcp.tool
+        async def probe() -> list:
+            return await at._query(folder_name="docs", mode="search", query="q", file_id=None,
+                                   top_k=None, similarity_cutoff=None, expand_context=None)
+
+        f = at.RagFile(data=b"abc", format="txt", name="a", mime_type="text/plain")
+        with patch(_CFG, return_value=_cfg(return_resource_files=return_resource_files)), \
+             patch.object(at, "extract_token", return_value="tok"), \
+             patch.object(at, "get_rag_adapter", return_value=adapter), \
+             patch.object(at, "_build_resource_files", return_value=[f]):
+            async with Client(mcp) as c:
+                r = await c.call_tool("probe", {})
+        return r.content
+
+    async def test_payload_is_a_json_object_without_attachments(self):
+        content = await self._client_text(return_resource_files=False)
+        assert len(content) == 1 and content[0].type == "text"
+        assert json.loads(content[0].text)["mode"] == "search"  # an object, not ["{...}"]
+
+    async def test_payload_is_a_json_object_with_attachments(self):
+        content = await self._client_text(return_resource_files=True)
+        assert content[0].type == "text" and json.loads(content[0].text)["mode"] == "search"
+        assert content[1].type == "resource"
