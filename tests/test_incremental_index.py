@@ -182,3 +182,51 @@ async def test_segmented_mode_uses_the_configured_segmenter_and_stamps(env, monk
     await _index(env, _doc())
     assert seen["cfg"] == "simple" and seen["name"] == "bigram"
     assert seen["segment"] == seg.segment_batch
+
+
+async def test_failed_prefixes_surface_as_file_warning(env):
+    async def _fail_one(chunks, **kw):
+        return [None if "warranty" in c else "ok" for c in chunks]
+
+    env.gen.generate_prefixes = lambda chunks, full_document, file_name, **kw: _fail_one(chunks)
+    stats = await _index(env, _doc())
+    assert stats["prefix_failures"] == 1
+    assert stats["warning"].startswith("1 of 3 chunks lack a context prefix")
+
+
+async def test_parse_warning_and_prefix_warning_are_joined(env):
+    async def _fail_all(chunks, **kw):
+        return [None] * len(chunks)
+
+    env.gen.generate_prefixes = lambda chunks, full_document, file_name, **kw: _fail_all(chunks)
+    doc = _doc()
+    doc.metadata["_parse_warning"] = "Pages 3 could not be parsed"
+    stats = await _index(env, doc)
+    assert stats["warning"].startswith("Pages 3 could not be parsed; 3 of 3 chunks")
+
+
+async def test_no_warning_when_every_prefix_succeeds(env):
+    stats = await _index(env, _doc())
+    assert stats["prefix_failures"] == 0 and stats["warning"] is None
+
+
+async def test_whitespace_only_prefix_is_not_cached(env):
+    async def _blank(chunks, **kw):
+        return ["  \x00 "] * len(chunks)
+
+    env.gen.generate_prefixes = lambda chunks, full_document, file_name, **kw: _blank(chunks)
+    stats = await _index(env, _doc())
+    assert stats["prefix_failures"] == 3
+    leaves = [n for n in env.store.rows["F1"] if n.metadata["node_role"] == "leaf"]
+    assert all("ctx_key" not in n.metadata for n in leaves)
+
+
+async def test_empty_prefix_cached_by_an_older_version_is_regenerated(env):
+    await _index(env, _doc())
+    # Simulate rows written by the old code: an empty prefix stamped with the live key.
+    for n in env.store.rows["F1"]:
+        if n.metadata["node_role"] == "leaf" and "warranty" in n.text:
+            n.metadata["context_prefix"] = ""
+    again = await _index(env, _doc())
+    assert again["llm_calls"] == 1
+    assert env.gen.calls == ["The hardware warranty is 36 months."]

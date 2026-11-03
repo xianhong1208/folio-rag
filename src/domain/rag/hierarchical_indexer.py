@@ -139,6 +139,19 @@ except Exception:
 
 
 
+def _prefix_warning(failed: int, total: int) -> Optional[str]:
+    """File warning for chunks indexed without their contextual prefix."""
+    if not failed:
+        return None
+    return (f"{failed} of {total} chunks lack a context prefix (the model gave no usable "
+            "answer) — re-index the file to retry them")
+
+
+def _join_warnings(*warnings: Optional[str]) -> Optional[str]:
+    parts = [w for w in warnings if w]
+    return "; ".join(parts) if parts else None
+
+
 class HierarchicalIndexer:
     """Integrated indexer: Docling + hierarchy + contextual retrieval."""
 
@@ -236,7 +249,8 @@ class HierarchicalIndexer:
         their contextual prefix and embedding (see chunk_store.fetch_reusable), and the
         file's rows are swapped in one transaction.
 
-        Returns {"leaves", "parents", "llm_calls", "embedded", "pipeline_version", "warning"}.
+        Returns {"leaves", "parents", "llm_calls", "embedded", "pipeline_version",
+        "prefix_failures", "warning"}.
         """
         file_name = document.metadata.get("file_name", "unknown")
 
@@ -283,13 +297,17 @@ class HierarchicalIndexer:
         need_llm: List[int] = []
         for i, chash in enumerate(hashes):
             old = reusable.get(chash)
-            if old is not None and old.get("ctx_key") == ctx_key:
+            # An empty stored prefix under a live generator's key is a failure that an
+            # older version cached (it stamped ctx_key on a discarded answer): regenerate.
+            if (old is not None and old.get("ctx_key") == ctx_key
+                    and (old.get("context_prefix") or ctx_key == "off")):
                 prefixes[i] = old.get("context_prefix") or ""
             elif not self._context_generator or not document.text:
                 prefixes[i] = ""
             else:
                 need_llm.append(i)
         n_reused_prefix = n_chunks - len(need_llm)
+        n_prefix_failed = 0
 
         if need_llm:
             _raise_if_aborted(should_abort, file_name, "contextualizing")
@@ -318,7 +336,16 @@ class HierarchicalIndexer:
             _raise_if_aborted(should_abort, file_name, "contextualizing")
             for i, prefix in zip(need_llm, generated):
                 # Reasoning models occasionally emit control characters: clean before PGVector.
-                prefixes[i] = None if prefix is None else self._clean_text(prefix).strip()
+                cleaned = None if prefix is None else self._clean_text(prefix).strip()
+                # Empty after cleaning is a failure too: never cache it under ctx_key.
+                prefixes[i] = cleaned or None
+            n_prefix_failed = sum(1 for i in need_llm if prefixes[i] is None)
+            if n_prefix_failed:
+                logger.warning(
+                    f"{file_name}: {n_prefix_failed} of {len(need_llm)} chunk(s) got no "
+                    "contextual prefix (no usable answer from the model); indexed without "
+                    "one — a re-index retries them"
+                )
             logger.info(f"Contextual prefixes generated for {len(need_llm)} leaves ({file_name})")
 
         for ld, prefix in zip(leaf_docs, prefixes):
@@ -461,6 +488,11 @@ class HierarchicalIndexer:
             "llm_calls": len(need_llm),
             "embedded": n_leaves,
             "pipeline_version": CHUNK_PIPELINE_VERSION,
-            # Parse caveat from the loader (pages docling could not parse), for the file record.
-            "warning": document.metadata.get("_parse_warning"),
+            "prefix_failures": n_prefix_failed,
+            # Caveats for the file record: pages the parser could not read, chunks that
+            # are indexed without their contextual prefix.
+            "warning": _join_warnings(
+                document.metadata.get("_parse_warning"),
+                _prefix_warning(n_prefix_failed, n_chunks),
+            ),
         }
