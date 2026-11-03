@@ -178,14 +178,19 @@ rag:
 
     # Context Expansion — automatically expand neighbors for leaves that were not merged
     expand_context_default: true
-    expand_context_neighbors: 5                 # expand N neighbors on each side: answers often span paragraphs → raise it; returns too cluttered → lower it
+    expand_context_neighbors: 1                 # expand N neighbors on each side (clipped to the hit's section; adjacent windows merge): answers often span paragraphs → raise it; returns too cluttered → lower it
+
+    # MCP search response budget (estimated tokens; CJK ≈ 0.7/char, other ≈ 0.25/char):
+    # the lowest-ranked results are dropped to fit and the response says so. 0 = no budget
+    mcp_response_token_budget: 6000
 
     # Max concurrent queries (shared by REST+MCP; excess queues rather than being dropped)
     # Based on the DB pools: sync 5+10 / async 5+10 / per-folder PGVector 5+10 — 8 concurrent leaves each pool headroom
     # Queries queue often → raise it (and bump database.pool_size together); DB connections tight → lower it
     max_concurrent_queries: 8
 
-    return_resource_files: true                 # whether query results include a download link to the original document
+    return_resource_files: false                # MCP search: also attach the top hit's original file (only it, and only up to resource_file_max_bytes)
+    resource_file_max_bytes: 1000000
 
 # Modules — rag is split into three modules: rag_indexing (indexing API) / rag_query (query REST) / rag (MCP tools)
 modules:

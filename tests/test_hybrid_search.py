@@ -170,31 +170,116 @@ class TestSearch:
 
 # ------------------------------------------------------- dense / sparse
 
-class _Recorder:
-    """Stands in for VectorIndexRetriever; records (mode, query)."""
+class _DenseConn:
+    """Async connection stub for the dense query: records statements, returns rows."""
 
-    def __init__(self, hits_by_mode):
-        self.hits_by_mode = hits_by_mode
+    def __init__(self, rows):
+        self.rows = rows
         self.calls = []
 
-    def __call__(self, index=None, similarity_top_k=None, vector_store_query_mode=None, **kw):
-        rec = self
+    async def __aenter__(self):
+        return self
 
-        class _R:
-            async def aretrieve(self_inner, q):
-                rec.calls.append((vector_store_query_mode, q, similarity_top_k, kw))
-                return list(rec.hits_by_mode.get(vector_store_query_mode, []))
+    async def __aexit__(self, *a):
+        return False
 
-        return _R()
+    async def execute(self, stmt, params=None):
+        self.calls.append((str(stmt), dict(params or {})))
+        if "SET LOCAL" in str(stmt):
+            return SimpleNamespace(fetchall=lambda: [])
+        k = (params or {}).get("k", len(self.rows))
+        return SimpleNamespace(fetchall=lambda: self.rows[:k])
+
+
+def fake_dense_engine(rows):
+    """(engine, conn): ``engine.begin()`` yields a transaction-scoped connection stub."""
+    conn = _DenseConn(rows)
+    engine = MagicMock()
+    engine.begin.return_value = conn
+    return engine, conn
+
+
+def _dense_row(nid, sim, role="leaf"):
+    meta = {"file_id": "f1"}
+    if role is not None:
+        meta["node_role"] = role
+    return (nid, f"text {nid}", meta, sim)
 
 
 class TestDense:
+    def _searcher(self, rows):
+        s = HybridSearcher(MagicMock(table_name="data_1_x"), index=MagicMock())
+        s.embed_query = AsyncMock(return_value=[0.5, -0.25])
+        engine, conn = fake_dense_engine(rows)
+        s._dense_engine = MagicMock(return_value=engine)
+        return s, conn
+
     async def test_dense_keeps_leaves_only(self):
-        rec = _Recorder({"default": [nws("a"), nws("p", role="parent"), nws("old", role=None)]})
-        s = HybridSearcher(MagicMock(), index=MagicMock())
-        with patch("llama_index.core.retrievers.VectorIndexRetriever", rec):
-            assert ids(await s.dense("q", 5)) == ["a", "old"]
-        assert rec.calls[0][0] == "default"
+        s, _ = self._searcher([_dense_row("a", 0.9), _dense_row("p", 0.8, role="parent"),
+                               _dense_row("old", 0.7, role=None)])
+        out = await s.dense("q", 5)
+        assert ids(out) == ["a", "old"]
+        assert out[0].score == pytest.approx(0.9)
+
+    async def test_ef_search_is_raised_transaction_locally_to_k(self):
+        s, conn = self._searcher([_dense_row(str(i), 0.5) for i in range(60)])
+        out = await s.dense("q", 60)
+        assert len(out) == 60                                   # not cut at 40
+        set_sql, _ = conn.calls[0]
+        assert set_sql == "SET LOCAL hnsw.ef_search = 60"       # LOCAL: never leaks
+        sql, params = conn.calls[1]
+        assert params["k"] == 60 and params["emb"] == "[0.5,-0.25]"
+        assert '"data_1_x"' in sql and "<=>" in sql
+
+    async def test_ef_search_never_below_pgvector_default(self):
+        s, conn = self._searcher([_dense_row("a", 0.5)])
+        await s.dense("q", 3)
+        assert conn.calls[0][0] == f"SET LOCAL hnsw.ef_search = {hs.DEFAULT_EF_SEARCH}"
+
+    async def test_embed_query_uses_the_index_embed_model(self):
+        index = MagicMock()
+        index._embed_model.aget_query_embedding = AsyncMock(return_value=[1.0])
+        s = HybridSearcher(MagicMock(), index=index)
+        assert await s.embed_query("hello") == [1.0]
+        index._embed_model.aget_query_embedding.assert_awaited_once_with("hello")
+
+    def test_dense_engine_falls_back_to_shared_engine(self):
+        s = HybridSearcher(MagicMock(), index=MagicMock())      # MagicMock is no AsyncEngine
+        with patch("db.db.get_async_engine", return_value="shared"):
+            assert s._dense_engine() == "shared"
+
+    def test_dense_engine_prefers_llama_index_engine(self):
+        from sqlalchemy.ext.asyncio import AsyncEngine
+
+        eng = MagicMock(spec=AsyncEngine)
+        s = HybridSearcher(MagicMock(_async_engine=eng), index=MagicMock())
+        assert s._dense_engine() is eng
+
+
+class TestScoreTypeAndTimings:
+    def test_score_type(self):
+        assert hs.SearchOutcome(nodes=[], reranked=True).score_type == "rerank"
+        assert hs.SearchOutcome(nodes=[]).score_type == "rrf"
+        assert hs.SearchOutcome(nodes=[], fusion="concat").score_type == "vector"
+        # a failed rerank leaves the fusion scores in place
+        assert hs.SearchOutcome(nodes=[], rerank_failed=True).score_type == "rrf"
+
+    async def test_search_records_stage_timings(self):
+        rr = FakeReranker({"a": 0.9})
+        s = searcher_with([nws("a")], [nws("a")], reranker=rr)
+        out = await s.search("q", SearchSettings(top_k=1))
+        assert {"fuse", "rerank"} <= set(out.timings)
+        assert all(v >= 0 for v in out.timings.values())
+        assert out.score_type == "rerank"
+
+    def test_record_stage_outside_a_search_is_a_noop(self):
+        hs.record_stage("dense", 0.0)                           # must not raise
+
+    async def test_concurrent_searches_keep_separate_timings(self):
+        s = searcher_with([nws("a")], [])
+        a, b = await asyncio.gather(s.search("q", SearchSettings(top_k=1)),
+                                    s.search("q", SearchSettings(top_k=1)))
+        assert a.timings is not b.timings
 
 
 # ------------------------------------------------- MCP uses the same path
@@ -206,21 +291,22 @@ class TestMcpUsesSharedPath:
 
         from tests.test_bm25_search import _row, _searcher_with_db
 
-        rec = _Recorder({"default": [nws("a", 0.8)]})
         seg = MagicMock()
         seg.segment.return_value = "退貨 政策"
-        searcher, conn, engine = _searcher_with_db({"'退貨' & '政策'": [_row("b", 2.0)]})
+        searcher, conn, engine = _searcher_with_db({"'退貨' | '政策'": [_row("b", 2.0)]})
         del searcher.segment_query                              # use the real one
+        searcher.dense = AsyncMock(return_value=[nws("a", 0.8)])
         retr = AutoMergingRetriever(MagicMock(), merge_threshold=1.1,
                                     expand_context_neighbors=0, searcher=searcher)
-        with patch("llama_index.core.retrievers.VectorIndexRetriever", rec), \
-             patch("src.domain.rag.text_segmenter.get_segmenter", return_value=seg), \
+        with patch("src.domain.rag.text_segmenter.get_segmenter", return_value=seg), \
              patch("db.db.get_async_engine", return_value=engine):
             out = await retr.aquery("退貨政策", SearchSettings(top_k=5), expand_context=False)
-        assert [c[0] for c in rec.calls] == ["default"]         # no native "hybrid"
-        assert conn.calls[0][1]["q"] == "'退貨' & '政策'"         # segmented BM25
+        assert searcher.dense.await_args.args[0] == "退貨政策"
+        bm25 = [p for sql, p in conn.calls if "q_any" in p][0]
+        assert bm25["q_all"] == "'退貨' & '政策'"                 # segmented BM25
         assert {r.node_id for r in out} == {"a", "b"}          # BM25 hit reaches agents
         assert retr.last_outcome is not None
+        assert {"merge"} <= set(retr.last_outcome.timings)
 
     async def test_keyword_args_still_accepted(self):
         from src.domain.rag.auto_merging import AutoMergingRetriever

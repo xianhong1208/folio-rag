@@ -158,9 +158,10 @@ class RAGAdapter:
         query: str,
         file_id: Optional[str],
         top_k: int,
-        similarity_cutoff: float,
+        similarity_cutoff: Optional[float],
         expand_context: bool,
         token: str,
+        offset: Optional[int] = None,
     ) -> Dict[str, Any]:
         """Delegates to RAGQueryService — MCP agentic three-mode (search / list / read)."""
         return await self._query_svc.query_agentic(
@@ -172,6 +173,7 @@ class RAGAdapter:
             similarity_cutoff=similarity_cutoff,
             expand_context=expand_context,
             token=token,
+            offset=offset,
         )
 
     async def delete_document_index(self, file_id: int, token: str) -> bool:

@@ -59,8 +59,11 @@ class TestH1LeafFilterInRestQuery:
                     node("parent", "P-superset", "00000000-0000-0000-0000-000000000002"),
                     node(None, "legacy", "00000000-0000-0000-0000-000000000003")]
         searcher.sparse = AsyncMock(return_value=[])  # BM25 leaf filtering is in SQL
-        with patch("llama_index.core.retrievers.VectorIndexRetriever") as R:
-            R.return_value.aretrieve = AsyncMock(side_effect=lambda *a, **k: _hits())
+        searcher.embed_query = AsyncMock(return_value=[0.1, 0.2])
+        rows = [(h.node.node_id, h.node.text, h.node.metadata, 0.9) for h in _hits()]
+        from tests.test_hybrid_search import fake_dense_engine
+        engine, _ = fake_dense_engine(rows)
+        with patch.object(searcher, "_dense_engine", return_value=engine):
             results = await qe.aquery("q", SearchSettings(top_k=5))
         texts = [r.text for r in results]
         assert "P-superset" not in texts          # parent filtered out

@@ -46,6 +46,8 @@ class RAGChunkMetadata(BaseModel):
     # leaves with their whole section (merged_from = how many leaves it replaced).
     node_role: Optional[str] = None
     merged_from: Optional[int] = None
+    # For a parent: [start, end) character offsets of the hit leaves inside ``text``.
+    hit_spans: Optional[List[List[int]]] = None
 
 
 class RAGSearchResult(BaseModel):

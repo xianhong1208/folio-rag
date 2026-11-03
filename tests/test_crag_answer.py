@@ -10,6 +10,7 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 from src.domain.rag import answer as crag
+from src.domain.rag.token_budget import estimate_tokens
 
 
 def _msg(content, finish="stop"):
@@ -183,3 +184,73 @@ def test_eval_question_prompt_is_language_neutral():
     prompt = client.chat.completions.create.call_args.kwargs["messages"][0]["content"]
     assert "same language as the excerpt" in prompt
     assert not any("一" <= ch <= "鿿" for ch in prompt.split("Excerpt:")[0])
+
+
+class TestExcerpts:
+    """Merged sections are 3-4k characters: grading and generation see the part
+    around the hit leaves (metadata.hit_spans), within a token budget."""
+
+    SECTION = "前言" * 1500 + "<HIT>年假七日</HIT>" + "附錄" * 1500
+
+    def _merged(self):
+        s = self.SECTION.index("<HIT>")
+        return {"text": self.SECTION, "score": 0.9,
+                "metadata": {"file_name": "p.pdf", "hit_spans": [[s, s + 15]]}}
+
+    def test_grade_texts_centre_on_the_hit(self):
+        (t,) = crag.grade_texts([self._merged()])
+        assert "<HIT>年假七日</HIT>" in t
+        assert estimate_tokens(t.replace("…", "")) <= crag.GRADE_TOKENS
+
+    def test_contexts_centre_on_the_hit_within_budget(self):
+        (c,) = crag.contexts_for([self._merged()], [True])
+        assert "<HIT>" in c.text and estimate_tokens(c.text.replace("…", "")) <= crag.CONTEXT_TOKENS
+        assert "<HIT>" in crag.answer_prompt("q", [c])
+
+    def test_without_spans_the_head_within_budget(self):
+        r = {"text": "長" * 5000, "metadata": {}}
+        (t,) = crag.grade_texts([r])
+        assert t == "長" * int(crag.GRADE_TOKENS / 0.7)
+
+    def test_prompts_cap_unexcerpted_text(self):
+        prompt = crag.grade_prompt("q", ["字" * 5000])
+        assert prompt.count("字") <= crag.GRADE_TOKENS / 0.7 + 1
+
+    def test_answer_flow_grades_the_excerpt(self):
+        client = MagicMock()
+        client.chat.completions.create.side_effect = [_msg("[true]"), _msg("Seven days [1].")]
+        out = crag.answer(client, "m", "年假幾天?", [self._merged()])
+        grade_prompt = client.chat.completions.create.call_args_list[0].kwargs["messages"][0]["content"]
+        assert "<HIT>" in grade_prompt and out["citations"] == [1]
+
+
+class TestHitSpans:
+    def test_spans_locate_leaves_in_the_parent(self):
+        from src.domain.rag.query_engine import hit_spans
+
+        parent = "alpha\n\nbeta gamma\n\ndelta"
+        assert hit_spans(parent, ["beta gamma", "delta"]) == [[7, 17], [19, 24]]
+
+    def test_prefixed_leaf_found_by_its_tail_and_missing_skipped(self):
+        from src.domain.rag.query_engine import hit_spans
+
+        body = "".join(chr(0x4E00 + i) for i in range(200))
+        parent = "head line here\n\n" + body + "\n\ntail"
+        start = parent.index(body)                                # 16
+        spans = hit_spans(parent, ["CTX: " + body, "nowhere", "", None])
+        assert spans == [[start - 5, start + 200]]                # tail-anchored
+        assert hit_spans("", ["a"]) == []
+
+    def test_merged_result_carries_spans(self):
+        from llama_index.core.schema import TextNode
+
+        from src.domain.rag.merge_plan import MergeGroup
+        from src.domain.rag.query_engine import _to_result
+        from tests.test_hybrid_search import nws
+
+        p = TextNode(id_="00000000-0000-0000-0000-0000000000aa", text="one\n\ntwo\n\nthree",
+                     metadata={"node_role": "parent", "file_id": "f", "file_name": "a"})
+        hits = [nws("00000000-0000-0000-0000-000000000001", 0.9, text="three"),
+                nws("00000000-0000-0000-0000-000000000002", 0.5, text="one")]
+        r = _to_result(MergeGroup(parent=p, hits=hits))
+        assert r.metadata.hit_spans == [[10, 15], [0, 3]] and r.metadata.merged_from == 2

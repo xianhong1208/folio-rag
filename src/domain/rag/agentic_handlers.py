@@ -21,7 +21,7 @@ from __future__ import annotations
 
 import time
 from collections import Counter
-from typing import List
+from typing import List, Optional
 
 from db.filedb import FileDB
 from db.fileindexdb import FileIndexDB
@@ -32,17 +32,144 @@ from src.log import get_mcptools_logger, log_err, log_op_debug, log_warn
 logger = get_mcptools_logger()
 
 
+# MCP search returns at most this many results (the REST API caps top_k the same way).
+MAX_TOP_K = 20
+
+_HINT_NO_RESULTS = (
+    "No matching passages. Rephrase the query with other keywords or synonyms "
+    "(e.g. the document's own terms), or use mode='list' to see which files exist.")
+_HINT_FEW = (
+    "Only {n} passage(s) matched. If they do not answer the question, rephrase the "
+    "query with more specific terms; do not read whole files to make up for it.")
+_HINT_OK = (
+    "Results are ranked best first (score_type={score_type}). Cite file_name and page. "
+    "Use mode='read' only when the user asks for a whole document.")
+_HINT_OMITTED = (
+    " {omitted} lower-ranked result(s) were left out to keep this response under "
+    "~{budget} tokens; ask a narrower query to surface them.")
+
+
+def clamp_top_k(top_k) -> int:
+    """top_k bounded to 1..MAX_TOP_K (a missing or invalid value counts as 1)."""
+    try:
+        return max(1, min(MAX_TOP_K, int(top_k)))
+    except (TypeError, ValueError):
+        return 1
+
+
+def score_type_of(retriever) -> str:
+    """``rerank`` / ``rrf`` / ``vector`` for the retriever's last search."""
+    outcome = getattr(retriever, "last_outcome", None)
+    st = getattr(outcome, "score_type", None)
+    return st if isinstance(st, str) else "rrf"
+
+
+def configured_response_budget() -> int:
+    """``rag.retrieval.mcp_response_token_budget`` (live); the default when unreadable."""
+    try:
+        from src.config.config_manager import Config
+
+        retrieval = Config.get_config_model().rag.retrieval
+        value = getattr(retrieval, "mcp_response_token_budget", DEFAULT_RESPONSE_BUDGET)
+        return int(value if value is not None else DEFAULT_RESPONSE_BUDGET)
+    except Exception:  # noqa: BLE001
+        return DEFAULT_RESPONSE_BUDGET
+
+
+DEFAULT_RESPONSE_BUDGET = 6000
+
+
+def result_dict(r: MergedResult) -> dict:
+    """One search hit as the agent sees it."""
+    out = {
+        "node_id": r.node_id,
+        "file_id": r.file_id,
+        "file_name": r.file_name,
+        "score": round(r.score, 4),
+        "node_role": r.node_role,
+        "chunk_index_range": r.chunk_index_range,
+        "text": r.text,
+    }
+    # Citation provenance: included only when present (older indexed data lacks this metadata)
+    if r.page is not None:
+        out["page"] = r.page
+    if r.headings:
+        out["headings"] = r.headings
+    # content_type ("table"/"picture") lets an MCP agent know a hit's text
+    # is a serialized table/figure, not prose — parity with the REST path.
+    content_type = getattr(r, "content_type", None)
+    if content_type:
+        out["content_type"] = content_type
+    merged = getattr(r, "merged_from_leaves", None) or []
+    if r.node_role == "parent":
+        out["merged_from_leaves"] = len(merged)
+    elif len(merged) > 1:
+        out["merged_hits"] = len(merged)      # one window covering several hits
+    return out
+
+
+def fit_to_budget(response: dict, budget: int) -> dict:
+    """Drop the lowest-ranked results until ``response`` fits ``budget`` estimated
+    tokens; when even the best result alone is too big, cut its text. Records
+    ``omitted_results`` / ``response_tokens_estimated`` on the response.
+    A budget of 0 (or less) disables the check.
+    """
+    import json
+
+    from src.domain.rag.token_budget import estimate_tokens, truncate_to_tokens
+
+    def size(obj) -> int:
+        return estimate_tokens(json.dumps(obj, ensure_ascii=False))
+
+    results = list(response.get("results") or [])
+    if budget <= 0 or not results:
+        response["response_tokens_estimated"] = size(response)
+        return response
+    # Room for the envelope and a hint that may grow by one sentence.
+    envelope = {k: v for k, v in response.items() if k != "results"}
+    used = size(envelope) + 80
+    kept = []
+    for r in results:
+        cost = size(r)
+        if used + cost > budget:
+            if not kept:
+                # The best hit alone does not fit: keep it, cut to what is left.
+                room = max(budget - used - size({**r, "text": ""}), 0)
+                text, _ = truncate_to_tokens(r.get("text") or "", room)
+                r = {**r, "text": text, "text_truncated": True}
+                kept.append(r)
+                used += size(r)
+            break
+        kept.append(r)
+        used += cost
+    omitted = len(results) - len(kept)
+    response["results"] = kept
+    response["total_results"] = len(kept)
+    if omitted:
+        response["omitted_results"] = omitted
+    response["response_tokens_estimated"] = size(response)
+    return response
+
+
 async def handle_search(
     *,
     query: str,
     folder,
     retriever: AutoMergingRetriever,
     top_k: int,
-    similarity_cutoff: float,
+    similarity_cutoff: Optional[float] = None,
     expand_context: bool,
+    token_budget: Optional[int] = None,
 ) -> dict:
-    """mode='search' — primary hybrid + auto-merge (async: retrieval runs off the event loop)."""
+    """mode='search' — primary hybrid + auto-merge (async: retrieval runs off the event loop).
+
+    ``similarity_cutoff`` is accepted for backward compatibility and ignored: the
+    ranking is rank fusion (+ rerank), whose scores a similarity threshold does
+    not apply to. ``token_budget`` (default ``rag.retrieval.mcp_response_token_budget``)
+    caps the estimated size of the response.
+    """
     start = time.perf_counter()
+    top_k = clamp_top_k(top_k)
 
     log_op_debug(
         logger,
@@ -50,7 +177,9 @@ async def handle_search(
         folder_id=folder.id,
         msg=(
             f"folder='{folder.name}' query='{query[:50]}{'...' if len(query) > 50 else ''}' "
-            f"top_k={top_k} cutoff={similarity_cutoff} expand_context={expand_context}"
+            f"top_k={top_k} expand_context={expand_context}"
+            + (f" similarity_cutoff={similarity_cutoff} (ignored)"
+               if similarity_cutoff is not None else "")
         ),
     )
 
@@ -81,7 +210,6 @@ async def handle_search(
         results: List[MergedResult] = await retriever.aquery(
             query_text=query,
             top_k=top_k,
-            similarity_cutoff=similarity_cutoff,
             expand_context=expand_context,
         )
     except Exception as exc:
@@ -106,58 +234,39 @@ async def handle_search(
     merged_leaves_total = sum(
         len(r.merged_from_leaves) for r in results if r.node_role == "parent"
     )
+    score_type = score_type_of(retriever)
 
     response = {
         "mode": "search",
         "query": query,
         "folder": folder.name,
+        "top_k": top_k,
+        # What "score" means: rerank = cross-encoder relevance (0..1);
+        # rrf = rank fusion (~0.01-0.03, compare only within one response).
+        "score_type": score_type,
         "total_results": len(results),
-        "results": [
-            {
-                "node_id": r.node_id,
-                "file_id": r.file_id,
-                "file_name": r.file_name,
-                "score": round(r.score, 4),
-                "node_role": r.node_role,
-                "chunk_index_range": r.chunk_index_range,
-                "text": r.text,
-                # Citation provenance: included only when present (older indexed data lacks this metadata)
-                **({"page": r.page} if r.page is not None else {}),
-                **({"headings": r.headings} if r.headings else {}),
-                # content_type ("table"/"picture") lets an MCP agent know a hit's text
-                # is a serialized table/figure, not prose — parity with the REST path.
-                **({"content_type": getattr(r, "content_type", None)}
-                   if getattr(r, "content_type", None) else {}),
-                **(
-                    {"merged_from_leaves": len(r.merged_from_leaves)}
-                    if r.node_role == "parent"
-                    else {}
-                ),
-            }
-            for r in results
-        ],
+        "results": [result_dict(r) for r in results],
     }
 
-    hint_reason = "normal"
     if not results:
-        response["_hint"] = (
-            "No results above similarity_cutoff. Try: lower cutoff, broaden query, "
-            "or use mode='list' to see what's available."
-        )
+        response["_hint"] = _HINT_NO_RESULTS
         hint_reason = "no_results"
     elif len(results) < top_k:
-        response["_hint"] = (
-            f"Only {len(results)} results above threshold. "
-            "Consider lowering similarity_cutoff or using mode='read' on most relevant file."
-        )
+        response["_hint"] = _HINT_FEW.format(n=len(results))
         hint_reason = "below_top_k"
     else:
-        response["_hint"] = (
-            "If results seem fragmented, try mode='read' with a relevant file_id "
-            "to load full document content."
-        )
+        response["_hint"] = _HINT_OK.format(score_type=score_type)
+        hint_reason = "normal"
+
+    budget = configured_response_budget() if token_budget is None else int(token_budget)
+    fit_to_budget(response, budget)
+    if response.get("omitted_results"):
+        response["_hint"] += _HINT_OMITTED.format(
+            omitted=response["omitted_results"], budget=budget)
+        hint_reason += "+budget"
 
     elapsed_ms = (time.perf_counter() - start) * 1000
+    timings = getattr(getattr(retriever, "last_outcome", None), "timings", None)
 
     log_op_debug(
         logger,
@@ -165,13 +274,16 @@ async def handle_search(
         folder_id=folder.id,
         msg=(
             f"results={len(results)} "
+            f"returned={response['total_results']} "
             f"roles={{leaf:{role_counts.get('leaf', 0)},"
             f"parent:{role_counts.get('parent', 0)}(merged_from_{merged_leaves_total}),"
             f"expanded:{role_counts.get('expanded', 0)}}} "
             f"unique_files={len(file_counts)} "
-            f"scores=[{score_stats}] "
+            f"scores=[{score_stats}] score_type={score_type} "
+            f"tokens~{response.get('response_tokens_estimated')} "
             f"hint={hint_reason} "
             f"elapsed={elapsed_ms:.0f}ms"
+            + (f" stages_ms={timings}" if isinstance(timings, dict) else "")
         ),
     )
 
@@ -212,6 +324,13 @@ def handle_list(*, folder) -> dict:
             msg=f"fallback to 'not_indexed' for all files: {e}",
         )
 
+    # Token estimates from the stored chunk text (one aggregate query); a file the
+    # query does not cover falls back to ~200 tokens per leaf chunk.
+    token_map = {}
+    if getattr(folder, "vector_table_uuid", None):
+        token_map = ChunkLookup.file_token_estimates(
+            f"data_{folder.id}_{folder.vector_table_uuid}")
+
     status_counts = Counter()
     total_chunks = 0
     file_list = []
@@ -221,9 +340,9 @@ def handle_list(*, folder) -> dict:
         status_counts[status] += 1
         total_chunks += chunk_count
 
-        # Rough estimate: ~200 tokens per leaf chunk (aligned with leaf_chunk_size 256).
-        # This is for the agent to judge whether it can read the whole file; precision isn't needed.
-        estimated_tokens = chunk_count * 200 if chunk_count > 0 else None
+        estimated_tokens = token_map.get(str(f.id))
+        if estimated_tokens is None:
+            estimated_tokens = chunk_count * 200 if chunk_count > 0 else None
         file_list.append({
             "file_id": str(f.id),
             "file_name": f.file_name,
@@ -241,8 +360,9 @@ def handle_list(*, folder) -> dict:
         "total_files": len(file_list),
         "files": file_list,
         "_hint": (
-            "Files with estimated_tokens < 30000 can be loaded fully via mode='read'. "
-            "For others, use mode='search' to find relevant sections."
+            f"mode='read' returns up to ~{READ_PAGE_TOKENS} tokens per call; a longer file "
+            "comes in pages (pass next_offset back as offset). To answer a question, "
+            "use mode='search' instead."
         ),
     }
 
@@ -262,26 +382,32 @@ def handle_list(*, folder) -> dict:
     return response
 
 
+READ_PAGE_TOKENS = 30000
+
+
 async def handle_read(
     *,
     file_id: str,
     folder,
     vector_store,
-    max_tokens: int = 30000,
+    max_tokens: int = READ_PAGE_TOKENS,
+    offset: Optional[int] = None,
 ) -> dict:
-    """mode='read' handler — load and return an entire file's content (use sparingly).
+    """mode='read' handler — return a file's content, one page at a time (use sparingly).
 
-    Verifies the file belongs to the current folder (prevents cross-folder access) and enforces a
-    max_tokens cap.
+    Verifies the file belongs to the current folder (prevents cross-folder access).
+    A page holds up to ``max_tokens`` (estimated); when the file continues, the
+    response carries ``next_offset`` — pass it back as ``offset`` for the next page.
 
     Args:
         file_id: UUID of the file to read.
         folder: The permission-validated Folder ORM.
         vector_store: PGVectorStore (taken from ctx, used for chunk lookup).
-        max_tokens: Content cap; truncates and marks truncated=True when exceeded.
+        max_tokens: Page size in estimated tokens.
+        offset: Chunk index to start from (0 / None = the beginning).
 
     Returns:
-        dict ``{content, truncated, file_name, ...}``.
+        dict ``{content, truncated, next_offset, file_name, ...}``.
     """
     start = time.perf_counter()
 
@@ -290,7 +416,7 @@ async def handle_read(
         "READ_START",
         folder_id=folder.id,
         file_id=file_id,
-        msg=f"folder='{folder.name}' max_tokens={max_tokens}",
+        msg=f"folder='{folder.name}' max_tokens={max_tokens} offset={offset or 0}",
     )
 
     if not file_id:
@@ -302,7 +428,14 @@ async def handle_read(
         )
         return {"mode": "read", "error": "file_id is required for read mode"}
 
-    file_records = FileDB.get_by_ids([file_id])
+    import asyncio
+
+    try:
+        offset = max(0, int(offset or 0))
+    except (TypeError, ValueError):
+        return {"mode": "read", "error": "offset must be a non-negative integer"}
+
+    file_records = await asyncio.to_thread(FileDB.get_by_ids, [file_id])
     file_record = file_records.get(file_id) if file_records else None
     if not file_record:
         log_warn(
@@ -330,12 +463,12 @@ async def handle_read(
 
     try:
         # Offload the sync SQL fetch (hundreds of ms for large files) to a thread to keep the loop free
-        import asyncio
         full = await asyncio.to_thread(
             ChunkLookup.fetch_file_full,
             vector_store=vector_store,
             file_id=file_id,
             max_tokens=max_tokens,
+            offset=offset,
         )
     except Exception as exc:
         log_err(
@@ -355,17 +488,17 @@ async def handle_read(
         "content": full["text"],
         "tokens_estimated": full["tokens_estimated"],
         "truncated": full["truncated"],
+        "offset": full.get("offset", offset),
+        "next_offset": full.get("next_offset"),
         "chunk_count": full["chunk_count"],
-        "_hint": (
-            "Truncated content — consider mode='search' for specific sections."
-            if full["truncated"]
-            else "Full content loaded."
-        ),
+        "total_chunks": full.get("total_chunks", full["chunk_count"]),
+        "_hint": _read_hint(full, offset),
     }
 
     elapsed_ms = (time.perf_counter() - start) * 1000
 
-    truncated_marker = " ⚠️TRUNCATED" if full["truncated"] else ""
+    truncated_marker = (f" ⚠️TRUNCATED next_offset={full.get('next_offset')}"
+                        if full["truncated"] else "")
     log_op_debug(
         logger,
         "READ_DONE",
@@ -379,3 +512,14 @@ async def handle_read(
     )
 
     return response
+
+
+def _read_hint(full: dict, offset: int) -> str:
+    if full.get("truncated"):
+        return (f"Page {offset}..{(full.get('next_offset') or 0) - 1} of "
+                f"{full.get('total_chunks')} chunks. Call again with "
+                f"offset={full.get('next_offset')} for the next page, or use mode='search' "
+                "for specific sections.")
+    if offset and not full.get("chunk_count"):
+        return "No content at this offset (past the end of the file)."
+    return "End of file." if offset else "Full content loaded."
