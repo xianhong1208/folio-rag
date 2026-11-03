@@ -69,6 +69,8 @@ rag:
     # e5 requires these prefixes; remove them for the bge family
     query_prefix: "query: "
     passage_prefix: "passage: "
+    embed_batch_size: 64                        # texts per embedding request
+    max_input_tokens: 512                       # model input window; breadcrumb / prefix are shortened to fit (never the chunk)
 
   # LLM — generates a context prefix for each chunk at index time (used by Contextual Retrieval)
   llm:
@@ -139,7 +141,8 @@ rag:
     enabled: true
     apply_to: "leaf"                            # leaf / parent / all
     max_context_length: 150                     # max prefix length (chars): too long dilutes the chunk body's vector
-    max_concurrent: 20                          # concurrent LLM requests: lower it if the vLLM backend overloads / returns 429
+    max_concurrent: 20                          # concurrent LLM requests per file: lower it if the vLLM backend overloads / returns 429
+    max_concurrent_global: 16                   # cap across all files indexed at once (process-wide)
     # Max full-text fed to the LLM (chars): the document + template + chunk must fit the LLM context; recompute when switching models
     # (60000 chars ≈ 72K tokens, safe for gpt-oss @100K context)
     max_doc_chars: 60000
@@ -166,6 +169,7 @@ rag:
     default_hybrid_alpha: 0.75                  # 0=pure BM25, 1=pure vector: lower it for term/code-heavy queries
     hybrid_search: true
     text_search_config: "simple"                # Postgres FTS config; Chinese is segmented in Python via CKIP (ckip-transformers), then tokenized here with `simple`
+    ckip_device: "cpu"                          # CKIP segmenter device: cpu / cuda / cuda:N / auto
 
     # Auto-Merging — automatically promote when multiple hit leaves share one parent
     auto_merging:

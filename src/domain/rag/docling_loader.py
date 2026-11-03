@@ -744,8 +744,70 @@ def _log_pipeline_devices(converter) -> None:
 # whose first 2 lines are the header to repeat on splits.
 _MD_TABLE_SEPARATOR_RE = re.compile(r'^\s*\|?\s*:?-+:?\s*(\|\s*:?-+:?\s*)+\|?\s*$')
 
-# Sentence terminators (CJK + ASCII), used when a single line is too big and has no row structure.
-_SENTENCE_SPLIT_RE = re.compile(r'(?<=[.!?。!?])\s+')
+# Sentence ends. CJK terminators (。！？；) end a sentence on their own: Chinese and
+# Japanese put no space after them, so requiring whitespace (as the old pattern did)
+# left a whole Chinese paragraph as one "sentence" that fell through to the character
+# split and was cut mid-clause. Latin terminators need following whitespace, so
+# decimals ("3.5"), version numbers and URLs stay whole. Closing quotes/brackets stay
+# with the sentence they close; trailing whitespace stays with the sentence too, so
+# concatenating the pieces gives back the original text.
+_SENTENCE_END_RE = re.compile(
+    r'[。！？；]+[」』）】》〉”’"\')]*\s*'
+    r'|[.!?]+["”’\')\]]*\s+'
+)
+# Clause ends, for a single sentence that is still over budget: CJK commas / colons
+# (no space needed) and Latin ones followed by whitespace.
+_CLAUSE_END_RE = re.compile(r'[，、：]\s*|[,:;]\s+')
+
+
+def _split_keep_ends(text: str, pattern: "re.Pattern[str]") -> List[str]:
+    """Split ``text`` after every match of ``pattern``, keeping the separator (and
+    its trailing whitespace) on the left piece. ``"".join(result) == text``."""
+    out: List[str] = []
+    start = 0
+    for m in pattern.finditer(text):
+        if m.end() > start:
+            out.append(text[start:m.end()])
+            start = m.end()
+    if start < len(text):
+        out.append(text[start:])
+    return out
+
+
+def _pack_balanced(counts: List[int], max_tokens: int) -> List[List[int]]:
+    """Group consecutive units (token counts given) into pieces of at most
+    ``max_tokens``, as evenly sized as the unit boundaries allow.
+
+    Plain greedy packing fills every piece to the brim and leaves a runt at the end
+    (242 + 45 tokens); here each piece aims at ``remaining / pieces still needed`` and
+    a unit goes to the next piece when that lands closer to the target. A unit larger
+    than ``max_tokens`` gets a piece of its own (callers pre-split those).
+    """
+    groups: List[List[int]] = []
+    cur: List[int] = []
+    cur_tokens = 0
+    remaining = sum(counts)
+
+    def _target() -> float:
+        pieces = max(1, -(-remaining // max(max_tokens, 1)))  # ceil
+        return remaining / pieces
+
+    target = _target()
+    for i, c in enumerate(counts):
+        if cur:
+            over_budget = cur_tokens + c > max_tokens
+            overshoot = cur_tokens + c - target
+            undershoot = target - cur_tokens
+            if over_budget or (overshoot > 0 and overshoot > undershoot):
+                groups.append(cur)
+                remaining -= cur_tokens
+                target = _target()
+                cur, cur_tokens = [], 0
+        cur.append(i)
+        cur_tokens += c
+    if cur:
+        groups.append(cur)
+    return groups
 
 
 def _detect_table_header(lines: List[str]) -> Optional[str]:
@@ -858,71 +920,120 @@ def _split_by_lines(
 
 
 def _split_by_sentence(text: str, tokenizer, max_tokens: int) -> List[str]:
-    """Mid-tier split: break a single line by sentence terminators.
+    """Mid-tier split: break a single line at sentence ends, then pack the
+    sentences into balanced pieces of at most ``max_tokens``.
 
     Reached when a single newline-bounded line is itself > max_tokens —
-    typical for long paragraphs without internal structure.
+    typical for long paragraphs without internal structure. A sentence that is
+    still too big is cut at clause ends (，、： / ", "), and only a clause that is
+    still too big falls to the character split.
     """
-    sentences = _SENTENCE_SPLIT_RE.split(text)
+    units: List[str] = []
+    for sent in _split_keep_ends(text, _SENTENCE_END_RE):
+        if not sent.strip():
+            continue
+        if _count_tokens(tokenizer, sent.strip()) <= max_tokens:
+            units.append(sent)
+            continue
+        for clause in _split_keep_ends(sent, _CLAUSE_END_RE):
+            if not clause.strip():
+                continue
+            if _count_tokens(tokenizer, clause.strip()) <= max_tokens:
+                units.append(clause)
+            else:
+                units.extend(_split_by_chars(clause, tokenizer, max_tokens))
+
+    counts = [_count_tokens(tokenizer, u.strip()) for u in units]
     out: List[str] = []
-    buf: List[str] = []
-    buf_tokens = 0
 
-    for sent in sentences:
-        sent = sent.strip()
-        if not sent:
-            continue
-        sent_tokens = _count_tokens(tokenizer, sent)
-        # Single sentence still too big — fall to char-level split
-        if sent_tokens > max_tokens:
-            if buf:
-                out.append(" ".join(buf))
-                buf, buf_tokens = [], 0
-            out.extend(_split_by_chars(sent, tokenizer, max_tokens))
-            continue
-        if buf_tokens + sent_tokens > max_tokens:
-            out.append(" ".join(buf))
-            buf, buf_tokens = [], 0
-        buf.append(sent)
-        buf_tokens += sent_tokens
+    def _emit(group: List[int]) -> None:
+        piece = "".join(units[i] for i in group).strip()
+        # The token count of a concatenation can exceed the sum of its parts by a
+        # token or two (word-start markers); halve such a group instead of overflowing.
+        if len(group) > 1 and _count_tokens(tokenizer, piece) > max_tokens:
+            mid = len(group) // 2
+            _emit(group[:mid])
+            _emit(group[mid:])
+            return
+        if piece:
+            out.append(piece)
 
-    if buf:
-        out.append(" ".join(buf))
+    for group in _pack_balanced(counts, max_tokens):
+        _emit(group)
     return out
+
+
+def _snap_to_space(text: str, start: int, cut: int) -> int:
+    """Move a cut back to just after the last whitespace in the final fifth of the
+    piece, so space-delimited text is not cut mid-word (CJK has no spaces: unchanged)."""
+    floor = start + (cut - start) * 4 // 5
+    ws = max(text.rfind(" ", floor, cut), text.rfind("\n", floor, cut))
+    return ws + 1 if ws >= floor and ws + 1 > start else cut
 
 
 def _split_by_chars(text: str, tokenizer, max_tokens: int) -> List[str]:
     """Last-resort character split with tokenizer verification.
 
-    Reached for pathological inputs: single sentences > max_tokens
-    (rare in zh / en, common for poorly punctuated dumps or numeric
-    sequences). We slice by an estimated char-per-token ratio, then
-    verify each slice; if the estimate undershot we halve and retry.
+    Reached for pathological inputs: a clause > max_tokens with no sentence or
+    clause punctuation (unpunctuated ASR output, numeric dumps). Each piece is the
+    longest prefix that fits (binary search on its length, one encode per step);
+    the cuts are then evened out so the last piece is no runt. A single character
+    over budget is emitted as-is (progress guarantee).
     """
-    out: List[str] = []
-    # Conservative CJK-friendly estimate: 1.5 chars per token. English
-    # would be ~3-4, but undershooting just causes one extra verify cycle.
-    chars_per_chunk = max(64, int(max_tokens * 1.5))
+    n = len(text)
+    # No tokenizer packs more than ~8 characters into a token in practice; bounding
+    # the search keeps encode calls short on huge unpunctuated dumps.
+    span = max(64, max_tokens * 8)
+
+    def fits(a: int, b: int) -> bool:
+        return _count_tokens(tokenizer, text[a:b]) <= max_tokens
+
+    cuts: List[int] = []
     i = 0
-    while i < len(text):
-        piece = text[i:i + chars_per_chunk]
-        if _count_tokens(tokenizer, piece) > max_tokens:
-            if chars_per_chunk <= 32:
-                # Progress guarantee: even at the 32-char floor it still exceeds budget (a pathological
-                # combination of a tiny max_tokens + high-token-density characters). Hard-cut, emit,
-                # and advance — better a slightly oversized single chunk than an infinite loop.
-                logger.warning(
-                    f"[CHUNK] 32-char piece still exceeds {max_tokens} tokens; "
-                    f"emitting oversized piece to guarantee progress"
-                )
-                out.append(piece)
-                i += chars_per_chunk
-                continue
-            # Estimate too generous — halve and retry without advancing
-            chars_per_chunk = max(32, chars_per_chunk // 2)
-            continue
-        out.append(piece)
-        i += chars_per_chunk
+    while i < n:
+        hi = min(n, i + span)
+        if fits(i, hi):
+            j = hi
+        elif not fits(i, i + 1):
+            logger.warning(
+                f"[CHUNK] a single character exceeds {max_tokens} tokens; "
+                f"emitting oversized piece to guarantee progress"
+            )
+            j = i + 1
+        else:
+            lo = i + 1  # fits
+            while hi - lo > 1:  # invariant: fits(i, lo), not fits(i, hi)
+                mid = (lo + hi) // 2
+                if fits(i, mid):
+                    lo = mid
+                else:
+                    hi = mid
+            j = _snap_to_space(text, i, lo) if lo < n else lo
+        cuts.append(j)
+        i = j
+
+    if len(cuts) > 1:
+        # Even out: the same number of pieces, equal character lengths, if they all fit.
+        k = len(cuts)
+        even: List[int] = []
+        start = 0
+        for idx in range(1, k):
+            cut = _snap_to_space(text, start, idx * n // k)
+            if cut <= start:
+                break
+            even.append(cut)
+            start = cut
+        even.append(n)
+        bounds = [0] + even
+        if len(even) == k and all(fits(a, b) for a, b in zip(bounds, even)):
+            cuts = even
+
+    out: List[str] = []
+    start = 0
+    for cut in cuts:
+        if text[start:cut]:
+            out.append(text[start:cut])
+        start = cut
     return out
 
 
@@ -1076,7 +1187,8 @@ def _refine_chunks_for_token_budget(
 
     ``table_max_tokens`` (default ``max_tokens``) lets a table stay whole up to a
     larger budget than prose; an oversized docling table is split at row
-    boundaries so each piece remains a readable table.
+    boundaries so each piece remains a readable table; its pieces carry
+    ``table_part`` (0, 1, ...) so they can share one contextual prefix.
     """
     from src.domain.rag.chunk_identity import (
         common_headings,
@@ -1110,11 +1222,16 @@ def _refine_chunks_for_token_budget(
         pending_tokens = 0
 
     for chunk in raw_chunks:
-        # Accept a HierarchicalChunker chunk object or a bare string (used by the fallback splitting path)
-        text = (chunk.text if hasattr(chunk, "text") else chunk).strip()
+        # Accept a HierarchicalChunker chunk object, a record dict ({"text", "headings",
+        # "page_no", "content_type"}, e.g. a CSV table) or a bare string (fallback path).
+        if isinstance(chunk, dict):
+            text = (chunk.get("text") or "").strip()
+            meta = {k: chunk.get(k) for k in ("headings", "page_no", "content_type")}
+        else:
+            text = (chunk.text if hasattr(chunk, "text") else chunk).strip()
+            meta = _chunk_provenance(chunk, doc) if text else None
         if not text:
             continue
-        meta = _chunk_provenance(chunk, doc)
 
         token_count = _count_tokens(tokenizer, text)
         is_table = meta.get("content_type") == "table"
@@ -1131,8 +1248,13 @@ def _refine_chunks_for_token_budget(
                 parts = _split_triplet_table(text, tokenizer, budget)
             else:
                 parts = _split_by_lines(text, tokenizer, budget, header=None)
-            for part in parts:
-                output.append({"text": part, **meta})  # split pieces inherit the source chunk's meta
+            for k, part in enumerate(parts):
+                rec = {"text": part, **meta}  # split pieces inherit the source chunk's meta
+                if is_table and len(parts) > 1:
+                    # Pieces of one table: the indexer writes one contextual prefix for
+                    # the table and reuses it on the continuation pieces.
+                    rec["table_part"] = k
+                output.append(rec)
         elif token_count < merge_flush_threshold:
             # Small — accumulate (both halves stay under max_tokens), flush past the threshold
             pending.append((text, meta))

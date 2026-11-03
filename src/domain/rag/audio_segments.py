@@ -11,7 +11,7 @@ from __future__ import annotations
 import re
 import wave
 from pathlib import Path
-from typing import List, Tuple
+from typing import Dict, List, Optional, Tuple
 from src.utils.ffmpeg import run_ffmpeg
 
 # FireRedASR's limit (60 s hard cap minus a 5 s margin); cloud providers pass their own.
@@ -116,3 +116,43 @@ def speech_ratio(start: float, end: float, silences: List[Tuple[float, float]]) 
     span = max(end - start, 1e-9)
     silent = sum(max(0.0, min(e, end) - max(s, start)) for s, e in silences)
     return max(0.0, min(1.0, 1.0 - silent / span))
+
+
+# Transcript structure: time blocks
+
+# Leaves of a transcript are grouped into blocks of about this length. Each block is a
+# heading ("00:10:00–00:15:02"), so parents never span two blocks (a parent is a
+# stretch of the recording) and every leaf's breadcrumb carries its time range.
+TIME_BLOCK_SECONDS = 300.0
+
+
+def fmt_timestamp(seconds: float) -> str:
+    seconds = max(0, int(seconds))
+    return f"{seconds // 3600:02d}:{seconds % 3600 // 60:02d}:{seconds % 60:02d}"
+
+
+def time_block_records(
+    segments: List[Tuple[float, float, str]],
+    block_seconds: float = TIME_BLOCK_SECONDS,
+) -> Optional[List[Dict[str, object]]]:
+    """Per-segment transcript records headed by their time block.
+
+    ``segments`` are ``(start, end, text)`` in seconds, in order. A segment belongs to
+    the block its start falls in; a block's heading is the range its segments actually
+    cover. Returns ``[{"text", "headings": ["HH:MM:SS–HH:MM:SS"]}, ...]`` (empty texts
+    dropped), or None when the segments carry no timing (all ends 0, e.g. a whole file
+    uploaded without ffmpeg) so the caller keeps the untimed path.
+    """
+    timed = [(float(s), float(e), (t or "").strip()) for s, e, t in segments]
+    if not timed or all(e <= 0 for _, e, _ in timed):
+        return None
+    blocks: Dict[int, List[Tuple[float, float, str]]] = {}
+    for start, end, text in timed:
+        if text:
+            blocks.setdefault(int(start // block_seconds), []).append((start, end, text))
+    records: List[Dict[str, object]] = []
+    for key in sorted(blocks):
+        members = blocks[key]
+        label = f"{fmt_timestamp(members[0][0])}–{fmt_timestamp(members[-1][1])}"
+        records.extend({"text": text, "headings": [label]} for _, _, text in members)
+    return records

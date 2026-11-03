@@ -182,3 +182,63 @@ class TestDocumentLoaderAudioRouting:
         p = _FakeAsr(err=RuntimeError("stt down"))
         with pytest.raises(RuntimeError, match="stt down"):
             self._load(_loader(p), tmp_path)
+
+
+class TestTimeBlocks:
+    def test_segments_group_into_five_minute_blocks(self):
+        from src.domain.rag.audio_segments import time_block_records
+        segs = [(i * 55.0, (i + 1) * 55.0, f"seg{i}") for i in range(12)]  # 0 .. 660 s
+        recs = time_block_records(segs)
+        heads = [r["headings"][0] for r in recs]
+        assert heads[:6] == ["00:00:00–00:05:30"] * 6       # starts 0..275 s
+        assert heads[6:11] == ["00:05:30–00:10:05"] * 5     # starts 330..550 s
+        assert heads[11] == "00:10:05–00:11:00"
+        assert [r["text"] for r in recs] == [f"seg{i}" for i in range(12)]
+
+    def test_untimed_and_empty(self):
+        from src.domain.rag.audio_segments import fmt_timestamp, time_block_records
+        assert time_block_records([(0.0, 0.0, "whole file")]) is None
+        assert time_block_records([]) is None
+        assert time_block_records([(0.0, 5.0, "  "), (5.0, 9.0, "x")]) == [
+            {"text": "x", "headings": ["00:00:05–00:00:09"]}]
+        assert fmt_timestamp(3725.9) == "01:02:05"
+
+    def test_loader_sizes_timed_records_within_blocks(self, tmp_path):
+        """Timed records become leaf-sized chunks that never cross a time block, and
+        leaves group into one parent per block."""
+        from src.domain.rag.audio_segments import time_block_records
+        from src.domain.rag.hierarchy import build_hierarchy
+        from src.domain.rag.leaf_splitter import LeafSplitter
+
+        line = "我們今天討論第三季的營運計畫以及預算分配的細節後續再由各部門回報進度"
+        segs = [(i * 55.0, (i + 1) * 55.0, line * 4) for i in range(12)]
+        p = _FakeAsr(text="\n".join(t for *_, t in segs), chunks=time_block_records(segs))
+        doc = self._load(_loader(p), tmp_path)
+        chunks = doc.metadata["_docling_chunks"]
+        assert all(isinstance(c, dict) and c["headings"] for c in chunks)
+        assert len(chunks) < 12  # short segments merged within their block
+        leaves = LeafSplitter(leaf_chunk_size=256, chunk_overlap=0).split_into_leaf_documents(doc)
+        _, parents = build_hierarchy(leaves, parent_target_tokens=2048)
+        assert [p.metadata["headings"] for p in parents] == [
+            ["00:00:00–00:05:30"], ["00:05:30–00:10:05"], ["00:10:05–00:11:00"]]
+
+    def _load(self, loader, tmp_path):
+        f = tmp_path / "m.mp3"
+        f.write_bytes(b"x")
+        with patch(f"{_DL}.FileStorage.resolve_path", return_value=f), \
+                patch(f"{_DL}._trim_audio_leading_silence", return_value=None):
+            return loader.load(file_path=str(f), file_id="1", file_name="m.mp3")
+
+
+def test_oversized_timed_segment_is_split_to_budget(tmp_path):
+    from src.domain.rag.audio_segments import time_block_records
+    from src.domain.rag.chunk_tokenizer import get_chunk_tokenizer
+
+    tok = get_chunk_tokenizer(None)
+    line = "我們今天討論第三季的營運計畫以及預算分配的細節後續再由各部門回報進度"
+    p = _FakeAsr(text=line * 30, chunks=time_block_records([(0.0, 55.0, line * 30)]))
+    doc = TestTimeBlocks()._load(_loader(p), tmp_path)
+    chunks = doc.metadata["_docling_chunks"]
+    assert len(chunks) > 1
+    assert all(len(tok.encode(c["text"])) <= 256 for c in chunks)
+    assert "".join(c["text"] for c in chunks) == line * 30

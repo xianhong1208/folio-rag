@@ -234,6 +234,12 @@ class RAGEmbeddingConfig(BaseModel):
     request_dimensions: bool = False
     timeout: float = Field(60.0, gt=0)  # per-request timeout (seconds)
     max_retries: int = Field(3, ge=0, le=10)  # 429 / 5xx / timeout retries (SDK backoff)
+    # Texts per embedding request (llama-index defaults to 10, i.e. 5 requests per batch of 50).
+    embed_batch_size: int = Field(64, ge=1, le=2048)
+    # The model's input window. Before embedding, a leaf's retrieval text (prefix +
+    # breadcrumb + text, plus passage_prefix) is fitted into it by shortening the
+    # breadcrumb, then the prefix — never the chunk text. 512 for e5 / bge-large.
+    max_input_tokens: int = Field(512, ge=64)
 
 
 class RAGChunkingConfig(BaseModel):
@@ -267,6 +273,8 @@ class RAGRetrievalConfig(BaseModel):
     # profile: cloud (which loads no in-process model; explicit ckip is rejected there).
     # Changing it flags existing folders for Rebuild FTS (no re-embedding needed).
     segmenter: Optional[Literal["ckip", "jieba", "bigram"]] = None
+    # Device for the CKIP segmenter: cpu | cuda | cuda:N | auto (cuda:0 when available).
+    ckip_device: str = "cpu"
     # "rrf" = Reciprocal Rank Fusion (BM25 affects ordering); "concat" = llama_index native
     # (dense dominates, effectively vector-only; legacy).
     hybrid_fusion: str = "rrf"
@@ -319,7 +327,9 @@ class ContextualRetrievalConfig(BaseModel):
     """Contextual Retrieval configuration."""
     enabled: bool = False
     max_context_length: int = 150
-    max_concurrent: int = 5
+    max_concurrent: int = 5  # per file
+    # Cap on prefix requests in flight across every file indexed at once (process-wide).
+    max_concurrent_global: int = Field(16, ge=1)
     max_doc_chars: int = 60000
     max_tokens: int = 1024
     reasoning_effort: Optional[str] = None
@@ -328,7 +338,7 @@ class ContextualRetrievalConfig(BaseModel):
     # Cost guards (0 = unlimited). Chunks over a cap get the deterministic fallback prefix
     # (file name) instead of an LLM call, and a warning is logged.
     max_calls_per_file: int = Field(0, ge=0)
-    # Estimated tokens (prompt chars / 4 + max_tokens) per UTC day, process-wide.
+    # Estimated tokens (prompt: 1 per CJK char, 1 per 4 other chars; + max_tokens) per UTC day.
     max_tokens_per_day: int = Field(0, ge=0)
 
 

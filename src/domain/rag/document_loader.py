@@ -2,8 +2,9 @@
 """Document Loader — three-way loading of a file into a llama_index Document.
 
 Paths:
-1. Plain-text family (.txt/.json/.csv/...): read directly via read_text_robust with encoding
-   tolerance, bypassing docling.
+1. Plain-text family (.txt/.json/...): read directly via read_text_robust with encoding
+   tolerance, bypassing docling. A .csv is read the same way and turned into a Markdown
+   table chunked as a table, so every chunk repeats the header row.
 2. PDFs / images when rag.parsing selects cloud (the default under profile: cloud):
    cloud_parser — a vision model transcribes every page; the pages are re-assembled into
    one document and chunked by the same chunker as the docling path.
@@ -61,6 +62,39 @@ def clean_text(text: str) -> str:
     return cleaned
 
 
+def _md_cell(value: str) -> str:
+    return " ".join((value or "").split()).replace("|", "\\|")
+
+
+def csv_to_markdown(content: str) -> Optional[str]:
+    """CSV text -> Markdown table (first row = header), or None when it is not a table
+    (fewer than two rows or columns, or unparseable)."""
+    import csv
+    import io
+
+    text = (content or "").lstrip("\ufeff")
+    if not text.strip():
+        return None
+    try:
+        dialect = csv.Sniffer().sniff(text[:8192], delimiters=",;\t|")
+    except csv.Error:
+        dialect = csv.excel
+    try:
+        rows = [r for r in csv.reader(io.StringIO(text), dialect) if any(c.strip() for c in r)]
+    except csv.Error:
+        return None
+    if len(rows) < 2:
+        return None
+    width = max(len(r) for r in rows)
+    if width < 2:
+        return None
+    rows = [r + [""] * (width - len(r)) for r in rows]
+    lines = ["| " + " | ".join(_md_cell(c) for c in rows[0]) + " |",
+             "| " + " | ".join("---" for _ in range(width)) + " |"]
+    lines += ["| " + " | ".join(_md_cell(c) for c in r) + " |" for r in rows[1:]]
+    return "\n".join(lines)
+
+
 class DocumentLoader:
     """File loader (composed into HierarchicalIndexer; logic factored out of its load_document_from_file)."""
 
@@ -114,6 +148,11 @@ class DocumentLoader:
             base_metadata.update({k: v for k, v in metadata.items() if v is not None})
 
         doc_id = f"file_{file_id}"
+
+        if file_extension == ".csv":
+            from src.utils.text_io import read_text_robust
+            content = clean_text(read_text_robust(resolved_path, file_name))
+            return self._load_csv(content, base_metadata, doc_id, file_name)
 
         if file_extension in text_extensions:
             # Encoding tolerance: UTF-16 (Windows Notepad "Unicode") / Big5 txt·csv are common in
@@ -209,6 +248,45 @@ class DocumentLoader:
             return self._load_via_simple_reader(
                 temp_dir, file_name, base_metadata, doc_id)
 
+    def _load_csv(self, content: str, base_metadata: Dict[str, Any], doc_id: str,
+                  file_name: str) -> Document:
+        """CSV -> a Markdown table chunked as one table.
+
+        Read as plain text, a CSV was split into chunks of which only the first carried
+        the header row, so every later chunk was a list of bare values. As a table, an
+        oversized CSV is split at row boundaries with the header repeated on every piece
+        (and its pieces share one contextual prefix). Content that does not parse as a
+        table with a header and at least one row stays plain text.
+        """
+        table = csv_to_markdown(content)
+        doc = Document(text=table or content, metadata=base_metadata, doc_id=doc_id)
+        if not table:
+            return doc
+        from src.domain.rag.docling_loader import (
+            _refine_chunks_for_token_budget,
+            get_hf_tokenizer,
+        )
+        budget, table_budget = token_budgets(self._leaf_chunk_size, self._has_context_generator)
+        doc.metadata["_docling_chunks"] = _refine_chunks_for_token_budget(
+            [{"text": table, "content_type": "table"}],
+            get_hf_tokenizer(self._embedding_model_name), budget,
+            table_max_tokens=table_budget,
+        )
+        logger.info(f"CSV {file_name}: {len(doc.metadata['_docling_chunks'])} table chunk(s)")
+        return doc
+
+    def _size_transcript_records(self, records):
+        """Timed transcript records -> leaf-sized records: segments merge and split
+        within their time block (never across), sized in embedding tokens."""
+        from src.domain.rag.docling_loader import (
+            _refine_chunks_for_token_budget,
+            get_hf_tokenizer,
+        )
+        budget, _ = token_budgets(self._leaf_chunk_size, self._has_context_generator)
+        return _refine_chunks_for_token_budget(
+            [r if isinstance(r, dict) else {"text": r} for r in records],
+            get_hf_tokenizer(self._embedding_model_name), budget)
+
     @staticmethod
     def _cloud_parser_for(file_name: str):
         """A CloudDocumentParser when the live config routes this file type to the cloud
@@ -275,10 +353,16 @@ class DocumentLoader:
             if chunk_texts is not None:
                 cleaned_chunks = []
                 for c in chunk_texts:
-                    cleaned, n = _filter_whisper_hallucinations(c)
-                    cleaned_chunks.append(cleaned)
+                    if isinstance(c, dict):  # timed record (segment text + time-block heading)
+                        cleaned, n = _filter_whisper_hallucinations(c.get("text") or "")
+                        cleaned_chunks.append({**c, "text": cleaned})
+                    else:
+                        cleaned, n = _filter_whisper_hallucinations(c)
+                        cleaned_chunks.append(cleaned)
                     n_chunks += n
                 chunk_texts = cleaned_chunks
+                if any(isinstance(c, dict) for c in chunk_texts):
+                    chunk_texts = self._size_transcript_records(chunk_texts)
             if n_full or n_chunks:
                 logger.info(
                     f"Filtered Whisper hallucinations from {file_name}: "
@@ -291,7 +375,8 @@ class DocumentLoader:
 
             doc = Document(text=content, metadata=base_metadata, doc_id=doc_id)
             if chunk_texts is not None:
-                # the docling provider pre-splits chunks; cloud returns None → leaf_splitter plain-text path
+                # docling pre-splits chunks; segment-based providers return timed records
+                # (sized above); None (no timing) → leaf_splitter plain-text path
                 doc.metadata["_docling_chunks"] = chunk_texts
             return doc
         finally:

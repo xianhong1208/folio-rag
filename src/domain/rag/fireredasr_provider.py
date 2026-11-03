@@ -11,8 +11,9 @@ Engineering constraints (from the model card and upstream issues):
   so post-process with OpenCC `s2twp` (Simplified -> Traditional + Taiwan
   terminology); Traditional-Chinese output is gated by the Simplified-character
   ratio check in evals.
-- **No punctuation**: AED output has no punctuation, so it goes down the
-  leaf_splitter plain-text path (chunks=None).
+- **No punctuation**: AED output has no punctuation; each segment is returned as
+  a record headed by its ~5-minute time block (audio_segments.time_block_records),
+  and document_loader sizes the records to the token budget.
 
 Weights: assets/fireredasr/FireRedASR-AED-L/ (~4.7GB, shipped separately).
 
@@ -33,6 +34,7 @@ from src.domain.rag.asr_base import AsrProvider, AsrResult
 # 55s = 60s hard limit minus a 5s safety margin (model card: >60s hallucinates,
 # >200s overflows the positional encoding).
 from src.domain.rag.audio_segments import MAX_SEGMENT_SECONDS  # noqa: F401
+from src.domain.rag.audio_segments import time_block_records
 
 logger = get_api_logger()
 
@@ -164,5 +166,10 @@ class FireRedAsrProvider(AsrProvider):
                     except Exception:
                         pass
 
-        full = self._to_traditional("\n".join(t for t in texts if t))
-        return AsrResult(text=full, chunks=None)
+        texts = [self._to_traditional(t) if t else "" for t in texts]
+        full = "\n".join(t for t in texts if t)
+        # Unpunctuated text with segment times: records grouped into ~5-minute blocks
+        # (document_loader sizes them to the token budget).
+        records = (time_block_records([(s, e, t) for (s, e), t in zip(segments, texts)])
+                   if len(segments) == len(texts) else None)
+        return AsrResult(text=full, chunks=records)
