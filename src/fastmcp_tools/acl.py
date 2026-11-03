@@ -8,8 +8,7 @@ Design principles:
 - ACL failures always raise InvalidTokenError / UnauthorizedAccessError (domain
   exceptions), which middleware converts uniformly into a standard MCP error
   response.
-- ACL results are not cached here — the token server layer already has a
-  cache_ttl setting.
+- ACL results are not cached here.
 
 verify_folder_access lives in the domain layer (src/domain/rag/folder_acl.py,
 with no fastmcp dependency). extract_token reads the MCP HTTP request context,

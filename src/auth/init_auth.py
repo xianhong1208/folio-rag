@@ -1,11 +1,9 @@
 
 """Authentication system initialization.
 
-Builds the offline MCP Gate token verifier and registers it via
-``set_token_verifier`` — the SAME registration contract the legacy remote Token
-Server flow used, so the middleware, dependencies and MCP tool filter keep working
-unchanged. Only the verifier implementation changed (offline RS256 JWKS instead of an
-HTTP call to a token server).
+Builds the offline MCP Gate token verifier (RS256 JWT checked against the issuer's
+JWKS) and registers it via ``set_token_verifier``, where the REST auth dependency and
+the MCP tool filter pick it up. The admin console reuses the same verifier.
 """
 
 from src.log import get_api_logger

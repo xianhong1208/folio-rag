@@ -30,7 +30,7 @@ def get_token_verifier() -> Optional[McpGateTokenVerifier]:
 
 
 async def authenticate_bearer_token(request: Request) -> dict:
-    """Authenticate via remote Token Server (supports JWT and Opaque Token)"""
+    """Verify the request's bearer token with the registered MCP Gate verifier (401 on failure)."""
     global _token_verifier
 
     if _token_verifier is None:

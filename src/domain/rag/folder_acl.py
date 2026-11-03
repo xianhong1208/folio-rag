@@ -13,7 +13,7 @@ Design principles:
   middleware converts it uniformly into a standard error response.
 - Deliberately does not distinguish "folder does not exist" from "token lacks access",
   to avoid information leakage.
-- ACL results are not cached here — the token server layer already has a cache_ttl.
+- ACL results are not cached here.
 """
 
 from __future__ import annotations
