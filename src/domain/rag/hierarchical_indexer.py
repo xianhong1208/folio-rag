@@ -224,6 +224,30 @@ class HierarchicalIndexer:
         """
         return configured_text_search_config()
 
+    @staticmethod
+    def _flag_fts_rebuild(vector_store, file_name: str, segmenter_name: Optional[str]) -> str:
+        """The segmenter fell back to raw text for this file's keyword index: stamp the
+        folder's table ``<name>-degraded`` so the console flags it for Rebuild FTS (the
+        stamp differs from the configured segmenter; a completed rebuild re-stamps it),
+        and return the file warning. A failed stamp is logged, never fatal."""
+        logger.warning(
+            f"{file_name}: the {segmenter_name} segmenter failed; its keyword index holds "
+            "unsegmented text — flagging the folder for Rebuild FTS"
+        )
+        try:
+            from src.domain.rag.chunk_lookup import ChunkLookup
+            from src.domain.rag.vector_store_manager import stamp_tsv_segmenter
+
+            stamp_tsv_segmenter(
+                ChunkLookup._get_engine(vector_store),
+                ChunkLookup._get_table_name(vector_store),
+                f"{segmenter_name or 'segmenter'}-degraded",
+            )
+        except Exception as e:
+            logger.warning(f"{file_name}: could not flag the folder for Rebuild FTS: {e}")
+        return (f"Keyword index built without {segmenter_name or 'word'} segmentation "
+                "(segmenter unavailable) — run Rebuild FTS on this folder")
+
     def _count_tokens(self, text: str) -> int:
         """Tokens of ``text`` in the chunk tokenizer of the embedding model (the same
         counter the leaf budgets use)."""
@@ -479,6 +503,7 @@ class HierarchicalIndexer:
         tsv_config = self._text_search_config()
         segment = None
         segmenter_name = None
+        degraded = {"value": False}  # set when the segmenter fell back to raw text
         if tsv_config == "simple":
             # Segmented mode: Chinese is segmented in Python by the configured segmenter
             # (rag.retrieval.segmenter: ckip / jieba / bigram); Postgres's 'simple'
@@ -488,6 +513,12 @@ class HierarchicalIndexer:
             segmenter = get_segmenter()
             segment = segmenter.segment_batch
             segmenter_name = getattr(segmenter, "name", None)
+            report = getattr(segmenter, "segment_batch_report", None)
+            if callable(report):
+                def segment(texts, _report=report):
+                    out, failed = _report(texts)
+                    degraded["value"] = degraded["value"] or failed
+                    return out
         # _to_thread_protected (not a bare to_thread) so on cancel the write finishes
         # rather than leaving an orphan insert racing DROP TABLE.
         write = replace_file_chunks
@@ -497,6 +528,11 @@ class HierarchicalIndexer:
             write, vector_store, file_id_meta, all_nodes,
             search_texts, tsv_config, segment,
         )
+
+        fts_warning = None
+        if degraded["value"]:
+            fts_warning = await asyncio.to_thread(
+                self._flag_fts_rebuild, vector_store, file_name, segmenter_name)
 
         # 6. Ensure this (possibly just-created) table has an HNSW vector index now,
         # so a new folder gets fast search without waiting for the next boot.
@@ -531,5 +567,6 @@ class HierarchicalIndexer:
             "warning": _join_warnings(
                 document.metadata.get("_parse_warning"),
                 _prefix_warning(n_prefix_failed, n_chunks),
+                fts_warning,
             ),
         }

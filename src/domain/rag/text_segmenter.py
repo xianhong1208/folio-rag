@@ -22,13 +22,16 @@ like the index it searches. Heavy libraries are imported lazily, on first use.
 Each folder's vector table records which segmenter built its tsvector (a column
 comment, see ``vector_store_manager``); after switching segmenters the console
 flags folders whose stamp no longer matches, and *Rebuild FTS* re-segments them.
+A model-backed segmenter also offers ``segment_batch_report(texts) -> (out,
+degraded)``: when indexing had to fall back to raw text, the indexer re-stamps the
+table ``<name>-degraded`` so the console flags it for Rebuild FTS.
 """
 
 from __future__ import annotations
 
 import re
 import threading
-from typing import Dict, List, Optional
+from typing import Dict, List, Optional, Tuple
 
 from src.log import get_api_logger
 
@@ -113,19 +116,27 @@ class JiebaSegmenter:
                         "rag.retrieval.segmenter to 'bigram'.")
         return self._jieba is not None
 
-    def segment(self, text: str) -> str:
+    def _segment(self, text: str) -> Tuple[str, bool]:
         if not text or not text.strip():
-            return ""
+            return "", False
         if not self._ensure():
-            return text
+            return text, True
         try:
-            return _normalise(self._jieba.lcut(text)) or text
+            return _normalise(self._jieba.lcut(text)) or text, False
         except Exception as e:  # noqa: BLE001
             logger.warning(f"jieba segment failed, using raw text: {e!r}")
-            return text
+            return text, True
+
+    def segment(self, text: str) -> str:
+        return self._segment(text)[0]
 
     def segment_batch(self, texts: List[str]) -> List[str]:
         return [self.segment(t) for t in (texts or [])]
+
+    def segment_batch_report(self, texts: List[str]) -> Tuple[List[str], bool]:
+        """``segment_batch`` plus whether any text fell back to raw (see CKIP's)."""
+        pairs = [self._segment(t) for t in (texts or [])]
+        return [p[0] for p in pairs], any(p[1] for p in pairs)
 
 
 def configured_segmenter_name() -> str:
