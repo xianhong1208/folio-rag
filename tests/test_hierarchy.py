@@ -8,19 +8,40 @@ from llama_index.core import Document
 from src.domain.rag.hierarchy import build_hierarchy, estimate_tokens
 
 
-def test_estimate_tokens_chinese():
-    """CJK characters are estimated at 1.5 token/char."""
-    assert estimate_tokens("公司財報") == int(4 * 1.5)
+def _e5(text):
+    from src.domain.rag.chunk_tokenizer import get_chunk_tokenizer
+    return len(get_chunk_tokenizer("intfloat/multilingual-e5-large").encode(text))
+
+
+def test_estimate_tokens_uses_the_chunk_tokenizer():
+    """Counted with the real tokenizer: CJK is ~0.7 token/char, not 1.5."""
+    text = "第十二條員工因公出差者，應於出發前三日內檢具出差申請單，經直屬主管核准後始得辦理。" * 4
+    assert estimate_tokens(text) == _e5(text)
+    assert estimate_tokens(text) < len(text)
 
 
 def test_estimate_tokens_english():
-    """English is estimated at 0.3 token/char (rough)."""
-    assert estimate_tokens("hello") == int(5 * 0.3)
+    assert estimate_tokens("hello world") == _e5("hello world")
 
 
 def test_estimate_tokens_empty():
     """An empty string returns 0."""
     assert estimate_tokens("") == 0
+
+
+def test_parents_fill_their_target_in_real_tokens():
+    """A long Chinese section: parents reach ~the target, not half of it (M5)."""
+    sent = "第十二條員工因公出差者，應於出發前三日內檢具出差申請單，經直屬主管核准後始得辦理。"
+    leaves = [Document(text=sent * 6, metadata={"headings": ["Rules"]}) for _ in range(40)]
+    _, parents = build_hierarchy(leaves, parent_target_tokens=1024)
+    sizes = [_e5(p.text) for p in parents[:-1]]
+    assert all(800 <= s <= 1024 + 10 for s in sizes), sizes
+
+
+def test_custom_counter_is_used():
+    leaves = [Document(text="a"), Document(text="b"), Document(text="c")]
+    _, parents = build_hierarchy(leaves, parent_target_tokens=2, count_tokens=lambda t: 1)
+    assert [p.metadata["chunk_count"] for p in parents] == [2, 1]
 
 
 def test_build_hierarchy_single_small_doc():
@@ -141,19 +162,6 @@ def test_build_hierarchy_metadata_propagation():
 
     # The leaf's own metadata is also preserved
     assert leaf_nodes[0].metadata["existing_key"] == "preserve_me"
-
-
-def test_estimate_tokens_mixed_chinese_english():
-    """Mixed Chinese/English is summed by each coefficient, then truncated to int."""
-    # "公司ABC" = 2 Chinese * 1.5 + 3 English * 0.3
-    assert estimate_tokens("公司ABC") == int(2 * 1.5 + 3 * 0.3)
-
-
-def test_estimate_tokens_non_cjk_range_counts_as_other():
-    """Digits and Japanese kana fall outside the CJK range ('一'~'鿿') and are counted at 0.3/char."""
-    assert estimate_tokens("12345") == int(5 * 0.3)
-    # Hiragana (from U+3042) < U+4E00, not counted as Chinese → 3 * 0.3 = 0.9 → 0
-    assert estimate_tokens("あいう") == 0
 
 
 def test_build_hierarchy_oversized_leaf_gets_own_parent():

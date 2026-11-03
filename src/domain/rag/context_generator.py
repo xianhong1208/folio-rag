@@ -25,7 +25,10 @@ Performance:
 from __future__ import annotations
 
 import asyncio
-from typing import Callable, Optional, List
+import contextlib
+import re
+import threading
+from typing import AsyncIterator, Callable, Dict, Optional, List
 
 from src.log import get_api_logger
 from src.domain.rag.context_scope import SECTION_WINDOW_CHARS, locate_window, window
@@ -118,6 +121,71 @@ def _is_script_mismatch(chunk_text: str, candidate_prefix: str) -> bool:
     return bool(chunk_main) and not prefix_main
 
 
+def estimate_llm_tokens(text: str) -> int:
+    """Cost estimate for the daily budget: one token per CJK / kana / hangul character,
+    one per four other characters. ``len(text) // 4`` undercounted Chinese ~3x."""
+    wide = sum(
+        1 for ch in text or ""
+        if "\u3040" <= ch <= "\u30ff" or "\u3400" <= ch <= "\u9fff"
+        or "\uac00" <= ch <= "\ud7af" or "\uf900" <= ch <= "\ufaff"
+    )
+    return wide + (len(text or "") - wide + 3) // 4
+
+
+_PREFIX_SENTENCE_END = re.compile(r"[。！？；]|[.!?](?=\s|$)")
+_PREFIX_SOFT_BREAK = re.compile(r"[，、：,;:]|\s")
+
+
+def trim_prefix(text: str, limit: int) -> str:
+    """Cut ``text`` to at most ``limit`` characters at the last sentence end, else at
+    the last clause / word break, else hard. A break in the first 40% is ignored (it
+    would throw most of the prefix away)."""
+    if len(text) <= limit:
+        return text
+    floor = int(limit * 0.4)
+    head = text[:limit + 1]  # a terminator right at the limit still counts
+    ends = [m.end() for m in _PREFIX_SENTENCE_END.finditer(head) if floor <= m.end() <= limit]
+    if ends:
+        return text[:ends[-1]].strip()
+    breaks = [m.start() for m in _PREFIX_SOFT_BREAK.finditer(head) if floor <= m.start() <= limit]
+    if breaks:
+        return text[:breaks[-1]].rstrip(" ，、：,;:")
+    return text[:limit]
+
+
+# Process-wide cap on in-flight prefix requests. The per-call semaphore only bounds
+# one file, so N files indexed at once sent N x max_concurrent requests and overloaded
+# the LLM server. Jobs may run on different event loops (worker threads), so the cap
+# is a threading semaphore, polled from the loop with a short sleep rather than
+# blocking: a parked executor thread per waiting request would starve every other
+# to_thread user (embedding, DB writes).
+DEFAULT_MAX_CONCURRENT_GLOBAL = 16
+_global_lock = threading.Lock()
+_global_slots: Dict[int, threading.BoundedSemaphore] = {}
+
+
+def _global_semaphore(n: int) -> threading.BoundedSemaphore:
+    n = max(1, int(n))
+    with _global_lock:
+        if n not in _global_slots:
+            _global_slots.clear()  # a changed setting replaces the limiter for new requests
+            _global_slots[n] = threading.BoundedSemaphore(n)
+        return _global_slots[n]
+
+
+@contextlib.asynccontextmanager
+async def _global_slot(n: int) -> AsyncIterator[None]:
+    sem = _global_semaphore(n)
+    delay = 0.005
+    while not sem.acquire(blocking=False):
+        await asyncio.sleep(delay)
+        delay = min(delay * 2, 0.1)
+    try:
+        yield
+    finally:
+        sem.release()
+
+
 # Part of every prefix's cache key: bump it whenever the prompt changes so that an
 # incremental re-index regenerates prefixes written by an older prompt.
 PROMPT_VERSION = "2"  # 2: outline + own section, language-neutral prompt, script repair
@@ -142,6 +210,7 @@ class ContextGenerator:
         max_calls_per_file: int = 0,
         max_tokens_per_day: int = 0,
         budget=None,
+        max_concurrent_global: int = DEFAULT_MAX_CONCURRENT_GLOBAL,
     ):
         self._llm_config = llm_config
         self._model = model
@@ -150,6 +219,7 @@ class ContextGenerator:
         self._max_doc_chars = max_doc_chars
         self._max_tokens = max_tokens
         self._reasoning_effort = reasoning_effort
+        self._max_concurrent_global = max_concurrent_global
         # Cost guards (0 = unlimited): chunks past a cap get the fallback prefix, no LLM call.
         self._max_calls_per_file = max_calls_per_file
         self._max_tokens_per_day = max_tokens_per_day
@@ -158,7 +228,7 @@ class ContextGenerator:
         self._budget = budget
         logger.info(
             f"ContextGenerator initialized (model={model}, max_length={max_context_length}, "
-            f"max_concurrent={max_concurrent}, max_doc_chars={max_doc_chars}, "
+            f"max_concurrent={max_concurrent} (process-wide {max_concurrent_global}), max_doc_chars={max_doc_chars}, "
             f"max_tokens={max_tokens}, reasoning_effort={reasoning_effort})"
         )
 
@@ -204,6 +274,8 @@ class ContextGenerator:
                 reasoning_effort=getattr(cr_config, 'reasoning_effort', None),
                 max_calls_per_file=int(getattr(cr_config, 'max_calls_per_file', 0) or 0),
                 max_tokens_per_day=int(getattr(cr_config, 'max_tokens_per_day', 0) or 0),
+                max_concurrent_global=int(getattr(cr_config, 'max_concurrent_global', 0)
+                                          or DEFAULT_MAX_CONCURRENT_GLOBAL),
             )
         except Exception as e:
             logger.error(f"Failed to create ContextGenerator: {e}")
@@ -229,18 +301,17 @@ class ContextGenerator:
 
         response = client.chat.completions.create(**kwargs)
         msg = response.choices[0].message
-        # Read content first; if empty, fall back to reasoning_content (reasoning models)
-        raw_content = msg.content
-        if not raw_content:
-            raw_content = getattr(msg, 'reasoning_content', None)
-        return raw_content
+        # Only the answer. A reasoning model that ran out of completion budget leaves
+        # ``content`` empty and its chain of thought in ``reasoning_content``; using
+        # that as the prefix embedded and indexed the model's scratch work.
+        return msg.content
 
     def _admit_tokens(self, prompt: str) -> bool:
-        """Charge an estimated cost (prompt chars / 4 + max_tokens) to today's prefix budget."""
+        """Charge an estimated cost (CJK-aware prompt estimate + max_tokens) to today's prefix budget."""
         limit = getattr(self, "_max_tokens_per_day", 0)
         if not limit:
             return True
-        estimate = len(prompt) // 4 + self._max_tokens
+        estimate = estimate_llm_tokens(prompt) + self._max_tokens
         if self._budget.try_consume("prefix_tokens", estimate, limit):
             return True
         if not getattr(self, "_budget_warned", False):
@@ -249,6 +320,22 @@ class ContextGenerator:
                 f"Contextual-prefix daily token budget ({limit}) exhausted — "
                 "remaining chunks get no prefix until UTC midnight (a later re-index fills them in)")
         return False
+
+    def _postprocess(self, raw_content: Optional[str], chunk_text: str,
+                     script_reference: str) -> Optional[str]:
+        """Clean the model's answer into a prefix; None when it is unusable (empty,
+        or in another script than the chunk)."""
+        if not raw_content or not raw_content.strip():
+            return None
+        # Zero-width characters split keyword tokens ("ROC\u200bm"); Simplified
+        # characters in a Traditional document never match Traditional queries.
+        context = " ".join(strip_invisible(raw_content).split())
+        context = fix_simplified(context, script_reference)
+        # A script-mismatched prefix+chunk drifts in embedding space and tanks the
+        # chunk's hit rate on same-language queries.
+        if not context or _is_script_mismatch(chunk_text, context):
+            return None
+        return trim_prefix(context, self._max_context_length) or None
 
     async def _generate_one(
         self,
@@ -268,9 +355,9 @@ class ContextGenerator:
         (its section, see context_scope); ``outline`` the document's heading paths;
         ``script_reference`` the document text used to repair Simplified drift.
 
-        Returns the prefix, "" when the model's answer was unusable (wrong script), or
-        None when no answer was obtained (empty response, error, abort) so a later
-        re-index can try again. There is no file-name fallback any more: the chunk's
+        Returns the prefix, or None when no usable answer was obtained (empty or
+        wrong-script answer twice, error, budget, abort): a None prefix is never cached,
+        so a later re-index tries again. There is no file-name fallback: the chunk's
         breadcrumb already carries the file name.
 
         When should_abort holds, skip the LLM — after an abort the whole batch's results
@@ -293,39 +380,28 @@ class ContextGenerator:
                 section=section,
                 chunk_text=chunk_text,
             )
-            if not self._admit_tokens(prompt):
-                return None  # daily budget spent: no prefix now, a later re-index retries
-
-            async with semaphore:
-                # A chunk queued behind the semaphore may have waited a while; re-check once it acquires the slot
-                if should_abort and should_abort():
-                    return None
-                raw_content = await asyncio.to_thread(self._call_llm_sync, prompt, client)
-
-            if not raw_content:
+            # An empty answer or one in the wrong script is a failure, not a prefix:
+            # ask once more (a reasoning model's use of its completion budget varies),
+            # then give up with None so the next re-index retries it.
+            for attempt in (1, 2):
+                if not self._admit_tokens(prompt):
+                    return None  # daily budget spent: no prefix now, a later re-index retries
+                limit = getattr(self, "_max_concurrent_global", DEFAULT_MAX_CONCURRENT_GLOBAL)
+                async with semaphore, _global_slot(limit):
+                    # A chunk queued behind the semaphores may have waited a while; re-check once it acquires the slot
+                    if should_abort and should_abort():
+                        return None
+                    raw_content = await asyncio.to_thread(self._call_llm_sync, prompt, client)
+                context = self._postprocess(raw_content, chunk_text, script_reference or section)
+                if context:
+                    return context
                 logger.warning(
-                    f"LLM returned empty content for chunk in '{file_name}'; no prefix"
+                    f"Unusable context prefix for chunk in '{file_name}' "
+                    f"(attempt {attempt}/2): "
+                    + ("empty answer" if not (raw_content or "").strip()
+                       else f"script mismatch, preview={(raw_content or '')[:60]!r}")
                 )
-                return None
-
-            # Zero-width characters split keyword tokens ("ROC\u200bm"); Simplified
-            # characters in a Traditional document never match Traditional queries.
-            context = " ".join(strip_invisible(raw_content).split())
-            context = fix_simplified(context, script_reference or section)
-
-            # A script-mismatched prefix+chunk drifts in bge-m3 space and tanks the
-            # chunk's hit rate on same-language queries; prefer the fallback instead.
-            if _is_script_mismatch(chunk_text, context):
-                logger.warning(
-                    f"LLM produced script-mismatched prefix for chunk in '{file_name}',"
-                    f" discarding. context_preview={context[:60]!r}"
-                )
-                return ""
-
-            if len(context) > self._max_context_length:
-                context = context[:self._max_context_length]
-
-            return context
+            return None
 
         except Exception as e:
             logger.warning(f"Context generation failed for chunk in '{file_name}': {e}")
@@ -364,8 +440,8 @@ class ContextGenerator:
             language: the document's language name, e.g. "Traditional Chinese".
 
         Returns:
-            A list the same length as chunks: each chunk's prefix, "" when the answer was
-            discarded, None when no answer was obtained (see _generate_one).
+            A list the same length as chunks: each chunk's prefix, or None when no
+            usable answer was obtained (see _generate_one).
         """
         total = len(chunks)
 
