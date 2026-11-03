@@ -137,7 +137,7 @@ class AuthFilteredFastMCP(FastMCP):
 
             if token_verifier is None:
                 api_logger.warning(
-                    "Remote verifier not initialized, hiding all per-folder tools"
+                    "Token verifier not initialized, hiding all per-folder tools"
                 )
                 return [t for t in all_tools if not self._is_dynamic_folder_tool(t.name)]
 
