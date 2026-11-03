@@ -328,3 +328,15 @@ class TestSplitByChars:
                 return [0] * (len(text) * 10)
 
         assert _split_by_chars("abc", Heavy(), 5) == ["a", "b", "c"]
+
+
+def test_split_table_pieces_are_numbered_and_prose_is_not():
+    rows = "\n".join(f"| r{i} | {'x' * 20} |" for i in range(12))
+    table = {"text": f"| a | b |\n| --- | --- |\n{rows}", "content_type": "table"}
+    chunk = SimpleNamespace(text=table["text"], meta=SimpleNamespace(
+        headings=["H"], doc_items=[SimpleNamespace(label="table", prov=[])]))
+    recs = _refine_chunks_for_token_budget([chunk], TOK, 100)
+    assert len(recs) > 1
+    assert [r["table_part"] for r in recs] == list(range(len(recs)))
+    prose = _refine_chunks_for_token_budget(["x. " * 80], TOK, 100)
+    assert len(prose) > 1 and all("table_part" not in r for r in prose)
