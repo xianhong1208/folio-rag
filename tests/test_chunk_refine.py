@@ -299,3 +299,32 @@ class TestPackBalanced:
         from src.domain.rag.docling_loader import _pack_balanced
 
         assert _pack_balanced([], 100) == []
+
+
+class TestSplitByChars:
+    def test_pieces_fit_cover_text_and_are_balanced(self):
+        from src.domain.rag.docling_loader import _split_by_chars
+
+        text = "字" * 250
+        pieces = _split_by_chars(text, TOK, 100)
+        assert "".join(pieces) == text
+        assert [len(p) for p in pieces] == [83, 83, 84]
+
+    def test_space_delimited_text_not_cut_mid_word(self):
+        from src.domain.rag.docling_loader import _split_by_chars
+
+        text = " ".join(f"word{i:03d}" for i in range(60))  # 479 chars, no punctuation
+        pieces = _split_by_chars(text, TOK, 100)
+        assert "".join(pieces) == text
+        assert all(len(p) <= 100 for p in pieces)
+        for p in pieces[:-1]:
+            assert p.endswith(" "), p
+
+    def test_single_oversized_character_still_progresses(self):
+        from src.domain.rag.docling_loader import _split_by_chars
+
+        class Heavy:
+            def encode(self, text, add_special_tokens=False):
+                return [0] * (len(text) * 10)
+
+        assert _split_by_chars("abc", Heavy(), 5) == ["a", "b", "c"]
