@@ -25,7 +25,9 @@ Performance:
 from __future__ import annotations
 
 import asyncio
-from typing import Callable, Optional, List
+import contextlib
+import threading
+from typing import AsyncIterator, Callable, Dict, Optional, List
 
 from src.log import get_api_logger
 from src.domain.rag.context_scope import SECTION_WINDOW_CHARS, locate_window, window
@@ -118,6 +120,39 @@ def _is_script_mismatch(chunk_text: str, candidate_prefix: str) -> bool:
     return bool(chunk_main) and not prefix_main
 
 
+# Process-wide cap on in-flight prefix requests. The per-call semaphore only bounds
+# one file, so N files indexed at once sent N x max_concurrent requests and overloaded
+# the LLM server. Jobs may run on different event loops (worker threads), so the cap
+# is a threading semaphore, polled from the loop with a short sleep rather than
+# blocking: a parked executor thread per waiting request would starve every other
+# to_thread user (embedding, DB writes).
+DEFAULT_MAX_CONCURRENT_GLOBAL = 16
+_global_lock = threading.Lock()
+_global_slots: Dict[int, threading.BoundedSemaphore] = {}
+
+
+def _global_semaphore(n: int) -> threading.BoundedSemaphore:
+    n = max(1, int(n))
+    with _global_lock:
+        if n not in _global_slots:
+            _global_slots.clear()  # a changed setting replaces the limiter for new requests
+            _global_slots[n] = threading.BoundedSemaphore(n)
+        return _global_slots[n]
+
+
+@contextlib.asynccontextmanager
+async def _global_slot(n: int) -> AsyncIterator[None]:
+    sem = _global_semaphore(n)
+    delay = 0.005
+    while not sem.acquire(blocking=False):
+        await asyncio.sleep(delay)
+        delay = min(delay * 2, 0.1)
+    try:
+        yield
+    finally:
+        sem.release()
+
+
 # Part of every prefix's cache key: bump it whenever the prompt changes so that an
 # incremental re-index regenerates prefixes written by an older prompt.
 PROMPT_VERSION = "2"  # 2: outline + own section, language-neutral prompt, script repair
@@ -142,6 +177,7 @@ class ContextGenerator:
         max_calls_per_file: int = 0,
         max_tokens_per_day: int = 0,
         budget=None,
+        max_concurrent_global: int = DEFAULT_MAX_CONCURRENT_GLOBAL,
     ):
         self._llm_config = llm_config
         self._model = model
@@ -150,6 +186,7 @@ class ContextGenerator:
         self._max_doc_chars = max_doc_chars
         self._max_tokens = max_tokens
         self._reasoning_effort = reasoning_effort
+        self._max_concurrent_global = max_concurrent_global
         # Cost guards (0 = unlimited): chunks past a cap get the fallback prefix, no LLM call.
         self._max_calls_per_file = max_calls_per_file
         self._max_tokens_per_day = max_tokens_per_day
@@ -158,7 +195,7 @@ class ContextGenerator:
         self._budget = budget
         logger.info(
             f"ContextGenerator initialized (model={model}, max_length={max_context_length}, "
-            f"max_concurrent={max_concurrent}, max_doc_chars={max_doc_chars}, "
+            f"max_concurrent={max_concurrent} (process-wide {max_concurrent_global}), max_doc_chars={max_doc_chars}, "
             f"max_tokens={max_tokens}, reasoning_effort={reasoning_effort})"
         )
 
@@ -204,6 +241,8 @@ class ContextGenerator:
                 reasoning_effort=getattr(cr_config, 'reasoning_effort', None),
                 max_calls_per_file=int(getattr(cr_config, 'max_calls_per_file', 0) or 0),
                 max_tokens_per_day=int(getattr(cr_config, 'max_tokens_per_day', 0) or 0),
+                max_concurrent_global=int(getattr(cr_config, 'max_concurrent_global', 0)
+                                          or DEFAULT_MAX_CONCURRENT_GLOBAL),
             )
         except Exception as e:
             logger.error(f"Failed to create ContextGenerator: {e}")
@@ -316,8 +355,9 @@ class ContextGenerator:
             for attempt in (1, 2):
                 if not self._admit_tokens(prompt):
                     return None  # daily budget spent: no prefix now, a later re-index retries
-                async with semaphore:
-                    # A chunk queued behind the semaphore may have waited a while; re-check once it acquires the slot
+                limit = getattr(self, "_max_concurrent_global", DEFAULT_MAX_CONCURRENT_GLOBAL)
+                async with semaphore, _global_slot(limit):
+                    # A chunk queued behind the semaphores may have waited a while; re-check once it acquires the slot
                     if should_abort and should_abort():
                         return None
                     raw_content = await asyncio.to_thread(self._call_llm_sync, prompt, client)

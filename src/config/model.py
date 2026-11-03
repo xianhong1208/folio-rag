@@ -297,7 +297,9 @@ class ContextualRetrievalConfig(BaseModel):
     """Contextual Retrieval configuration."""
     enabled: bool = False
     max_context_length: int = 150
-    max_concurrent: int = 5
+    max_concurrent: int = 5  # per file
+    # Cap on prefix requests in flight across every file indexed at once (process-wide).
+    max_concurrent_global: int = Field(16, ge=1)
     max_doc_chars: int = 60000
     max_tokens: int = 1024
     reasoning_effort: Optional[str] = None
