@@ -80,6 +80,18 @@ class SearchSettings:
         return base.with_overrides(**overrides)
 
 
+def configured_text_search_config() -> str:
+    """``rag.retrieval.text_search_config`` from the live config; 'simple' when it is
+    unset or the config is unavailable."""
+    try:
+        from src.config.config_manager import Config
+
+        retrieval_cfg = getattr(getattr(Config.get_config_model(), "rag", None), "retrieval", None)
+        return getattr(retrieval_cfg, "text_search_config", "simple") or "simple"
+    except Exception:  # noqa: BLE001
+        return "simple"
+
+
 def cache_fingerprint(query_text: str, settings: SearchSettings, *, reranker=None,
                       merge_threshold: Optional[float] = None) -> str:
     """Hash of everything that changes a search's results, for the result cache.
