@@ -3,7 +3,9 @@
 
 Two paths:
 - Docling pre-parsed (metadata._docling_chunks): used directly
-- fallback: structure-aware split (preserving [TABLE_START] tables) + the same token-budget refine
+- fallback (.txt / .log / audio transcripts without pre-split chunks): paragraphs and
+  [TABLE_START] tables go straight into the same token-budget refine as the Docling
+  path, so leaves are sized in the embedding tokenizer's tokens and never overlap.
 """
 
 from __future__ import annotations
@@ -27,6 +29,13 @@ logger = get_api_logger()
 _TRAILING_EMPTY_FENCE = re.compile(r"\n\s*```[a-zA-Z0-9_+-]*\s*$")
 _ZERO_WIDTH = dict.fromkeys(map(ord, "​‌‍﻿"), None)
 _STRUCT_CHARS = re.compile(r"[\s`#|>*_~\-→▪●·•]+")
+_PARAGRAPH_BREAK = re.compile(r"\n\s*\n")
+_TABLE_BLOCK = re.compile(r'\[TABLE_START\]\s*(.*?)\s*\[TABLE_END\]', re.DOTALL)
+
+
+def _paragraphs(text: str) -> List[str]:
+    """Blank-line separated paragraphs (a paragraph keeps its own line breaks)."""
+    return [p.strip() for p in _PARAGRAPH_BREAK.split(text or "") if p.strip()]
 
 
 def _is_low_value_chunk(text: str) -> bool:
@@ -66,33 +75,29 @@ class LeafSplitter:
         self._leaf_chunk_size = leaf_chunk_size
         self._embedding_model_name = embedding_model_name
         self._has_context_generator = has_context_generator
-        self._text_splitter = SentenceSplitter(
-            chunk_size=leaf_chunk_size,
-            chunk_overlap=chunk_overlap,
-        )
+        # ``chunk_overlap`` is no longer applied to leaves. The old fallback ran a
+        # tiktoken SentenceSplitter with a 50-token overlap and then merged its small
+        # pieces, which pasted the overlap twice into one leaf (most transcript leaves
+        # repeated a sentence); its 256 tiktoken tokens were also only ~70-110 e5
+        # tokens of Chinese. The splitter below is only the degraded path (no tokenizer).
+        self._chunk_overlap = chunk_overlap
+        self._text_splitter = SentenceSplitter(chunk_size=leaf_chunk_size, chunk_overlap=0)
 
     def structure_aware_split(self, text: str) -> List[str]:
-        """Same as the previous flat-RAG version — tables preserved, text goes through SentenceSplitter."""
-        table_pattern = re.compile(
-            r'\[TABLE_START\]\s*(.*?)\s*\[TABLE_END\]',
-            re.DOTALL,
-        )
-        chunks = []
+        """Text -> structural units: paragraphs, with ``[TABLE_START]`` tables kept whole.
+
+        Units are not sized here: the token-budget refine merges small ones (within the
+        budget, without overlap) and splits big ones at line / sentence boundaries."""
+        chunks: List[str] = []
         last_end = 0
-        for match in table_pattern.finditer(text):
-            text_before = text[last_end:match.start()].strip()
-            if text_before:
-                chunks.extend(self._text_splitter.split_text(text_before))
+        for match in _TABLE_BLOCK.finditer(text):
+            chunks.extend(_paragraphs(text[last_end:match.start()]))
             table_md = match.group(1).strip()
             if table_md:
                 chunks.append(table_md)
             last_end = match.end()
-        text_after = text[last_end:].strip()
-        if text_after:
-            chunks.extend(self._text_splitter.split_text(text_after))
-        if not chunks:
-            chunks = self._text_splitter.split_text(text)
-        return [c for c in chunks if c.strip()]
+        chunks.extend(_paragraphs(text[last_end:]))
+        return chunks
 
     def split_into_leaf_documents(self, document: Document) -> List[Document]:
         """Produce a leaf-sized Document list (Docling parsing preferred, SentenceSplitter fallback).
@@ -100,11 +105,11 @@ class LeafSplitter:
         Docling chunks may contain control chars such as NUL (\\x00) (from PDF font
         tables / ICC profiles) that PostgreSQL rejects, so we force a final cleanup.
 
-        After the fallback path's structure-aware split (.txt/.csv/SimpleDirectoryReader),
-        it runs the same `_refine_chunks_for_token_budget` as the Docling path: measuring
-        the budget with the same embedding tokenizer, token-bounded splitting of large
-        [TABLE_START] table blocks with header repetition, and merging small chunks —
-        keeping both paths consistent.
+        The fallback path (.txt / transcripts / SimpleDirectoryReader) feeds its
+        structural units straight into the same `_refine_chunks_for_token_budget` as the
+        Docling path: budgets measured with the embedding tokenizer, oversized units
+        split at line / sentence boundaries (tables with header repetition), small
+        units merged — with no overlap, so no sentence is ever stored twice.
 
         Args:
             document: the fully loaded Document (its metadata may hide `_docling_chunks`).
@@ -116,7 +121,7 @@ class LeafSplitter:
         if pre_parsed:
             chunk_texts = pre_parsed
         else:
-            chunk_texts = self.structure_aware_split(clean_text(document.text))
+            units = self.structure_aware_split(clean_text(document.text))
             # Uniform token-budget guarantee (same formula as DocumentLoader's docling path)
             try:
                 from src.domain.rag.docling_loader import (
@@ -124,14 +129,17 @@ class LeafSplitter:
                     _refine_chunks_for_token_budget,
                 )
                 hf_tok = get_hf_tokenizer(self._embedding_model_name)
-                budget, _ = token_budgets(self._leaf_chunk_size, self._has_context_generator)
-                chunk_texts = _refine_chunks_for_token_budget(chunk_texts, hf_tok, budget)
+                budget, table_budget = token_budgets(self._leaf_chunk_size, self._has_context_generator)
+                chunk_texts = _refine_chunks_for_token_budget(
+                    units, hf_tok, budget, table_max_tokens=table_budget)
             except Exception as e:
-                # When the tokenizer is unavailable, degrade to the structure-only split (legacy behavior) without blocking indexing
+                # No tokenizer at all: degrade to the overlap-free sentence splitter
+                # (sized in its own tokens) rather than blocking indexing.
                 logger.warning(
                     f"Token-budget refine unavailable for fallback split "
-                    f"(degrading to structure-only): {e}"
+                    f"(degrading to a plain sentence split): {e}"
                 )
+                chunk_texts = [c for u in units for c in self._text_splitter.split_text(u)]
 
         leaf_docs: List[Document] = []
         # Dedupe within the same document (placeholder residual chunks often repeat 10+

@@ -963,38 +963,77 @@ def _split_by_sentence(text: str, tokenizer, max_tokens: int) -> List[str]:
     return out
 
 
+def _snap_to_space(text: str, start: int, cut: int) -> int:
+    """Move a cut back to just after the last whitespace in the final fifth of the
+    piece, so space-delimited text is not cut mid-word (CJK has no spaces: unchanged)."""
+    floor = start + (cut - start) * 4 // 5
+    ws = max(text.rfind(" ", floor, cut), text.rfind("\n", floor, cut))
+    return ws + 1 if ws >= floor and ws + 1 > start else cut
+
+
 def _split_by_chars(text: str, tokenizer, max_tokens: int) -> List[str]:
     """Last-resort character split with tokenizer verification.
 
-    Reached for pathological inputs: single sentences > max_tokens
-    (rare in zh / en, common for poorly punctuated dumps or numeric
-    sequences). We slice by an estimated char-per-token ratio, then
-    verify each slice; if the estimate undershot we halve and retry.
+    Reached for pathological inputs: a clause > max_tokens with no sentence or
+    clause punctuation (unpunctuated ASR output, numeric dumps). Each piece is the
+    longest prefix that fits (binary search on its length, one encode per step);
+    the cuts are then evened out so the last piece is no runt. A single character
+    over budget is emitted as-is (progress guarantee).
     """
-    out: List[str] = []
-    # Conservative CJK-friendly estimate: 1.5 chars per token. English
-    # would be ~3-4, but undershooting just causes one extra verify cycle.
-    chars_per_chunk = max(64, int(max_tokens * 1.5))
+    n = len(text)
+    # No tokenizer packs more than ~8 characters into a token in practice; bounding
+    # the search keeps encode calls short on huge unpunctuated dumps.
+    span = max(64, max_tokens * 8)
+
+    def fits(a: int, b: int) -> bool:
+        return _count_tokens(tokenizer, text[a:b]) <= max_tokens
+
+    cuts: List[int] = []
     i = 0
-    while i < len(text):
-        piece = text[i:i + chars_per_chunk]
-        if _count_tokens(tokenizer, piece) > max_tokens:
-            if chars_per_chunk <= 32:
-                # Progress guarantee: even at the 32-char floor it still exceeds budget (a pathological
-                # combination of a tiny max_tokens + high-token-density characters). Hard-cut, emit,
-                # and advance — better a slightly oversized single chunk than an infinite loop.
-                logger.warning(
-                    f"[CHUNK] 32-char piece still exceeds {max_tokens} tokens; "
-                    f"emitting oversized piece to guarantee progress"
-                )
-                out.append(piece)
-                i += chars_per_chunk
-                continue
-            # Estimate too generous — halve and retry without advancing
-            chars_per_chunk = max(32, chars_per_chunk // 2)
-            continue
-        out.append(piece)
-        i += chars_per_chunk
+    while i < n:
+        hi = min(n, i + span)
+        if fits(i, hi):
+            j = hi
+        elif not fits(i, i + 1):
+            logger.warning(
+                f"[CHUNK] a single character exceeds {max_tokens} tokens; "
+                f"emitting oversized piece to guarantee progress"
+            )
+            j = i + 1
+        else:
+            lo = i + 1  # fits
+            while hi - lo > 1:  # invariant: fits(i, lo), not fits(i, hi)
+                mid = (lo + hi) // 2
+                if fits(i, mid):
+                    lo = mid
+                else:
+                    hi = mid
+            j = _snap_to_space(text, i, lo) if lo < n else lo
+        cuts.append(j)
+        i = j
+
+    if len(cuts) > 1:
+        # Even out: the same number of pieces, equal character lengths, if they all fit.
+        k = len(cuts)
+        even: List[int] = []
+        start = 0
+        for idx in range(1, k):
+            cut = _snap_to_space(text, start, idx * n // k)
+            if cut <= start:
+                break
+            even.append(cut)
+            start = cut
+        even.append(n)
+        bounds = [0] + even
+        if len(even) == k and all(fits(a, b) for a, b in zip(bounds, even)):
+            cuts = even
+
+    out: List[str] = []
+    start = 0
+    for cut in cuts:
+        if text[start:cut]:
+            out.append(text[start:cut])
+        start = cut
     return out
 
 
