@@ -4,8 +4,9 @@
 All Pydantic config models are collected here for reuse across the project.
 """
 
+import logging as _logging
 from typing import List, Literal, Optional, Union
-from pydantic import BaseModel, ConfigDict, Field, PrivateAttr, model_validator
+from pydantic import BaseModel, ConfigDict, Field, PrivateAttr, field_validator, model_validator
 
 # Secrets are excluded from repr()/str() (repr=False), so logging a whole config
 # object, or an exception message that embeds one, can never print them.
@@ -427,12 +428,34 @@ class ParsingConfig(BaseModel):
     prompt: Optional[str] = None  # override the built-in language-neutral transcription prompt
 
 
+# Upper bound for rag.indexing.max_concurrent_jobs (and FOLIO_INDEXING_CONCURRENCY).
+MAX_INDEXING_CONCURRENCY = 32
+
+
 class IndexingConfig(BaseModel):
     """Behavior control for background indexing jobs."""
-    # Max concurrent files per job. Kept low (4) because docling convert is serialized by
-    # DOCLING_INFER_LOCK; a high value would starve the shared executor. Override via
+    # Max files indexed at once, process-wide (one semaphore shared by every job). Kept
+    # low (4) because docling convert is serialized by DOCLING_INFER_LOCK and each file
+    # fans out contextual-prefix LLM calls and embedding batches. Range 1..32; a larger
+    # value (old configs shipped 100) is capped at 32 with a warning. Override via
     # FOLIO_INDEXING_CONCURRENCY.
-    max_concurrent_jobs: int = 4
+    max_concurrent_jobs: int = Field(4, ge=1)
+
+    # Threads in the dedicated indexing pool (src/domain/rag/indexing_executor.py).
+    # Indexing's blocking work (docling, prefix LLM calls, embedding, pgvector writes)
+    # runs there instead of the event loop's default executor, so the query path's
+    # to_thread calls never queue behind a large indexing job.
+    executor_workers: int = Field(16, ge=1, le=64)
+
+    @field_validator("max_concurrent_jobs")
+    @classmethod
+    def _cap_concurrency(cls, v: int) -> int:
+        if v > MAX_INDEXING_CONCURRENCY:
+            _logging.getLogger(__name__).warning(
+                f"rag.indexing.max_concurrent_jobs={v} is above {MAX_INDEXING_CONCURRENCY}; "
+                f"using {MAX_INDEXING_CONCURRENCY} (set 4-8 for normal use)")
+            return MAX_INDEXING_CONCURRENCY
+        return v
 
     # Per-file limit (seconds); override via FOLIO_PER_FILE_TIMEOUT_SECONDS. Default is effectively
     # unlimited (10 days), relying on the 60s keepalive heartbeat instead of a hard timeout.

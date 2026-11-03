@@ -110,9 +110,11 @@ rag:
 
   # Indexing background-job behavior (auto-indexing of uploaded files goes through here)
   indexing:
-    # Max concurrent jobs (100 ≈ unlimited); lower it only on GPU OOM / OCR thrash (typically 4-8)
-    # env FOLIO_INDEXING_CONCURRENCY can override this at runtime
-    max_concurrent_jobs: 100
+    # Max files indexed at once across all jobs (1-32; typically 4-8). Higher values starve
+    # queries of DB connections, LLM capacity and threads. env FOLIO_INDEXING_CONCURRENCY overrides.
+    max_concurrent_jobs: 4
+    # Threads reserved for indexing's blocking work, apart from the query path's (1-64)
+    executor_workers: 16
     # Per-file / per-job indexing limit defaults to 10 days (see IndexingConfig in
     # src/config/model.py) — for large-file OCR on slow machines. Change the default
     # in model.py; do not override it here. For temporary tweaks use the env vars:
