@@ -208,57 +208,113 @@ class ChunkLookup:
             return None
 
     @staticmethod
-    def fetch_file_full(vector_store: PGVectorStore, file_id: str, max_tokens: int = 30000) -> dict:
-        """Fetch all leaf chunks of an entire file and join them in order into the full text (for mode='read').
+    def fetch_file_full(vector_store: PGVectorStore, file_id: str, max_tokens: int = 30000,
+                        offset: int = 0) -> dict:
+        """One page of a file's text (mode='read'): its leaf chunks in order, from
+        chunk index ``offset``, joined until ``max_tokens`` (estimated) is reached.
+
+        The first chunk of a page is always included, so paging always advances.
 
         Returns:
             {
-                "text": "the full text",
+                "text": the page's text,
                 "tokens_estimated": int,
-                "truncated": bool,
-                "chunk_count": int,
+                "truncated": bool,          # more chunks follow this page
+                "chunk_count": int,         # chunks in this page
+                "total_chunks": int,        # leaf chunks of the whole file
+                "offset": int,              # chunk index this page starts at
+                "next_offset": int | None,  # chunk index of the next page
             }
         """
+        from src.domain.rag.token_budget import estimate_tokens
+
+        offset = max(0, int(offset or 0))
+        empty = {"text": "", "tokens_estimated": 0, "truncated": False, "chunk_count": 0,
+                 "total_chunks": 0, "offset": offset, "next_offset": None}
         table = ChunkLookup._get_table_name(vector_store)
         engine = ChunkLookup._get_engine(vector_store)
 
         # Backward compatibility: treat legacy chunks as leaves
         query = sql_text(f"""
-            SELECT
-                text,
-                (metadata_->>'chunk_index')::int AS idx
-            FROM "{table}"
-            WHERE metadata_->>'file_id' = :file_id
-              AND COALESCE(metadata_->>'node_role', 'leaf') = 'leaf'
+            SELECT text, idx, total FROM (
+                SELECT
+                    text,
+                    (metadata_->>'chunk_index')::int AS idx,
+                    count(*) OVER () AS total
+                FROM "{table}"
+                WHERE metadata_->>'file_id' = :file_id
+                  AND COALESCE(metadata_->>'node_role', 'leaf') = 'leaf'
+            ) leaves
+            WHERE idx >= :offset
             ORDER BY idx ASC
         """)
         try:
             with engine.connect() as conn:
-                rows = conn.execute(query, {"file_id": str(file_id)}).fetchall()
-
-            if not rows:
-                return {"text": "", "tokens_estimated": 0, "truncated": False, "chunk_count": 0}
-
-            from src.domain.rag.hierarchy import estimate_tokens
-
-            joined_parts = []
-            running_tokens = 0
-            truncated = False
-            for r in rows:
-                t = r[0]
-                t_tokens = estimate_tokens(t)
-                if running_tokens + t_tokens > max_tokens:
-                    truncated = True
-                    break
-                joined_parts.append(t)
-                running_tokens += t_tokens
-
-            return {
-                "text": "\n\n".join(joined_parts),
-                "tokens_estimated": running_tokens,
-                "truncated": truncated,
-                "chunk_count": len(joined_parts),
-            }
+                rows = conn.execute(query, {"file_id": str(file_id), "offset": offset}).fetchall()
         except Exception as e:
             logger.warning(f"fetch_file_full failed for file={file_id}: {e}")
-            return {"text": "", "tokens_estimated": 0, "truncated": False, "chunk_count": 0}
+            return empty
+        if not rows:
+            return empty
+
+        parts: List[str] = []
+        running = 0
+        next_offset: Optional[int] = None
+        for text, idx, _ in rows:
+            t_tokens = estimate_tokens(text)
+            if parts and running + t_tokens > max_tokens:
+                next_offset = int(idx)
+                break
+            parts.append(text)
+            running += t_tokens
+        return {
+            "text": "\n\n".join(parts),
+            "tokens_estimated": running,
+            "truncated": next_offset is not None,
+            "chunk_count": len(parts),
+            "total_chunks": int(rows[0][2]),
+            "offset": offset,
+            "next_offset": next_offset,
+        }
+
+    @staticmethod
+    def file_token_estimates(table_name: str) -> Dict[str, int]:
+        """Estimated tokens of every file's leaf text in a folder table (mode='list').
+
+        Computed from the stored text (CJK and other characters counted separately,
+        see token_budget.py) in one aggregate query. Empty when the table does not
+        exist yet or the query fails — callers fall back to a per-chunk guess.
+        """
+        from src.domain.rag.token_budget import CJK_TOKENS_PER_CHAR, OTHER_TOKENS_PER_CHAR
+        from db.db import get_engine
+
+        query = sql_text(f"""
+            SELECT metadata_->>'file_id' AS fid,
+                   sum(length(text)) AS chars,
+                   sum(length(regexp_replace(text, :non_cjk, '', 'g'))) AS cjk
+            FROM "{table_name}"
+            WHERE COALESCE(metadata_->>'node_role', 'leaf') = 'leaf'
+            GROUP BY 1
+        """)
+        try:
+            with get_engine().connect() as conn:
+                exists = conn.execute(sql_text("SELECT to_regclass(:t) IS NOT NULL"),
+                                      {"t": '"' + table_name.replace('"', '""') + '"'}).scalar()
+                if not exists:
+                    return {}
+                rows = conn.execute(query, {"non_cjk": _NON_CJK_PATTERN}).fetchall()
+        except Exception as e:
+            logger.warning(f"file_token_estimates failed for {table_name}: {e}")
+            return {}
+        out: Dict[str, int] = {}
+        for fid, chars, cjk in rows:
+            chars, cjk = int(chars or 0), int(cjk or 0)
+            out[str(fid)] = int(round(cjk * CJK_TOKENS_PER_CHAR
+                                      + (chars - cjk) * OTHER_TOKENS_PER_CHAR))
+        return out
+
+
+# Postgres regex matching every character that is NOT counted as CJK by
+# token_budget.estimate_tokens (kept in sync with its character class).
+_NON_CJK_PATTERN = ("[^\u3000-\u303f\u3040-\u30ff\u3400-\u4dbf\u4e00-\u9fff"
+                    "\uac00-\ud7af\uf900-\ufaff\uff00-\uffef]")

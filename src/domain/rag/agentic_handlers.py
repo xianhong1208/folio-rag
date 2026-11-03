@@ -322,6 +322,13 @@ def handle_list(*, folder) -> dict:
             msg=f"fallback to 'not_indexed' for all files: {e}",
         )
 
+    # Token estimates from the stored chunk text (one aggregate query); a file the
+    # query does not cover falls back to ~200 tokens per leaf chunk.
+    token_map = {}
+    if getattr(folder, "vector_table_uuid", None):
+        token_map = ChunkLookup.file_token_estimates(
+            f"data_{folder.id}_{folder.vector_table_uuid}")
+
     status_counts = Counter()
     total_chunks = 0
     file_list = []
@@ -331,9 +338,9 @@ def handle_list(*, folder) -> dict:
         status_counts[status] += 1
         total_chunks += chunk_count
 
-        # Rough estimate: ~200 tokens per leaf chunk (aligned with leaf_chunk_size 256).
-        # This is for the agent to judge whether it can read the whole file; precision isn't needed.
-        estimated_tokens = chunk_count * 200 if chunk_count > 0 else None
+        estimated_tokens = token_map.get(str(f.id))
+        if estimated_tokens is None:
+            estimated_tokens = chunk_count * 200 if chunk_count > 0 else None
         file_list.append({
             "file_id": str(f.id),
             "file_name": f.file_name,
@@ -351,8 +358,9 @@ def handle_list(*, folder) -> dict:
         "total_files": len(file_list),
         "files": file_list,
         "_hint": (
-            "Files with estimated_tokens < 30000 can be loaded fully via mode='read'. "
-            "For others, use mode='search' to find relevant sections."
+            f"mode='read' returns up to ~{READ_PAGE_TOKENS} tokens per call; a longer file "
+            "comes in pages (pass next_offset back as offset). To answer a question, "
+            "use mode='search' instead."
         ),
     }
 
@@ -372,26 +380,32 @@ def handle_list(*, folder) -> dict:
     return response
 
 
+READ_PAGE_TOKENS = 30000
+
+
 async def handle_read(
     *,
     file_id: str,
     folder,
     vector_store,
-    max_tokens: int = 30000,
+    max_tokens: int = READ_PAGE_TOKENS,
+    offset: Optional[int] = None,
 ) -> dict:
-    """mode='read' handler — load and return an entire file's content (use sparingly).
+    """mode='read' handler — return a file's content, one page at a time (use sparingly).
 
-    Verifies the file belongs to the current folder (prevents cross-folder access) and enforces a
-    max_tokens cap.
+    Verifies the file belongs to the current folder (prevents cross-folder access).
+    A page holds up to ``max_tokens`` (estimated); when the file continues, the
+    response carries ``next_offset`` — pass it back as ``offset`` for the next page.
 
     Args:
         file_id: UUID of the file to read.
         folder: The permission-validated Folder ORM.
         vector_store: PGVectorStore (taken from ctx, used for chunk lookup).
-        max_tokens: Content cap; truncates and marks truncated=True when exceeded.
+        max_tokens: Page size in estimated tokens.
+        offset: Chunk index to start from (0 / None = the beginning).
 
     Returns:
-        dict ``{content, truncated, file_name, ...}``.
+        dict ``{content, truncated, next_offset, file_name, ...}``.
     """
     start = time.perf_counter()
 
@@ -400,7 +414,7 @@ async def handle_read(
         "READ_START",
         folder_id=folder.id,
         file_id=file_id,
-        msg=f"folder='{folder.name}' max_tokens={max_tokens}",
+        msg=f"folder='{folder.name}' max_tokens={max_tokens} offset={offset or 0}",
     )
 
     if not file_id:
@@ -413,6 +427,11 @@ async def handle_read(
         return {"mode": "read", "error": "file_id is required for read mode"}
 
     import asyncio
+
+    try:
+        offset = max(0, int(offset or 0))
+    except (TypeError, ValueError):
+        return {"mode": "read", "error": "offset must be a non-negative integer"}
 
     file_records = await asyncio.to_thread(FileDB.get_by_ids, [file_id])
     file_record = file_records.get(file_id) if file_records else None
@@ -447,6 +466,7 @@ async def handle_read(
             vector_store=vector_store,
             file_id=file_id,
             max_tokens=max_tokens,
+            offset=offset,
         )
     except Exception as exc:
         log_err(
@@ -466,17 +486,17 @@ async def handle_read(
         "content": full["text"],
         "tokens_estimated": full["tokens_estimated"],
         "truncated": full["truncated"],
+        "offset": full.get("offset", offset),
+        "next_offset": full.get("next_offset"),
         "chunk_count": full["chunk_count"],
-        "_hint": (
-            "Truncated content — consider mode='search' for specific sections."
-            if full["truncated"]
-            else "Full content loaded."
-        ),
+        "total_chunks": full.get("total_chunks", full["chunk_count"]),
+        "_hint": _read_hint(full, offset),
     }
 
     elapsed_ms = (time.perf_counter() - start) * 1000
 
-    truncated_marker = " ⚠️TRUNCATED" if full["truncated"] else ""
+    truncated_marker = (f" ⚠️TRUNCATED next_offset={full.get('next_offset')}"
+                        if full["truncated"] else "")
     log_op_debug(
         logger,
         "READ_DONE",
@@ -490,3 +510,14 @@ async def handle_read(
     )
 
     return response
+
+
+def _read_hint(full: dict, offset: int) -> str:
+    if full.get("truncated"):
+        return (f"Page {offset}..{(full.get('next_offset') or 0) - 1} of "
+                f"{full.get('total_chunks')} chunks. Call again with "
+                f"offset={full.get('next_offset')} for the next page, or use mode='search' "
+                "for specific sections.")
+    if offset and not full.get("chunk_count"):
+        return "No content at this offset (past the end of the file)."
+    return "End of file." if offset else "Full content loaded."
