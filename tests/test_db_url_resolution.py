@@ -83,12 +83,33 @@ def test_vector_store_uses_resolved_port():
     from src.domain.rag import vector_store_manager as vsm_mod
     fake_cfg = MagicMock()
     fake_cfg.database = _cfg("postgresql://postgres:pw@localhost/rag", 5444)
+    fake_cfg.database.vector_store_engines = "per_folder"
     with patch.object(vsm_mod.Config, "get_config_model", return_value=fake_cfg):
         vsm = vsm_mod.VectorStoreManager(embed_dim=8)
-    with patch.object(vsm_mod.PGVectorStore, "from_params") as from_params:
+    with patch.object(vsm_mod, "PGVectorStore") as ctor:
         vsm._create_vector_store("1_abc")
-    assert from_params.call_args.kwargs["port"] == 5444
-    assert from_params.call_args.kwargs["database"] == "rag"
+    # Private engines (per_folder mode) connect with the resolved URL, port applied.
+    kw = ctor.call_args.kwargs
+    assert kw["connection_string"].endswith("@localhost:5444/rag")
+    assert kw["async_connection_string"].startswith("postgresql+asyncpg://")
+    assert kw["async_connection_string"].endswith("@localhost:5444/rag")
+
+
+def test_vector_store_shared_mode_uses_shared_engines():
+    """Default mode: stores run on db.db's engines (which resolve the port themselves)."""
+    from src.domain.rag import vector_store_manager as vsm_mod
+    fake_cfg = MagicMock()
+    fake_cfg.database = _cfg("postgresql://postgres:pw@localhost/rag", 5444)
+    with patch.object(vsm_mod.Config, "get_config_model", return_value=fake_cfg):
+        vsm = vsm_mod.VectorStoreManager(embed_dim=8)
+    eng, aeng = MagicMock(), MagicMock()
+    with patch.object(vsm_mod, "PGVectorStore") as ctor, \
+         patch.object(vsm_mod, "get_engine", return_value=eng), \
+         patch.object(vsm_mod, "get_async_engine", return_value=aeng):
+        vsm._create_vector_store("1_abc")
+    kw = ctor.call_args.kwargs
+    assert kw["engine"] is eng and kw["async_engine"] is aeng
+    assert "pw" not in kw["connection_string"]
 
 
 # Files that open database connections outside db/db.py's engines.

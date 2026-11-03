@@ -3,10 +3,14 @@ database:
   url: "${DATABASE_URL:-postgresql://postgres:CHANGE_ME@localhost/agentic_rag}"
   port: 5444
   echo: false
-  pool_size: 5
+  # Two shared pools (sync psycopg2 + async asyncpg) serve the whole app, every
+  # folder's vector store included: at most 2 x (pool_size + max_overflow) connections.
+  pool_size: 10
   max_overflow: 10
   pool_timeout: 30
   pool_recycle: 3600
+  vector_store_engines: shared     # shared | per_folder (private 1+2 pools per cached folder)
+  vector_store_cache_size: 64      # LRU size for per-folder PGVectorStore objects
 
 # Server Configuration
 server:

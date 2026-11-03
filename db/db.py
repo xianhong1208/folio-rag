@@ -212,6 +212,30 @@ class QueryLog(Base):
     )
 
 
+def _int_or(value, default: int) -> int:
+    # Config objects in tests are often MagicMocks; anything that is not a real int
+    # falls back to the default rather than leaking a mock into create_engine.
+    return value if isinstance(value, int) and not isinstance(value, bool) else default
+
+
+def pool_kwargs(db_conf, *, pool_size=None, max_overflow=None) -> dict:
+    """QueuePool settings for an engine built from the ``database`` config section.
+
+    Both shared engines (sync + async) take database.pool_size / max_overflow /
+    pool_timeout / pool_recycle; pool_pre_ping drops connections the server closed
+    (idle timeout, restart) instead of handing them to a request. ``pool_size`` /
+    ``max_overflow`` override the configured values (the per-folder vector-store
+    engines use a much smaller pool).
+    """
+    return {
+        "pool_size": pool_size if pool_size is not None else _int_or(getattr(db_conf, "pool_size", None), 5),
+        "max_overflow": max_overflow if max_overflow is not None else _int_or(getattr(db_conf, "max_overflow", None), 10),
+        "pool_timeout": _int_or(getattr(db_conf, "pool_timeout", None), 30),
+        "pool_recycle": _int_or(getattr(db_conf, "pool_recycle", None), 3600),
+        "pool_pre_ping": True,
+    }
+
+
 def get_engine():
     """Return the configured SQLAlchemy engine, creating it from Config if not yet built.
 
@@ -230,6 +254,7 @@ def get_engine():
         _engine = create_engine(
             db_uri,
             echo=echo_flag,
+            **pool_kwargs(db_conf),
         )
         Session.configure(bind=_engine)
     return _engine
@@ -243,7 +268,8 @@ def get_async_engine():
 
     Used on the query hot path for DB I/O that must not block the event loop. Reads the
     same config as get_engine() with the driver rewritten to postgresql+asyncpg://; its
-    pool is counted independently from the sync engine.
+    pool is counted independently from the sync engine. Every folder's PGVectorStore
+    runs on this engine and get_engine() as well (see VectorStoreManager).
     """
     global _async_engine
     if _async_engine is None:
@@ -256,9 +282,7 @@ def get_async_engine():
         _async_engine = create_async_engine(
             async_uri,
             echo=getattr(db_conf, 'echo', False),
-            pool_size=getattr(db_conf, 'pool_size', 5),
-            max_overflow=getattr(db_conf, 'max_overflow', 10),
-            pool_recycle=getattr(db_conf, 'pool_recycle', 3600),
+            **pool_kwargs(db_conf),
         )
     return _async_engine
 

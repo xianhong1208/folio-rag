@@ -31,6 +31,13 @@ class DatabaseConfig(BaseModel):
     database: Optional[str] = None
     user: Optional[str] = None
     password: Optional[str] = Field(None, repr=False)
+    # How each folder's PGVectorStore connects. "shared" (default): every store reuses
+    # the two shared engines above (pool_size + max_overflow connections each, no
+    # matter how many folders exist). "per_folder": each cached store gets its own
+    # small sync + async pools (1 + 2 connections each), disposed on cache eviction.
+    vector_store_engines: Literal["shared", "per_folder"] = "shared"
+    # Max PGVectorStore objects kept in the LRU cache (least recently used evicted).
+    vector_store_cache_size: int = Field(64, ge=1, le=10000)
 
 
 class DynamicToolsConfig(BaseModel):
