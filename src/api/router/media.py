@@ -10,7 +10,6 @@ Endpoints:
 - POST /v1/ocr/general             — image/pdf → text (Docling OCR pipeline)
 - GET  /v1/models                  — list the loaded models
 """
-import subprocess
 import tempfile
 import threading
 import time
@@ -29,6 +28,7 @@ from src.domain.rag.audio_defense import (
     _trim_audio_leading_silence,
 )
 from src.log import get_api_logger
+from src.utils.ffmpeg import run_ffmpeg
 
 logger = get_api_logger()
 
@@ -223,7 +223,11 @@ def _transcode_to_wav(input_path: str) -> str:
         "-f", "wav",
         out_path,
     ]
-    result = subprocess.run(cmd, capture_output=True, text=True, errors="replace")
+    try:
+        result = run_ffmpeg(cmd, capture_output=True, text=True, errors="replace")
+    except RuntimeError:
+        Path(out_path).unlink(missing_ok=True)
+        raise
     if result.returncode != 0:
         Path(out_path).unlink(missing_ok=True)
         raise RuntimeError(f"ffmpeg transcode failed: {result.stderr[:500]}")
