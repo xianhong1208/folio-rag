@@ -45,7 +45,10 @@ BREADCRUMB_SEP = " › "
 # older pipeline (or before versions were recorded: NULL) are flagged "re-index
 # recommended" in the console and the REST status endpoints. They keep working as-is.
 # 2: section-aligned chunks, breadcrumbs, original-text display, section-scoped prefixes.
-CHUNK_PIPELINE_VERSION = "2"
+# 3: CJK sentence splitting with balanced pieces, overlap-free fallback split (txt /
+#    transcripts), CSV as a table, parents sized in real tokens, capped breadcrumbs,
+#    timed transcript blocks, no cached empty / chain-of-thought prefixes.
+CHUNK_PIPELINE_VERSION = "3"
 
 
 def reindex_recommended(status: Optional[str], pipeline_version: Optional[str]) -> bool:
