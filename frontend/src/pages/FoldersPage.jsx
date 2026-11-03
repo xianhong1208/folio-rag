@@ -6,7 +6,7 @@ import { pillClass, statusLabel, needsRetry, canRetry, canCancel, isJobActive } 
 import { ftsNotice } from '../lib/fts'
 import EmptyState from '../components/ui/EmptyState'
 import ChunkText, { ContentBadge } from '../components/ui/ChunkText'
-import { isPartial, needsReindex, countNeedsReindex } from '../lib/fileStatus'
+import { isPartial, needsReindex, countNeedsReindex, folderStaleCount, staleFileIds, batches } from '../lib/fileStatus'
 import { useModal } from '../contexts/ModalContext'
 import { useToast } from '../contexts/ToastContext'
 
@@ -144,6 +144,21 @@ export default function FoldersPage() {
     if (!r) return
     try { await post('/api/admin/manage/folders', { name: r.name.trim() }); toast('Folder created', 'ok'); loadFolders() }
     catch (e) { toast('Create failed: ' + e.message, 'bad') }
+  }
+  // Folder list: re-index only the files an older chunking pipeline produced. Same
+  // path as "select stale files → Reindex selected" inside the folder (the retry
+  // endpoint, one background job per batch; re-indexing is incremental).
+  const [staleBusy, setStaleBusy] = useState(null) // folder id while its request is in flight
+  const reindexStale = async (f) => {
+    setStaleBusy(f.id)
+    try {
+      const r = await get(`/api/admin/folders/${f.id}/files`)
+      const ids = staleFileIds(r.data.files)
+      if (!ids.length) { toast('No files need re-indexing', 'ok'); return }
+      for (const b of batches(ids)) await post(`/api/admin/manage/folders/${f.id}/retry`, { file_ids: b })
+      toast(`Re-indexing ${ids.length} stale file(s) in "${f.name}"`, 'ok')
+    } catch (e) { toast('Reindex failed: ' + e.message, 'bad') }
+    finally { setStaleBusy(null); loadFolders() }
   }
   const reindexFolder = async (fid, skip) => {
     try { const r = await post(`/api/admin/manage/folders/${fid}/index`, { skip_existing: skip }); toast(r.message || 'Indexing started', 'ok'); kickPoll() }
@@ -367,7 +382,8 @@ export default function FoldersPage() {
                     <tr key={f.id} className="rowlink" tabIndex={0} role="button"
                       onClick={() => openFolder(f)}
                       onKeyDown={(e) => { if (e.key === 'Enter') openFolder(f) }}>
-                      <td className="cell-main name-cell">{f.name}<div className="sub">{f.description || ''}</div></td>
+                      <td className="cell-main name-cell">{f.name}<div className="sub">{f.description || ''}</div>
+                        {folderStaleCount(f) > 0 && <div className="sub"><span className="reindex-badge" title={`${folderStaleCount(f)} indexed file(s) were chunked by an older pipeline. Still searchable; re-index them for section-aligned chunks.`}>{fmtNum(folderStaleCount(f))} stale</span></div>}</td>
                       <td className="num">{fmtNum(f.file_count)}</td>
                       <td className="num">{fmtBytes(f.total_size_bytes)}</td>
                       <td className="num"><span style={{ color: 'var(--matrix-hi)' }}>{fmtNum(f.indexed_files)}</span>{f.failed_files ? <span style={{ color: 'var(--alert-hi)' }}> · {fmtNum(f.failed_files)} failed</span> : null}</td>
@@ -375,6 +391,7 @@ export default function FoldersPage() {
                       <td className="num">{fmtTime(f.last_indexed_at)}</td>
                       <td onClick={(e) => e.stopPropagation()}><div className="actions">
                         <button className="act-btn" title="Start indexing" onClick={() => reindexFolder(f.id, true)}><Play size={14} /></button>
+                        {folderStaleCount(f) > 0 && <button className="act-btn" title={`Re-index ${folderStaleCount(f)} stale file(s)`} aria-label="Re-index stale files" disabled={staleBusy === f.id} onClick={() => reindexStale(f)}><RotateCcw size={14} /></button>}
                         <button className="act-btn" title="Rename" onClick={() => editFolder(f)}><Pencil size={14} /></button>
                         <button className="act-btn danger" title="Delete folder" onClick={() => deleteFolder(f)}><Trash2 size={14} /></button>
                       </div></td>
