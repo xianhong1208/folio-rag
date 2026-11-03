@@ -41,6 +41,7 @@ from src.domain.rag.chunk_identity import (
 from src.domain.rag.chunk_store import fetch_reusable, replace_file_chunks
 from src.domain.rag.context_scope import SECTION_WINDOW_CHARS, document_outline, section_texts
 from src.domain.rag.han_script import document_language
+from src.domain.rag.hybrid_search import configured_text_search_config
 
 if TYPE_CHECKING:
     from src.domain.rag.context_generator import ContextGenerator
@@ -190,15 +191,7 @@ class HierarchicalIndexer:
         to_tsvector('simple', ...); any other config (e.g. 'english') tokenizes the
         retrieval text directly. Reads the global config; 'simple' when unavailable.
         """
-        try:
-            from src.config.config_manager import Config
-
-            ret = getattr(
-                getattr(Config.get_config_model(), "rag", None), "retrieval", None
-            )
-            return getattr(ret, "text_search_config", "simple") or "simple"
-        except Exception:
-            return "simple"
+        return configured_text_search_config()
 
     @staticmethod
     def _clean_text(text: str) -> str:

@@ -167,9 +167,8 @@ async def admin_index_folder(
 
 
 def _fts_mode() -> str:
-    from src.config.config_manager import Config
-    ret = getattr(getattr(Config.get_config_model(), "rag", None), "retrieval", None)
-    return getattr(ret, "text_search_config", "simple") or "simple"
+    from src.domain.rag.hybrid_search import configured_text_search_config
+    return configured_text_search_config()
 
 
 @router.get("/api/admin/manage/folders/{folder_id}/fts")
