@@ -123,40 +123,48 @@ class ChunkLookup:
             return {}
 
     @staticmethod
-    async def afetch_neighbor_windows(
+    async def afetch_rows_in_ranges(
         vector_store: PGVectorStore,
-        requests: List[Tuple[str, int]],
-        n: int,
-    ) -> List[dict]:
-        """Batch-fetch multiple (file_id, center_chunk_index±n) neighbor windows in one query.
+        ranges: List[Tuple[str, int, int]],
+    ) -> Dict[str, List[Tuple[int, str, Optional[str]]]]:
+        """Leaf rows of several ``(file_id, lo, hi)`` chunk-index ranges, in one query.
 
-        Uses an OR-chain of parameterized range conditions, then splits by window on
-        the Python side; overlapping windows each take their own rows. Returns a list
-        the same length/order as requests, each shaped
-        ``{"text": joined passage, "index_range": [start, end], "chunks": [{"chunk_index", "text"}, ...]}``.
+        Overlapping ranges of a file are merged before querying, so each row is
+        read once. Returns ``{file_id: [(chunk_index, text, parent_node_id), ...]}``
+        sorted by chunk index; empty on DB failure (callers then show the hit alone).
         """
-        empty = lambda c: {"text": "", "index_range": [c, c], "chunks": []}  # noqa: E731
-        if not requests:
-            return []
-        table = ChunkLookup._get_table_name(vector_store)
-        from db.db import get_async_engine
-
+        merged: Dict[str, List[List[int]]] = {}
+        for fid, lo, hi in ranges:
+            merged.setdefault(str(fid), []).append([max(int(lo), 0), int(hi)])
+        if not merged:
+            return {}
         conditions = []
         params: Dict[str, object] = {}
-        for i, (file_id, center) in enumerate(requests):
-            conditions.append(
-                f"(metadata_->>'file_id' = :fid_{i} "
-                f"AND (metadata_->>'chunk_index')::int BETWEEN :s_{i} AND :e_{i})"
-            )
-            params[f"fid_{i}"] = str(file_id)
-            params[f"s_{i}"] = max(center - n, 0)
-            params[f"e_{i}"] = center + n
+        i = 0
+        for fid, ivs in merged.items():
+            ivs.sort()
+            union: List[List[int]] = []
+            for lo, hi in ivs:
+                if union and lo <= union[-1][1] + 1:
+                    union[-1][1] = max(union[-1][1], hi)
+                else:
+                    union.append([lo, hi])
+            for lo, hi in union:
+                conditions.append(
+                    f"(metadata_->>'file_id' = :fid_{i} "
+                    f"AND (metadata_->>'chunk_index')::int BETWEEN :s_{i} AND :e_{i})")
+                params.update({f"fid_{i}": fid, f"s_{i}": lo, f"e_{i}": hi})
+                i += 1
+
+        table = ChunkLookup._get_table_name(vector_store)
+        from db.db import get_async_engine
 
         query = sql_text(f"""
             SELECT
                 metadata_->>'file_id' AS fid,
+                (metadata_->>'chunk_index')::int AS idx,
                 text,
-                (metadata_->>'chunk_index')::int AS idx
+                metadata_->>'parent_node_id' AS pid
             FROM "{table}"
             WHERE COALESCE(metadata_->>'node_role', 'leaf') = 'leaf'
               AND ({" OR ".join(conditions)})
@@ -166,31 +174,12 @@ class ChunkLookup:
             async with get_async_engine().connect() as conn:
                 rows = (await conn.execute(query, params)).fetchall()
         except Exception as e:
-            logger.warning(f"afetch_neighbor_windows failed ({len(requests)} windows): {e}")
-            return [empty(c) for _, c in requests]
-
-        # Bucket by file_id, then each window takes its own range (an overlapping window can include the same row)
-        by_file: Dict[str, List[Tuple[int, str]]] = {}
-        for fid, txt, idx in rows:
-            by_file.setdefault(fid, []).append((idx, txt))
-
-        results = []
-        for file_id, center in requests:
-            start, end = max(center - n, 0), center + n
-            hits = [
-                {"chunk_index": idx, "text": txt}
-                for idx, txt in by_file.get(str(file_id), [])
-                if start <= idx <= end
-            ]
-            if not hits:
-                results.append(empty(center))
-                continue
-            results.append({
-                "text": "\n\n".join(h["text"] for h in hits),
-                "index_range": [hits[0]["chunk_index"], hits[-1]["chunk_index"]],
-                "chunks": hits,
-            })
-        return results
+            logger.warning(f"afetch_rows_in_ranges failed ({len(conditions)} ranges): {e}")
+            return {}
+        out: Dict[str, List[Tuple[int, str, Optional[str]]]] = {}
+        for fid, idx, txt, pid in rows:
+            out.setdefault(fid, []).append((idx, txt, pid))
+        return out
 
     @staticmethod
     def fetch_node(vector_store: PGVectorStore, node_id: str) -> Optional[TextNode]:

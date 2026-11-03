@@ -167,7 +167,7 @@ def test_rag_retrieval_config_required_and_defaults():
     assert cfg.return_resource_files is False
     assert cfg.auto_merging is None
     assert cfg.expand_context_default is True
-    assert cfg.expand_context_neighbors == 2
+    assert cfg.expand_context_neighbors == 1
 
 
 def test_contextual_retrieval_config_defaults():
