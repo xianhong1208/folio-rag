@@ -7,7 +7,8 @@ Core logic:
    path REST, the console and the eval harness use.
 2. Apply the shared auto-merge rule (src/domain/rag/merge_plan.py): a parent
    whose hit ratio reaches merge_threshold replaces its leaves.
-3. For leaves that weren't promoted, optionally expand their neighbors (expand_context).
+3. For leaves that weren't promoted, optionally expand their neighbors (expand_context):
+   windows stay inside the hit's section and adjacent windows of a file are merged.
 
 Design trade-offs:
 - Does not use LlamaIndex's built-in AutoMergingRetriever, which relies on an in-memory docstore,
@@ -18,11 +19,13 @@ Design trade-offs:
 
 from __future__ import annotations
 
+import time
 from dataclasses import dataclass, field
 from typing import Dict, List, Optional
 
 from llama_index.vector_stores.postgres import PGVectorStore
 
+from src.domain.rag.context_windows import Window, WindowHit, plan_windows, requested_range
 from src.domain.rag.hybrid_search import HybridSearcher, SearchOutcome, SearchSettings
 from src.domain.rag.merge_plan import MERGE_DISABLED, MergeGroup, arrange, plan_merges
 from src.log import get_api_logger
@@ -46,7 +49,8 @@ class MergedResult:
     node_id: str
     node_role: str                    # leaf / parent / expanded
     chunk_index_range: List[int]      # parent: [start, end]; leaf: [i, i]
-    merged_from_leaves: List[str] = field(default_factory=list)  # recorded when a parent merge happens
+    # parent: the hit leaves it replaced; expanded: the hits one merged window covers (when > 1)
+    merged_from_leaves: List[str] = field(default_factory=list)
     # Citation provenance (from leaf node metadata; on a parent merge, taken from the highest-scoring hit leaf)
     page: Optional[int] = None
     headings: Optional[List[str]] = None
@@ -58,7 +62,7 @@ class AutoMergingRetriever:
 
     Usage:
         retriever = AutoMergingRetriever(vector_store=..., reranker=...,
-                                         merge_threshold=0.5, expand_context_neighbors=2)
+                                         merge_threshold=0.5, expand_context_neighbors=1)
         results = await retriever.aquery("question", SearchSettings.from_config(top_k=6))
     """
 
@@ -67,7 +71,7 @@ class AutoMergingRetriever:
         vector_store: PGVectorStore,
         reranker=None,
         merge_threshold: float = 0.5,
-        expand_context_neighbors: int = 2,
+        expand_context_neighbors: int = 1,
         searcher: Optional[HybridSearcher] = None,
     ):
         self._vector_store = vector_store
@@ -90,10 +94,10 @@ class AutoMergingRetriever:
         """Hybrid search → auto-merge → optional neighbour expansion.
 
         DB interaction after retrieval is batched: parent counts, parent content and
-        neighbour windows are one query each.
+        neighbour rows are one query each. Neighbour windows are clipped to the
+        hit's section and merged per file (see context_windows.py), so adjacent
+        hits come back as one passage instead of overlapping copies.
         """
-        from src.domain.rag.chunk_lookup import ChunkLookup
-
         settings = (settings or SearchSettings.from_config()).with_overrides(
             top_k=top_k, similarity_cutoff=similarity_cutoff)
         outcome = await self._searcher.search(query_text, settings)
@@ -102,28 +106,20 @@ class AutoMergingRetriever:
         if not leaf_nodes:
             return []
 
+        t0 = time.perf_counter()
         groups = await plan_merges(self._vector_store, leaf_nodes, self._merge_threshold)
         arranged = arrange(leaf_nodes, groups)
+        _timing(outcome, "merge", t0)
 
-        # Neighbour windows for the leaves that stay leaves, in one batch.
-        window_by_leaf: Dict[str, dict] = {}
         expanding = expand_context and self._expand_context_neighbors > 0
+        windows_by_leaf: Dict[str, Window] = {}
         if expanding:
-            targets = []
-            for item in arranged:
-                if isinstance(item, MergeGroup):
-                    continue
-                fid = item.node.metadata.get("file_id")
-                ci = item.node.metadata.get("chunk_index")
-                if fid is not None and ci is not None:
-                    targets.append((item.node.id_, fid, ci))
-            if targets:
-                windows = await ChunkLookup.afetch_neighbor_windows(
-                    self._vector_store, [(fid, ci) for _, fid, ci in targets],
-                    n=self._expand_context_neighbors)
-                window_by_leaf = {leaf_id: w for (leaf_id, _, _), w in zip(targets, windows)}
+            t0 = time.perf_counter()
+            windows_by_leaf = await self._plan_windows(arranged)
+            _timing(outcome, "expand", t0)
 
         results: List[MergedResult] = []
+        emitted: set = set()
         for item in arranged:
             if isinstance(item, MergeGroup):
                 parent = item.parent
@@ -140,30 +136,82 @@ class AutoMergingRetriever:
                 ))
                 continue
             node = item.node
+            window = windows_by_leaf.get(node.id_)
+            if window is not None:
+                # One result per merged window, in the slot of its best-ranked hit.
+                if id(window) in emitted:
+                    continue
+                emitted.add(id(window))
+                results.append(MergedResult(
+                    text=window.text,
+                    score=window.score,
+                    file_id=node.metadata.get("file_id", ""),
+                    file_name=node.metadata.get("file_name", ""),
+                    node_id=node.id_,
+                    node_role="expanded",
+                    chunk_index_range=[window.start, window.end],
+                    merged_from_leaves=(
+                        [h.node_id for h in window.hits] if len(window.hits) > 1 else []),
+                    **_provenance(node),
+                ))
+                continue
             center = node.metadata.get("chunk_index")
-            if expanding:
-                # A leaf without file_id/chunk_index has no window: keep its own text.
-                window = window_by_leaf.get(
-                    node.id_, {"text": node.text, "index_range": [center, center]})
-                text, role, index_range = window["text"], "expanded", window["index_range"]
-            else:
-                ci = center if center is not None else -1
-                text, role, index_range = node.text, "leaf", [ci, ci]
+            ci = center if center is not None else -1
             results.append(MergedResult(
-                text=text,
+                text=node.text,
                 score=item.score or 0.0,
                 file_id=node.metadata.get("file_id", ""),
                 file_name=node.metadata.get("file_name", ""),
                 node_id=node.id_,
-                node_role=role,
-                chunk_index_range=index_range,
+                # A leaf without file_id/chunk_index has no window: it keeps its own text.
+                node_role="expanded" if expanding else "leaf",
+                chunk_index_range=[ci, ci],
                 **_provenance(node),
             ))
 
         logger.info(
             f"AutoMerge query done: {len(leaf_nodes)} leaves to {len(results)} results "
-            f"({len(groups)} merged to parent)")
+            f"({len(groups)} merged to parent, {len(set(map(id, windows_by_leaf.values())))} "
+            f"window(s)) timings_ms={getattr(outcome, 'timings', {})}")
         return results
+
+    async def _plan_windows(self, arranged) -> Dict[str, Window]:
+        """Neighbour windows for the leaves that stay leaves (one batched query),
+        clipped to their section, skipping merged parents' chunks and merged per
+        file. Returns {leaf node id: its (possibly shared) window}."""
+        from src.domain.rag.chunk_lookup import ChunkLookup
+
+        n = self._expand_context_neighbors
+        hits: List[WindowHit] = []
+        blocked: Dict[str, List[List[int]]] = {}
+        for rank, item in enumerate(arranged):
+            if isinstance(item, MergeGroup):
+                md = item.parent.metadata
+                rng = md.get("children_index_range") or []
+                if md.get("file_id") is not None and len(rng) == 2:
+                    blocked.setdefault(str(md["file_id"]), []).append([int(rng[0]), int(rng[1])])
+                continue
+            md = item.node.metadata
+            fid, ci = md.get("file_id"), md.get("chunk_index")
+            if fid is None or ci is None:
+                continue
+            hits.append(WindowHit(
+                node_id=item.node.id_, file_id=str(fid), chunk_index=int(ci),
+                parent_id=md.get("parent_node_id"), rank=rank,
+                score=float(item.score or 0.0), text=item.node.text))
+        if not hits:
+            return {}
+        rows = await ChunkLookup.afetch_rows_in_ranges(
+            self._vector_store,
+            [(h.file_id, *requested_range(h.chunk_index, n)) for h in hits])
+        windows = plan_windows(hits, rows, n, blocked)
+        return {h.node_id: w for w in windows for h in w.hits}
+
+
+def _timing(outcome, stage: str, started: float) -> None:
+    timings = getattr(outcome, "timings", None)
+    if isinstance(timings, dict):
+        timings[stage] = round((time.perf_counter() - started) * 1000, 1)
 
 
 def _provenance(node) -> dict:

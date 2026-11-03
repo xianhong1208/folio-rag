@@ -844,8 +844,12 @@ class IndexingJobManager:
         async def _run():
             try:
                 self._update_job_state(job_id, status=JobStatus.RUNNING, message=message)
-                fut = asyncio.get_running_loop().run_in_executor(
-                    None, work, progress, should_stop)
+                # Long maintenance work (e.g. Rebuild FTS) runs on the indexing
+                # thread pool, not the default executor the query path uses.
+                from src.domain.rag.indexing_executor import indexing_work
+                with indexing_work():
+                    fut = asyncio.get_running_loop().run_in_executor(
+                        None, work, progress, should_stop)
                 while True:
                     finished, _ = await asyncio.wait({fut}, timeout=self._MAINT_HEARTBEAT_SECONDS)
                     if finished:

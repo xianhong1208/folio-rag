@@ -6,6 +6,7 @@ Shares the indexer / indexing_service / vector_store_manager provided by RAGCont
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import time
 from typing import Any, Dict, List, Optional, TYPE_CHECKING
 
@@ -15,13 +16,15 @@ from src.api.router.response import (
     IndexDocumentResponse,
     IndexFolderResponse,
 )
-from src.config.model import IndexingConfig  # single source for the timeout default
+from src.config.model import IndexingConfig, MAX_INDEXING_CONCURRENCY  # single source for defaults
 from src.domain.exceptions import (
     DomainException,
     FileIndexingError,
     RAGFileNotFoundError,
 )
 from src.domain.rag.hierarchical_indexer import IndexingAbortedError
+from src.adapter.db_offload import run_db
+from src.domain.rag.indexing_executor import indexing_work
 from src.log import get_adapter_logger, log_err, log_op, log_warn
 from src.utils import env_compat
 
@@ -56,27 +59,28 @@ _INDEXING_SEMAPHORE: Optional[asyncio.Semaphore] = None
 _PER_FILE_TIMEOUT_DEFAULT = IndexingConfig.model_fields["per_file_timeout_seconds"].default
 
 
-async def _run_db(fn, *args, **kwargs):
-    """Run a blocking synchronous DB helper on a worker thread so it doesn't hold the event loop.
-
-    baseDB is session-per-call (a fresh session created and closed each time), so
-    running it on a thread is thread-safe.
-
-    Warning: do not use inside an `except asyncio.CancelledError:` block — awaiting
-    during cancellation re-raises CancelledError. Those paths (mark_index_failed on
-    cancel) stay synchronous.
-    """
-    return await asyncio.to_thread(fn, *args, **kwargs)
+# Blocking DB helpers go through a worker thread (see src/adapter/db_offload.py).
+_run_db = run_db
 
 
 def _resolve_indexing_concurrency() -> int:
-    """Resolve max concurrent indexing jobs: env var > config > default 4."""
+    """Resolve max concurrent indexing jobs: env var > config > default 4.
+
+    The env value is clamped to 1..MAX_INDEXING_CONCURRENCY like the config field.
+    """
     env_val = env_compat.getenv("FOLIO_INDEXING_CONCURRENCY")
     if env_val:
         try:
-            return int(env_val)
+            value = int(env_val)
         except ValueError:
             logger.warning(f"Invalid FOLIO_INDEXING_CONCURRENCY={env_val!r}, using config/default")
+        else:
+            clamped = max(1, min(MAX_INDEXING_CONCURRENCY, value))
+            if clamped != value:
+                logger.warning(
+                    f"FOLIO_INDEXING_CONCURRENCY={value} out of range 1..{MAX_INDEXING_CONCURRENCY}; "
+                    f"using {clamped}")
+            return clamped
 
     try:
         from src.config.config_manager import Config
@@ -119,6 +123,19 @@ def _get_indexing_semaphore() -> asyncio.Semaphore:
         _INDEXING_SEMAPHORE = asyncio.Semaphore(limit)
         logger.info(f"[INIT] Indexing semaphore initialized (max_concurrent={limit})")
     return _INDEXING_SEMAPHORE
+
+
+@contextlib.asynccontextmanager
+async def _indexing_slot():
+    """Hold one indexing-semaphore slot and mark the work as indexing work.
+
+    Everything the file's pipeline sends to a thread (docling, prefix LLM calls,
+    embedding batches, pgvector writes) then runs on the dedicated indexing pool
+    (indexing_executor), leaving the default executor to the query path.
+    """
+    async with _get_indexing_semaphore():
+        with indexing_work():
+            yield
 
 
 def _make_timing_entry(
@@ -307,7 +324,7 @@ class RAGIndexingService:
         # _progress_cb is None for the synchronous single-file API: no background job to
         # keep alive, so skip the extra keepalive task.
         if _progress_cb is None:
-            async with _get_indexing_semaphore():
+            async with _indexing_slot():
                 return await self._index_document_locked(
                     file_record=file_record,
                     token=token,
@@ -328,7 +345,7 @@ class RAGIndexingService:
             from src.domain.rag.stage_timer import StageTimer
             timer = StageTimer(inner=keepalive)
             try:
-                async with _get_indexing_semaphore():
+                async with _indexing_slot():
                     return await self._index_document_locked(
                         file_record=file_record,
                         token=token,

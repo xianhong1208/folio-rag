@@ -78,7 +78,8 @@ class TestSegmentedUpload:
         with FakeModelServer() as srv:
             r = _provider(srv).transcribe(audio_path=str(audio), file_name="talk.mp3")
             posts = srv.posts("/audio/transcriptions")
-            assert r.text == "hello" and r.chunks is None and len(posts) == 1
+            assert r.text == "hello" and len(posts) == 1
+            assert r.chunks == [{"text": "hello", "headings": ["00:00:00–00:00:02"]}]
             form = posts[0]
             assert form["model"] == "whisper-1" and form["response_format"] == "json"
             assert form["file"]["filename"] == "talk.mp3"
@@ -97,6 +98,10 @@ class TestSegmentedUpload:
             posts = srv.posts("/audio/transcriptions")
         assert len(posts) == 3
         assert r.text.split("\n") == ["part-0000", "part-0001", "part-0002"]
+        # timed records: all three segments start in the first 5-minute block
+        assert [c["text"] for c in r.chunks] == ["part-0000", "part-0001", "part-0002"]
+        assert len({tuple(c["headings"]) for c in r.chunks}) == 1
+        assert r.chunks[0]["headings"][0].startswith("00:00:00–00:01:2")
         assert all(p["language"] == "en" for p in posts)
         # every upload stays well under the per-request limit (30 s of 16k pcm16 ≈ 1 MB)
         assert all(p["file"]["size"] < 1_100_000 for p in posts)

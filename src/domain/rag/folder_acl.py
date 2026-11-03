@@ -18,6 +18,8 @@ Design principles:
 
 from __future__ import annotations
 
+import asyncio
+
 from db.folderdb import FolderDB
 from src.domain.exceptions import UnauthorizedAccessError
 from src.log import get_mcptools_logger
@@ -39,3 +41,9 @@ def verify_folder_access(token: str, folder_name: str):
             reason="Folder not found or token lacks access",
         )
     return folders[0]
+
+
+async def averify_folder_access(token: str, folder_name: str):
+    """:func:`verify_folder_access` for async callers: the sync DB lookup runs in a
+    worker thread so a slow database does not block the event loop."""
+    return await asyncio.to_thread(verify_folder_access, token, folder_name)

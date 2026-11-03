@@ -3,10 +3,19 @@ database:
   url: "${DATABASE_URL:-postgresql://postgres:CHANGE_ME@localhost/agentic_rag}"
   port: 5444
   echo: false
-  pool_size: 5
+  # Two shared pools (sync psycopg2 + async asyncpg) serve the whole app, every
+  # folder's vector store included: at most 2 x (pool_size + max_overflow) connections.
+  pool_size: 10
   max_overflow: 10
   pool_timeout: 30
   pool_recycle: 3600
+  vector_store_engines: shared     # shared | per_folder (private 1+2 pools per cached folder)
+  vector_store_cache_size: 64      # LRU size for per-folder PGVectorStore objects
+  # Days kept in append-only tables (0 = keep for ever); purged at startup, then daily
+  retention:
+    index_jobs_days: 30            # finished indexing jobs
+    query_logs_days: 90            # query analytics
+    settings_audit_days: 365       # settings change history
 
 # Server Configuration
 server:
@@ -23,6 +32,16 @@ auth:
   cache_ttl: 60                              # JWKS cache TTL (seconds)
   dynamic_tools:
     enabled: true # dynamic per-folder tool registration
+  # MCP Gate revocation feed: without it a token revoked in MCP Gate keeps working here
+  # until it expires. Needs a confidential client bound to this server in MCP Gate
+  # (README -> "Token revocation"). The secret must stay an ${ENV_VAR} reference.
+  revocation:
+    enabled: ${FOLIO_REVOCATION_ENABLED:-false}
+    client_id: "${FOLIO_REVOCATION_CLIENT_ID:-}"
+    client_secret: "${FOLIO_REVOCATION_CLIENT_SECRET:-}"
+    poll_interval_sec: 30                      # a revocation takes effect within about this long
+    fail_mode: "open"                          # open | closed (reject all tokens when the feed is stale)
+    stale_after_intervals: 4                   # "stale" = no successful poll for 4 x poll_interval_sec
 
 # Logging
 logging:
@@ -60,6 +79,8 @@ rag:
     # e5 requires these prefixes; remove them for the bge family
     query_prefix: "query: "
     passage_prefix: "passage: "
+    embed_batch_size: 64                        # texts per embedding request
+    max_input_tokens: 512                       # model input window; breadcrumb / prefix are shortened to fit (never the chunk)
 
   # LLM — generates a context prefix for each chunk at index time (used by Contextual Retrieval)
   llm:
@@ -106,9 +127,11 @@ rag:
 
   # Indexing background-job behavior (auto-indexing of uploaded files goes through here)
   indexing:
-    # Max concurrent jobs (100 ≈ unlimited); lower it only on GPU OOM / OCR thrash (typically 4-8)
-    # env FOLIO_INDEXING_CONCURRENCY can override this at runtime
-    max_concurrent_jobs: 100
+    # Max files indexed at once across all jobs (1-32; typically 4-8). Higher values starve
+    # queries of DB connections, LLM capacity and threads. env FOLIO_INDEXING_CONCURRENCY overrides.
+    max_concurrent_jobs: 4
+    # Threads reserved for indexing's blocking work, apart from the query path's (1-64)
+    executor_workers: 16
     # Per-file / per-job indexing limit defaults to 10 days (see IndexingConfig in
     # src/config/model.py) — for large-file OCR on slow machines. Change the default
     # in model.py; do not override it here. For temporary tweaks use the env vars:
@@ -128,7 +151,8 @@ rag:
     enabled: true
     apply_to: "leaf"                            # leaf / parent / all
     max_context_length: 150                     # max prefix length (chars): too long dilutes the chunk body's vector
-    max_concurrent: 20                          # concurrent LLM requests: lower it if the vLLM backend overloads / returns 429
+    max_concurrent: 20                          # concurrent LLM requests per file: lower it if the vLLM backend overloads / returns 429
+    max_concurrent_global: 16                   # cap across all files indexed at once (process-wide)
     # Max full-text fed to the LLM (chars): the document + template + chunk must fit the LLM context; recompute when switching models
     # (60000 chars ≈ 72K tokens, safe for gpt-oss @100K context)
     max_doc_chars: 60000
@@ -152,9 +176,11 @@ rag:
     default_top_k: 10                           # number of chunks returned: incomplete answers → raise it; too much noise → lower it
     default_similarity_cutoff: 0.25             # vector similarity floor: raise it to filter weak matches, too high returns nothing
     default_sparse_top_k: 12                    # number of BM25-side candidates: proper nouns / IDs not found → raise it
+    rerank_candidates: 60                       # fused candidates the reranker sees: max(3 × top_k, this); cross-lingual / paraphrased hits often rank 30-60 before rerank
     default_hybrid_alpha: 0.75                  # 0=pure BM25, 1=pure vector: lower it for term/code-heavy queries
     hybrid_search: true
     text_search_config: "simple"                # Postgres FTS config; Chinese is segmented in Python via CKIP (ckip-transformers), then tokenized here with `simple`
+    ckip_device: "cpu"                          # CKIP segmenter device: cpu / cuda / cuda:N / auto
 
     # Auto-Merging — automatically promote when multiple hit leaves share one parent
     auto_merging:
@@ -163,14 +189,19 @@ rag:
 
     # Context Expansion — automatically expand neighbors for leaves that were not merged
     expand_context_default: true
-    expand_context_neighbors: 5                 # expand N neighbors on each side: answers often span paragraphs → raise it; returns too cluttered → lower it
+    expand_context_neighbors: 1                 # expand N neighbors on each side (clipped to the hit's section; adjacent windows merge): answers often span paragraphs → raise it; returns too cluttered → lower it
+
+    # MCP search response budget (estimated tokens; CJK ≈ 0.7/char, other ≈ 0.25/char):
+    # the lowest-ranked results are dropped to fit and the response says so. 0 = no budget
+    mcp_response_token_budget: 6000
 
     # Max concurrent queries (shared by REST+MCP; excess queues rather than being dropped)
     # Based on the DB pools: sync 5+10 / async 5+10 / per-folder PGVector 5+10 — 8 concurrent leaves each pool headroom
     # Queries queue often → raise it (and bump database.pool_size together); DB connections tight → lower it
     max_concurrent_queries: 8
 
-    return_resource_files: true                 # whether query results include a download link to the original document
+    return_resource_files: false                # MCP search: also attach the top hit's original file (only it, and only up to resource_file_max_bytes)
+    resource_file_max_bytes: 1000000
 
 # Modules — rag is split into three modules: rag_indexing (indexing API) / rag_query (query REST) / rag (MCP tools)
 modules:

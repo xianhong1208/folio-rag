@@ -167,7 +167,9 @@ def test_rag_retrieval_config_required_and_defaults():
     assert cfg.return_resource_files is False
     assert cfg.auto_merging is None
     assert cfg.expand_context_default is True
-    assert cfg.expand_context_neighbors == 2
+    assert cfg.expand_context_neighbors == 1
+    assert cfg.mcp_response_token_budget == 6000
+    assert cfg.resource_file_max_bytes == 1_000_000
 
 
 def test_contextual_retrieval_config_defaults():

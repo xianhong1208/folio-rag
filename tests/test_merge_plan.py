@@ -126,13 +126,14 @@ class TestAutoMergingRetriever:
                                     expand_context_neighbors=1, searcher=searcher)
         with patch(f"{_CL}.aget_parent_children_counts", new=AsyncMock(return_value={"P": 2})), \
              patch(f"{_CL}.afetch_nodes", new=AsyncMock(return_value={"P": parent("P")})), \
-             patch(f"{_CL}.afetch_neighbor_windows",
-                   new=AsyncMock(return_value=[{"text": "c-window", "index_range": [6, 8]}])):
+             patch(f"{_CL}.afetch_rows_in_ranges", new=AsyncMock(return_value={
+                 "f1": [(6, "six", None), (7, "seven", None), (8, "eight", None)]})) as rows:
             out = await retr.aquery("q", SearchSettings(top_k=4))
         assert [r.node_role for r in out] == ["parent", "expanded", "expanded"]
         assert out[0].merged_from_leaves == ["a", "b"] and out[0].score == 0.9
-        assert out[1].text == "c-window" and out[1].chunk_index_range == [6, 8]
+        assert out[1].text == "six\n\nseven\n\neight" and out[1].chunk_index_range == [6, 8]
         assert out[2].text == "text d"
+        assert rows.await_args.args[1] == [("f1", 6, 8)]           # one batched fetch
 
     async def test_empty_search_returns_empty(self):
         from src.domain.rag.auto_merging import AutoMergingRetriever

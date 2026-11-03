@@ -250,17 +250,14 @@ def system_resources() -> Dict[str, Any]:
         with get_engine().connect() as conn:
             out["db_size_bytes"] = conn.execute(
                 text("SELECT pg_database_size(current_database())")).scalar()
-            rows = conn.execute(text(
-                "SELECT tablename FROM pg_tables WHERE tablename LIKE 'data\\_%'")).fetchall()
-            out["vector_tables"] = len(rows)
-            total = 0
-            for (tbl,) in rows:
-                try:
-                    total += conn.execute(text("SELECT pg_total_relation_size(:t)"),
-                                          {"t": tbl}).scalar() or 0
-                except Exception:
-                    pass
-            out["vector_bytes"] = total
+            # One round trip for every vector table (was one query per table).
+            # to_regclass yields NULL (skipped by SUM) for a table dropped meanwhile.
+            count, total = conn.execute(text(
+                "SELECT count(*), COALESCE(SUM(pg_total_relation_size("
+                "to_regclass(format('%I.%I', schemaname, tablename)))), 0) "
+                "FROM pg_tables WHERE tablename LIKE 'data\\_%'")).one()
+            out["vector_tables"] = int(count)
+            out["vector_bytes"] = int(total)
     except Exception as e:
         log.warning(f"system_resources db size failed: {e}")
     try:

@@ -109,7 +109,21 @@ class TestFireRedAsrProvider:
             r = FireRedAsrProvider().transcribe(
                 audio_path=str(src), file_name="in.wav")
         assert r.text == "這是軟體測試\n記憶體很大"
-        assert r.chunks is None  # AED has no punctuation or structure → leaf_splitter plain-text path
+        assert r.chunks is None  # segment / text count mismatch: no timing, plain-text path
+
+    @_needs_local
+    @_needs_ffmpeg
+    def test_transcribe_returns_timed_records(self, tmp_path):
+        src = tmp_path / "in.wav"
+        with wave.open(str(src), "wb") as w:
+            w.setnchannels(1)
+            w.setsampwidth(2)
+            w.setframerate(16000)
+            w.writeframes(b"\x00\x00" * 16000 * 2)
+
+        with patch.object(FireRedAsrProvider, "_transcribe_segments", return_value=["这是软件测试"]):
+            r = FireRedAsrProvider().transcribe(audio_path=str(src), file_name="in.wav")
+        assert r.chunks == [{"text": "這是軟體測試", "headings": ["00:00:00–00:00:02"]}]
 
     @_needs_local
     @_needs_ffmpeg

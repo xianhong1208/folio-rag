@@ -29,7 +29,7 @@ from __future__ import annotations
 import hashlib
 import uuid
 from pathlib import Path
-from typing import Any, Iterable, List, Mapping, Optional, Sequence, Tuple
+from typing import Any, Callable, Iterable, List, Mapping, Optional, Sequence, Tuple
 
 # Small chunks merge only inside the same section: the first SECTION_DEPTH heading
 # levels. Two levels = document title + chapter for most documents (Markdown "# title"
@@ -45,7 +45,10 @@ BREADCRUMB_SEP = " › "
 # older pipeline (or before versions were recorded: NULL) are flagged "re-index
 # recommended" in the console and the REST status endpoints. They keep working as-is.
 # 2: section-aligned chunks, breadcrumbs, original-text display, section-scoped prefixes.
-CHUNK_PIPELINE_VERSION = "2"
+# 3: CJK sentence splitting with balanced pieces, overlap-free fallback split (txt /
+#    transcripts), CSV as a table, parents sized in real tokens, capped breadcrumbs,
+#    timed transcript blocks, no cached empty / chain-of-thought prefixes.
+CHUNK_PIPELINE_VERSION = "3"
 
 
 def reindex_recommended(status: Optional[str], pipeline_version: Optional[str]) -> bool:
@@ -129,6 +132,67 @@ def breadcrumb(file_name: Optional[str], headings: Optional[Sequence[Any]]) -> s
         if not deduped or deduped[-1] != p:
             deduped.append(p)
     return BREADCRUMB_SEP.join(deduped)
+
+
+# A breadcrumb is identity, not content: past this many tokens a deep heading path
+# (or a title-length heading) eats into the chunk's share of the embedding window.
+BREADCRUMB_MAX_TOKENS = 48
+_ELLIPSIS = "…"
+
+
+def cap_breadcrumb(crumb: str, count: Callable[[str], int],
+                   max_tokens: int = BREADCRUMB_MAX_TOKENS) -> str:
+    """Shorten ``crumb`` to at most ``max_tokens``: drop middle headings first (keep
+    the file stem and the innermost heading, with an ellipsis between), then cut the
+    end. ``max_tokens <= 0`` gives ""."""
+    if not crumb or max_tokens <= 0:
+        return ""
+    if count(crumb) <= max_tokens:
+        return crumb
+    parts = crumb.split(BREADCRUMB_SEP)
+    if len(parts) > 2:
+        # Keep the stem and as many innermost headings as fit.
+        for keep in range(len(parts) - 2, 0, -1):
+            cand = BREADCRUMB_SEP.join([parts[0], _ELLIPSIS] + parts[-keep:])
+            if count(cand) <= max_tokens:
+                return cand
+        crumb = BREADCRUMB_SEP.join([parts[0], _ELLIPSIS, parts[-1]])
+    lo, hi = 0, len(crumb)  # longest prefix (plus ellipsis) that fits
+    while lo < hi:
+        mid = (lo + hi + 1) // 2
+        if count(crumb[:mid].rstrip() + _ELLIPSIS) <= max_tokens:
+            lo = mid
+        else:
+            hi = mid - 1
+    return crumb[:lo].rstrip() + _ELLIPSIS if lo else ""
+
+
+def fit_retrieval_text(prefix: Optional[str], crumb: Optional[str], raw: str,
+                       count: Callable[[str], int], max_tokens: int) -> Tuple[str, str]:
+    """(prefix, crumb) shortened so ``count(compose_retrieval_text(...)) <= max_tokens``.
+
+    The breadcrumb gives way first, then the prefix; the chunk text is never cut
+    (a text that alone exceeds the window keeps neither and is returned as is)."""
+    prefix, crumb = (prefix or "").strip(), (crumb or "").strip()
+    if count(compose_retrieval_text(prefix, crumb, raw)) <= max_tokens:
+        return prefix, crumb
+    base = count(compose_retrieval_text(prefix, "", raw))
+    if crumb and base < max_tokens:
+        room = max_tokens - base - 1  # the joining newline
+        short = cap_breadcrumb(crumb, count, room)
+        if short and count(compose_retrieval_text(prefix, short, raw)) <= max_tokens:
+            return prefix, short
+    crumb = ""
+    if not prefix or count(raw) >= max_tokens:
+        return "", ""
+    lo, hi = 0, len(prefix)
+    while lo < hi:
+        mid = (lo + hi + 1) // 2
+        if count(compose_retrieval_text(prefix[:mid], "", raw)) <= max_tokens:
+            lo = mid
+        else:
+            hi = mid - 1
+    return prefix[:lo].strip(), ""
 
 
 def compose_retrieval_text(prefix: Optional[str], crumb: Optional[str], raw: str) -> str:
