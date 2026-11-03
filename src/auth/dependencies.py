@@ -12,20 +12,20 @@ from fastapi import Depends, Request, HTTPException
 from fastapi.security import HTTPBearer
 
 from src.log import get_api_logger
-from .remote_auth import RemoteTokenVerifier
+from .mcp_gate_auth import McpGateTokenVerifier
 
 logger = get_api_logger()
 security = HTTPBearer()
 
-_remote_verifier: Optional[RemoteTokenVerifier] = None
+_remote_verifier: Optional[McpGateTokenVerifier] = None
 
 
-def set_remote_verifier(verifier: RemoteTokenVerifier) -> None:
+def set_remote_verifier(verifier: McpGateTokenVerifier) -> None:
     global _remote_verifier
     _remote_verifier = verifier
 
 
-def get_remote_verifier_instance() -> Optional[RemoteTokenVerifier]:
+def get_remote_verifier_instance() -> Optional[McpGateTokenVerifier]:
     return _remote_verifier
 
 

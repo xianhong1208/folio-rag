@@ -12,7 +12,6 @@ import pytest
 from src.domain.exceptions import UnauthorizedAccessError
 from src.domain.rag.folder_acl import verify_folder_access
 
-# ACL now lives in domain (folder_acl); fastmcp_tools/acl.py is just a re-export shim
 _ACL = "src.domain.rag.folder_acl"
 
 
@@ -37,17 +36,3 @@ def test_none_result_denied_fail_closed():
     with patch(f"{_ACL}.FolderDB.get", return_value=None):
         with pytest.raises(UnauthorizedAccessError):
             verify_folder_access(token="tokA", folder_name="f")
-
-
-def test_legacy_import_path_still_works():
-    """Backward compat: the old fastmcp_tools/acl import path must re-export the same function."""
-    from src.fastmcp_tools import acl as legacy
-    assert legacy.verify_folder_access is verify_folder_access
-
-
-def test_list_accessible_folders_scoped_by_token():
-    """Startup per-token folder enumeration: must also filter by user_token."""
-    with patch(f"{_ACL}.FolderDB.get", return_value=["f1", "f2"]) as m:
-        from src.domain.rag.folder_acl import list_accessible_folders
-        assert list_accessible_folders("tokA") == ["f1", "f2"]
-    m.assert_called_once_with(user_token="tokA")

@@ -1,7 +1,6 @@
 
 """Authentication module exports"""
 
-from .remote_auth import RemoteTokenVerifier, TokenVerifyResult
 from .dependencies import (
     authenticate_request,
     authenticate_request_remote,
@@ -11,13 +10,13 @@ from .dependencies import (
 from .mcp_gate_auth import (
     AuthSettings,
     McpGateTokenVerifier,
+    TokenVerifyResult,
     build_auth_provider,
     settings_from_config,
 )
 from .init_auth import initialize_auth_system
 
 __all__ = [
-    "RemoteTokenVerifier",
     "TokenVerifyResult",
     "authenticate_request",
     "authenticate_request_remote",

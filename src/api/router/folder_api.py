@@ -4,12 +4,12 @@
 Provides REST API endpoints for folder creation, querying, updating, and deletion.
 """
 
-from fastapi import APIRouter, HTTPException, Depends, Request, Query
+from fastapi import APIRouter, HTTPException, Depends, Query
 import traceback
 from sqlalchemy.exc import IntegrityError, NoResultFound
 from pydantic import ValidationError
 from typing import Optional
-from typing import List, Union
+from typing import List
 
 from src.api.router.response import (
     CreateFolderRequest,

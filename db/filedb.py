@@ -6,14 +6,10 @@ supporting hierarchical management (Folder -> File).
 """
 
 import hashlib
-import os
 import mimetypes
 import uuid
-from datetime import datetime
 from pathlib import Path
 from typing import Dict, Any, List
-import re
-import unicodedata
 
 from .db import File
 from db.db import Session as DBSession

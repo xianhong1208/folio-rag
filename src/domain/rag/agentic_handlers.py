@@ -2,7 +2,7 @@
 """Agentic three-mode query handlers — the actual search / list / read logic (domain layer).
 
 These handlers live in the domain layer because they depend only on db / domain / log and carry no
-fastmcp dependency; tool_handlers.py remains as a re-export shim for backward compatibility. The
+fastmcp dependency. The
 logger keeps using the mcptools sink, so logging behavior is unchanged.
 
 Mode design:

@@ -18,7 +18,7 @@ import asyncio
 import pytest
 from unittest.mock import patch
 
-from src.domain.rag.index_job_manager import IndexingJobManager, JobStatus
+from src.domain.rag.index_job_manager import IndexingJobManager
 
 
 class SlowAdapter:

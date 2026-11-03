@@ -1,10 +1,9 @@
 
 """Folder ACL — token-to-folder permission checks (domain layer).
 
-These two functions depend only on FolderDB + domain exceptions, not on fastmcp.
+verify_folder_access depends only on FolderDB + domain exceptions, not on fastmcp.
 `extract_token` (which reads the MCP HTTP request context) is the actual delivery-layer
-logic and stays in fastmcp_tools/acl.py, which keeps re-exports of these two functions
-for backward compatibility.
+logic and stays in fastmcp_tools/acl.py.
 
 Design principles:
 - Enforce at the DB query layer: FolderDB.get always takes a user_token, so querying
@@ -40,8 +39,3 @@ def verify_folder_access(token: str, folder_name: str):
             reason="Folder not found or token lacks access",
         )
     return folders[0]
-
-
-def list_accessible_folders(token: str):
-    """List all folders this token can access (used to dynamically register tools at MCP server startup)."""
-    return FolderDB.get(user_token=token)

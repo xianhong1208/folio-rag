@@ -46,10 +46,6 @@ MXBAI_V2_DOCUMENT_TEMPLATE = (
     "<|im_start|>assistant\n"
 )
 
-# With the chat template, mxbai-v2 scores are the probability of "relevant", so
-# 0.5 is the model's own decision boundary.
-MXBAI_V2_RECOMMENDED_THRESHOLD = 0.5
-
 
 def is_mxbai_v2(model: Optional[str]) -> bool:
     m = (model or "").lower()

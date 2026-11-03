@@ -304,9 +304,6 @@ class RAGIndexingService:
 
         Raises FileIndexingError on failure.
         """
-        file_id = file_record.id
-        ctx = self._ctx
-
         # _progress_cb is None for the synchronous single-file API: no background job to
         # keep alive, so skip the extra keepalive task.
         if _progress_cb is None:

@@ -137,15 +137,6 @@ except Exception:
     pass
 
 
-# Whisper audio defenses (the anti-hallucination patch itself is applied lazily by
-# docling_loader._build_converter before the local Whisper pipeline is installed).
-from src.domain.rag.audio_defense import (  # noqa: F401
-    _AUDIO_TRIM_EXTENSIONS,
-    _filter_whisper_hallucinations,
-    _trim_audio_leading_silence,
-)
-
-
 
 class HierarchicalIndexer:
     """Integrated indexer: Docling + hierarchy + contextual retrieval."""

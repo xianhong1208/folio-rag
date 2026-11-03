@@ -12,7 +12,6 @@ quality.
 """
 
 import hashlib
-import uuid
 
 import pytest
 from llama_index.core import Document

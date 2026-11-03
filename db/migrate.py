@@ -66,12 +66,6 @@ def get_versions_dir() -> Path:
     return external_base / "versions"
 
 
-def get_config_dir() -> Path:
-    """Get the config directory path"""
-    external_base = get_external_base_dir()
-    return external_base / "config"
-
-
 class DatabaseMigrator:
     """Database migration manager using the Alembic Python API.
 

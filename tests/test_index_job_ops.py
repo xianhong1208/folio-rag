@@ -110,10 +110,6 @@ class TestInterruptedOnStartup:
         assert manager._jobs["j1"].status == JobStatus.INTERRUPTED
         mf.assert_not_called()
 
-    def test_old_name_still_works(self, manager):
-        assert IndexingJobManager.mark_all_running_as_restart_failed \
-            is IndexingJobManager.mark_interrupted_on_startup
-
     def test_interrupted_is_terminal(self, manager):
         self._seed(manager, status=JobStatus.INTERRUPTED)
         manager._update_job_state("j1", status=JobStatus.SUCCEEDED)

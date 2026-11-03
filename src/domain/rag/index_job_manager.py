@@ -14,7 +14,7 @@ from datetime import datetime, timezone
 from dataclasses import dataclass, asdict, field
 from enum import Enum
 from threading import Lock
-from typing import Any, Dict, List, Optional, Set
+from typing import Any, Dict, List, Optional
 
 from cachetools import TTLCache
 
@@ -339,9 +339,6 @@ class IndexingJobManager:
         # Reference to the main event loop so worker-thread progress reports can wake SSE
         # thread-safely. Captured in start_watchdog (which always runs on the loop thread).
         self._loop: Optional[asyncio.AbstractEventLoop] = None
-        # Strong references to fire-and-forget background tasks (drain, etc.) — asyncio keeps only
-        # a weak ref, so without this set a queued job could be garbage-collected before it runs.
-        self._bg_tasks: Set[asyncio.Task] = set()
         # Single-worker executor dedicated to DB persistence: upsert is sync SQLAlchemy (SELECT+commit),
         # and running it directly on the event loop would stall the whole server (API/SSE/cancel) on
         # every progress tick. A single worker guarantees write ordering (out-of-order writes would let
@@ -798,19 +795,6 @@ class IndexingJobManager:
                     "job_id": state.job_id,
                 }
         return out
-
-    def count_by_status(self) -> Dict[str, int]:
-        """Return {pending: N, running: N, succeeded: N, failed: N, cancelled: N, total: N}.
-
-        TTLCache evicts expired entries automatically, so the succeeded/failed counts are for the
-        recent TTL window, not all-time.
-        """
-        counts = {s.value: 0 for s in JobStatus}
-        with self._lock:
-            for state in self._jobs.values():
-                counts[state.status.value] += 1
-            counts["total"] = sum(counts.values())
-        return counts
 
     # Maintenance jobs (e.g. Rebuild FTS) heartbeat this often while their blocking work
     # runs in a worker thread, so the watchdog's stale check never mistakes a long step
@@ -1325,9 +1309,6 @@ class IndexingJobManager:
         if flipped:
             logger.info(f"Marked {flipped} stale job(s) as interrupted (server_restart)")
         return flipped
-
-    # Kept for callers of the old name.
-    mark_all_running_as_restart_failed = mark_interrupted_on_startup
 
     @staticmethod
     def _mark_interrupted_files(state: IndexJobState) -> None:
