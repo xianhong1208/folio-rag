@@ -7,6 +7,7 @@ survives any change to chunking. Everything here is I/O-free and unit-tested
 * span matching    — does a returned text contain (most of) a gold span?
 * ranking metrics  — Recall@k, MRR@k, nDCG@k over evidence items, file-level recall
 * response metrics — estimated tokens, duplicate-text ratio, percentiles
+* relevance cutoff — what a min_relevance threshold would reject, and what it costs
 * sampling         — deterministic, document-stratified passage sampling
 """
 from __future__ import annotations
@@ -232,6 +233,58 @@ def group_means(rows: Sequence[dict], key: Callable[[dict], str],
             v = mean(r[m] for r in rs if m in r)
             if v is not None:
                 out[g][m] = round(v, 4)
+    return out
+
+
+# --------------------------------------------------------------- relevance cutoff
+
+
+def rejected_at(top_relevance: Optional[float], n_results: int, threshold: float) -> bool:
+    """Would a search be reported as "nothing relevant" at ``threshold``?
+
+    The server's rule (agentic_handlers.apply_relevance): no results at all, or a best
+    rerank score below the cutoff. Without a rerank score (not reranked) only an empty
+    result counts.
+    """
+    if not n_results:
+        return True
+    return top_relevance is not None and threshold > 0 and top_relevance < threshold
+
+
+def relevance_sweep(rows: Sequence[dict], thresholds: Sequence[float],
+                    metrics: Sequence[str] = ("recall@5", "recall@10")) -> List[dict]:
+    """Per threshold: share of each unanswerable group rejected, share of answerable
+    questions wrongly rejected, and the answerable metrics if rejected searches
+    returned nothing (a rejected question scores 0).
+
+    ``rows``: {"answerable": bool, "group": str, "top_relevance": float | None,
+    "n_results": int, <metric>: float (answerable rows)}. ``group`` splits the
+    unanswerable rows (e.g. near-miss vs out-of-scope). ``lost@5`` counts answerable
+    questions with a hit in the top 5 that the cutoff would reject.
+    """
+    ans = [r for r in rows if r["answerable"]]
+    una = [r for r in rows if not r["answerable"]]
+    groups = sorted({r["group"] for r in una})
+    out = []
+    for t in thresholds:
+        rej = [rejected_at(r.get("top_relevance"), r.get("n_results", 0), t) for r in rows]
+        by_id = {id(r): x for r, x in zip(rows, rej)}
+        row = {"threshold": t,
+               "unanswerable_rejected": (round(sum(by_id[id(r)] for r in una) / len(una), 4)
+                                         if una else None),
+               "answerable_rejected": (round(sum(by_id[id(r)] for r in ans) / len(ans), 4)
+                                       if ans else None),
+               "lost@5": sum(1 for r in ans if by_id[id(r)] and (r.get("recall@5") or 0) > 0),
+               "by_group": {}}
+        for g in groups:
+            members = [r for r in una if r["group"] == g]
+            row["by_group"][g] = {"n": len(members),
+                                  "rejected": round(sum(by_id[id(r)] for r in members)
+                                                    / len(members), 4)}
+        for m in metrics:
+            vals = [0.0 if by_id[id(r)] else float(r.get(m) or 0.0) for r in ans if m in r]
+            row[m] = round(sum(vals) / len(vals), 4) if vals else None
+        out.append(row)
     return out
 
 

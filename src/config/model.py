@@ -318,6 +318,13 @@ class RAGRetrievalConfig(BaseModel):
     # other text ≈ 0.25). Lowest-ranked results are dropped (and reported) to fit;
     # 0 disables the budget.
     mcp_response_token_budget: int = Field(6000, ge=0)
+    # MCP search relevance cutoff on the reranker's score (0..1; 0 = off). A search whose
+    # best cross-encoder score is below it is answered with low_relevance: true and a hint
+    # to say "not found"; results below it are flagged low_relevance (never dropped - that
+    # is rag.rerank.score_threshold). Model-specific like score_threshold: 0.9 is
+    # calibrated for mxbai-rerank-v2 on the golden set (evals/baselines). Ignored
+    # without a reranker.
+    min_relevance: float = Field(0.0, ge=0.0, le=1.0)
     # Max concurrent queries (REST + MCP share one semaphore; excess is queued). 8 keeps every
     # connection pool (5+10 each) within headroom.
     max_concurrent_queries: int = 8

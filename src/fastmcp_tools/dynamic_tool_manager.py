@@ -281,8 +281,10 @@ class DynamicToolManager:
             "- `offset` (int): mode=read, chunk index to start from (next_offset of the previous page)",
             "",
             "Response: JSON with mode, results, score_type (what score means: rerank =",
-            "relevance 0-1, rrf = rank fusion — compare scores only within one response)",
-            "and _hint (suggested next step).",
+            "relevance 0-1, rrf = rank fusion — compare scores only within one response),",
+            "low_relevance (true = nothing here matches the question well: say the folder",
+            "does not cover it rather than answering from weak passages) and _hint",
+            "(suggested next step).",
         ])
         description = "\n".join(desc_parts)
 

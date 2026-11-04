@@ -75,6 +75,7 @@ class TestSchema:
         assert "similarity_cutoff" not in tool.description
         assert "lower the cutoff" not in tool.description
         assert "score_type" in tool.description and "next_offset" in tool.description
+        assert "low_relevance" in tool.description
 
 
 class TestLiveDefaults:
@@ -202,6 +203,52 @@ class TestWireFormat:
         content = await self._client_text(return_resource_files=False)
         assert len(content) == 1 and content[0].type == "text"
         assert json.loads(content[0].text)["mode"] == "search"  # an object, not ["{...}"]
+
+    async def test_search_payload_is_additive(self):
+        """The search payload an agent receives: every field it always had, plus the
+        relevance signal (top_relevance / min_relevance / low_relevance; per result
+        relevance and, below the cutoff, low_relevance)."""
+        from fastmcp import Client, FastMCP
+
+        from src.domain.rag import agentic_handlers as ah
+        from src.domain.rag.auto_merging import MergedResult
+        from src.domain.rag.hybrid_search import SearchOutcome
+
+        hits = [MergedResult(text="t", score=s, file_id="f1", file_name="a.md", node_id=f"n{i}",
+                             node_role="expanded", chunk_index_range=[i, i])
+                for i, s in enumerate((0.95, 0.4))]
+        retriever = MagicMock()
+        retriever.aquery = AsyncMock(return_value=hits)
+        retriever.last_outcome = SearchOutcome(nodes=[], reranked=True, top_score=0.95)
+        with patch.object(ah, "configured_min_relevance", return_value=0.9):
+            response = await ah.handle_search(
+                query="q?", folder=SimpleNamespace(id=1, name="docs"), retriever=retriever,
+                top_k=5, expand_context=True)
+        adapter = MagicMock()
+        adapter.query = AsyncMock(return_value=response)
+        mcp = FastMCP("t")
+
+        @mcp.tool
+        async def probe() -> list:
+            return await at._query(folder_name="docs", mode="search", query="q?", file_id=None,
+                                   top_k=None, similarity_cutoff=None, expand_context=None)
+
+        with patch(_CFG, return_value=_cfg()), \
+             patch.object(at, "extract_token", return_value="tok"), \
+             patch.object(at, "get_rag_adapter", return_value=adapter):
+            async with Client(mcp) as c:
+                payload = json.loads((await c.call_tool("probe", {})).content[0].text)
+        # Fields that existed before the relevance signal: none renamed or removed.
+        assert {"mode", "query", "folder", "top_k", "score_type", "total_results", "results",
+                "_hint", "response_tokens_estimated"} <= set(payload)
+        assert {"node_id", "file_id", "file_name", "score", "node_role",
+                "chunk_index_range", "text"} <= set(payload["results"][0])
+        # Added fields.
+        assert payload["low_relevance"] is False and payload["top_relevance"] == 0.95
+        assert payload["min_relevance"] == 0.9
+        assert [r["relevance"] for r in payload["results"]] == [0.95, 0.4]
+        assert payload["results"][1]["low_relevance"] is True
+        assert "low_relevance" not in payload["results"][0]
 
     async def test_payload_is_a_json_object_with_attachments(self):
         content = await self._client_text(return_resource_files=True)

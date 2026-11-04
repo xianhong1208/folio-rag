@@ -16,6 +16,24 @@ larger rerank pool). **Re-index every folder** (chunking v3, prompt v3); the con
 flags them.
 
 ### Added
+- **MCP search can say "nothing relevant found".** Every search response now
+  carries `top_relevance` (the reranker's best score over all candidates, before
+  `score_threshold`), `min_relevance` and `low_relevance` — `true` when nothing came
+  back or `top_relevance` is below the new `rag.retrieval.min_relevance` (live-editable,
+  console *Settings → Retrieval*; `0` = off, the shipped config sets `0.9` for
+  mxbai-rerank-v2). The hint then tells the agent the folder most likely does not
+  answer the question. Each reranked result carries `relevance`; results below the
+  cutoff are marked `low_relevance: true`. Results are flagged, never dropped
+  (`rerank.score_threshold` drops). New fields only — nothing renamed or removed. On
+  the golden set (`evals/baselines/rag-2026-11-03-min-relevance.*`): out-of-scope
+  questions flagged 0% → **100%**, answerable questions wrongly flagged 0%, R@5 / R@10
+  unchanged (0.976 / 0.981); near-miss unanswerable questions (the right document, a
+  detail it does not state) stay unflagged — the reranker scores them as relevant
+  (best-score AUROC 0.79), so no cutoff separates them without losing recall. About
+  +60 tokens per response.
+- Eval harness v2: relevance-cutoff sweep (near-miss and out-of-scope rejection,
+  answerable wrongly rejected, R@5/R@10 as if dropped) and 20 hand-written
+  out-of-scope questions (`evals/rag/out_of_scope_qa.yaml`).
 - Golden-set retrieval eval (`scripts/eval_retrieval.py`, `evals/rag/`), per-stage
   search timings in the trace, `docs/operations-postgres.md`.
 - **MCP Gate revocation feed** (`auth.revocation`, off by default). A background

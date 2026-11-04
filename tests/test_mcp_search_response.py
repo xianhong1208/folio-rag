@@ -141,6 +141,85 @@ class TestContract:
                                    expand_context=False)
 
 
+
+# --------------------------------------------------------- relevance signal
+
+def _reranked(top):
+    return SearchOutcome(nodes=[], reranked=True, top_score=top)
+
+
+class TestRelevance:
+    """low_relevance / top_relevance / per-result relevance (rag.retrieval.min_relevance)."""
+
+    async def _run(self, results, outcome, cut=0.9, top_k=5):
+        with patch.object(ah, "configured_min_relevance", return_value=cut):
+            return await _search(results, top_k=top_k, outcome=outcome)
+
+    async def test_confident_search_is_not_flagged(self):
+        out = await self._run([_mr(i, "a", score=0.99 - i / 100) for i in range(5)],
+                              _reranked(0.99))
+        assert out["low_relevance"] is False and out["top_relevance"] == 0.99
+        assert out["min_relevance"] == 0.9
+        assert [r["relevance"] for r in out["results"]] == [0.99, 0.98, 0.97, 0.96, 0.95]
+        assert not any("low_relevance" in r for r in out["results"])
+        assert "ranked best first" in out["_hint"]
+
+    async def test_weak_best_match_is_flagged_not_dropped(self):
+        results = [_mr(0, "a", score=0.42), _mr(1, "b", score=0.3)]
+        out = await self._run(results, _reranked(0.42))
+        assert out["low_relevance"] is True and out["top_relevance"] == 0.42
+        assert len(out["results"]) == 2                     # flagged, never dropped
+        assert all(r["low_relevance"] is True for r in out["results"])
+        assert "Low relevance" in out["_hint"] and "0.42" in out["_hint"]
+        assert "does not answer" in out["_hint"] and "mode='read'" not in out["_hint"]
+
+    async def test_weak_tail_results_are_marked(self):
+        results = [_mr(0, "a", score=0.97), _mr(1, "b", score=0.5), _mr(2, "c", score=0.9)]
+        out = await self._run(results, _reranked(0.97), top_k=3)
+        assert out["low_relevance"] is False
+        assert [r.get("low_relevance") for r in out["results"]] == [None, True, None]
+        assert "1 result(s) marked low_relevance" in out["_hint"]
+
+    async def test_no_results_is_low_relevance(self):
+        out = await self._run([], _reranked(0.02))
+        assert out["low_relevance"] is True and out["top_relevance"] == 0.02
+        assert "No matching passages" in out["_hint"]
+
+    async def test_cutoff_off_never_flags_a_non_empty_result(self):
+        out = await self._run([_mr(0, "a", score=0.1)], _reranked(0.1), cut=0.0)
+        assert out["low_relevance"] is False and out["min_relevance"] == 0.0
+        assert out["results"][0]["relevance"] == 0.1
+        assert "low_relevance" not in out["results"][0]
+
+    async def test_without_rerank_there_is_no_relevance(self):
+        out = await self._run([_mr(0, "a", score=0.016)], SearchOutcome(nodes=[]))
+        assert out["score_type"] == "rrf" and out["top_relevance"] is None
+        assert out["low_relevance"] is False
+        assert "relevance" not in out["results"][0]
+
+    def test_boundary_uses_the_shown_precision(self):
+        resp = {"results": [{"score": 0.89999}]}
+        ah.apply_relevance(resp, reranked=True, top_score=0.89999, min_relevance=0.9)
+        assert resp["top_relevance"] == 0.9 and resp["low_relevance"] is False
+        assert "low_relevance" not in resp["results"][0]
+        resp = {"results": [{"score": None}]}
+        ah.apply_relevance(resp, reranked=True, top_score=None, min_relevance=0.9)
+        assert resp["low_relevance"] is False and "relevance" not in resp["results"][0]
+
+    def test_configured_min_relevance(self):
+        def cfg(v):
+            return SimpleNamespace(rag=SimpleNamespace(retrieval=SimpleNamespace(min_relevance=v)))
+        target = "src.config.config_manager.Config.get_config_model"
+        with patch(target, return_value=cfg(0.85)):
+            assert ah.configured_min_relevance() == 0.85
+        with patch(target, return_value=cfg(None)):
+            assert ah.configured_min_relevance() == 0.0
+        with patch(target, return_value=cfg(7)):
+            assert ah.configured_min_relevance() == 1.0
+        with patch(target, side_effect=RuntimeError):
+            assert ah.configured_min_relevance() == 0.0
+
+
 # --------------------------------------------------- offline measurement
 
 def _synthetic_chunk(i: int) -> str:
