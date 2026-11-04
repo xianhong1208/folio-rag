@@ -44,7 +44,7 @@ License: MIT&nbsp;·&nbsp;Python 3.12&nbsp;·&nbsp;PostgreSQL + pgvector&nbsp;·
 - Python 3.12 and [uv](https://docs.astral.sh/uv/).
 - **PostgreSQL** with the **[pgvector](https://github.com/pgvector/pgvector)** extension.
 - OpenAI-compatible endpoints for the **embedding**, **LLM** and **reranker** models (e.g. [vLLM](https://github.com/vllm-project/vllm), Ollama, or a cloud provider).
-- Node.js 18+ — only if you work on the console UI.
+- Node.js 22.12+ — only if you work on the console UI (Vitest 5 needs it).
 
 ```bash
 git clone https://github.com/xianhong1208/agentic_rag.git
