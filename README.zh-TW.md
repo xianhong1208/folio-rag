@@ -44,7 +44,7 @@ License: MIT&nbsp;·&nbsp;Python 3.12&nbsp;·&nbsp;PostgreSQL + pgvector&nbsp;·
 - Python 3.12 與 [uv](https://docs.astral.sh/uv/)。
 - 安裝了 **[pgvector](https://github.com/pgvector/pgvector)** 擴充的 **PostgreSQL**。
 - **embedding**、**LLM**、**reranker** 三個模型的 OpenAI 相容端點（例如 [vLLM](https://github.com/vllm-project/vllm)、Ollama 或雲端供應商）。
-- Node.js 18+ —— 只有要開發主控台 UI 時才需要。
+- Node.js 22.12+ —— 只有要開發主控台 UI 時才需要(Vitest 5 需要)。
 
 ```bash
 git clone https://github.com/xianhong1208/agentic_rag.git
