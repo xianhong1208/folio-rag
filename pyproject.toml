@@ -216,6 +216,12 @@ rocm-r714 = [
 # small downloads into the default 30s timeout. Consider UV_HTTP_TIMEOUT=300 in CI.
 concurrent-downloads = 8
 
+# Copy files into the venv instead of hard-linking them from the uv cache. NLTK >= 3.10.4 refuses
+# to open a data file with more than one hard link (CWE-59), and llama-index ships its stopwords
+# inside the package, so a hard-linked install breaks every NLTK lookup (uv hard-links whenever
+# the cache and the venv share a filesystem, e.g. in CI and Docker).
+link-mode = "copy"
+
 # Deploy target is always Linux x86_64; without this, unsafe-best-match may pick a version
 # that only ships aarch64/win wheels.
 required-environments = ["sys_platform == 'linux' and platform_machine == 'x86_64'"]

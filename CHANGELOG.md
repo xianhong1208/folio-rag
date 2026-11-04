@@ -6,6 +6,11 @@ to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Security
+- **Dependency advisories fixed within the current major versions** (pip-audit: 168 → 89 advisories; the remaining ones need pillow 13, transformers 5, filelock 4 and setuptools 84, which follow separately). Upgraded: pyjwt 2.13.0 → 2.15.1 (the console and MCP token verifiers use it), pypdf 6.18.0 → 6.21.4, docling 2.126.0 → 2.146.0 (with docling-core 2.105, docling-parse 7.24), authlib 1.8.0 → 1.9.4, joserfc 1.7.5 → 1.8.0, aiohttp 3.14.3 → 3.14.5, urllib3 2.7.0 → 2.8.0, nltk 3.10.3 → 3.10.4, multidict 6.8.0 → 6.9.1, dnspython 2.8.0 → 2.9.2, opentelemetry-api 1.44.0 → 1.45.2 and banks 2.5.0 → 2.5.1.
+- **uv installs by copying** (`[tool.uv] link-mode = "copy"`). NLTK 3.10.4 refuses to open a data file with more than one hard link, and uv hard-links packages from its cache whenever the cache and the venv share a filesystem (CI, Docker), which broke the NLTK stopwords that llama-index ships.
+- Docling 2.146 lists new input formats (RTF, MHTML, GIF, `.markdown`, Excel templates, Keynote, Numbers, AFP). None is added to the upload allow-list: each needs an end-to-end test first.
+
 ## [1.2.0] — 2026-11-04
 
 ### Security
