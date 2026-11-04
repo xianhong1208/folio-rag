@@ -80,8 +80,8 @@ class TestOverviewApi:
     def test_jobs_limit_validated(self, client):
         with patch(f"{_STATS}.recent_jobs", return_value=[]) as m:
             assert client.get("/api/admin/jobs?limit=5").status_code == 200
-        # Admin identity: every folder's jobs, flagged by ownership.
-        m.assert_called_once_with(5, owner=None, viewer="owner-tok")
+        # Admin identity: still only its own folders' jobs (rag:admin is settings-only).
+        m.assert_called_once_with(5, owner="owner-tok", viewer="owner-tok")
         assert client.get("/api/admin/jobs?limit=0").status_code == 422
         assert client.get("/api/admin/jobs?limit=999").status_code == 422
 
