@@ -7,6 +7,12 @@ to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 ## [Unreleased]
 
 ### Security
+- Console dependencies: React Router 6 → 7.18 (open redirect via a backslash in `<Link>` /
+  `useNavigate`, the only advisory that reached the shipped bundle), Vite 6.4.3 → 6.4.5 (dev
+  server path traversal / `fs.deny` bypasses), Vitest 2 → 5 (UI-server file read, Tinypool
+  prototype pollution, mock path traversal), plus `source-map-js` and `postcss-selector-parser`.
+  `npm audit` reports 0 vulnerabilities (was 10: 2 critical, 2 high). Console development now
+  needs Node.js 22.12+ (CI moves from Node 20 to 22).
 - Console aggregates (Overview KPIs and trend, Index Jobs, Query Analytics) are now limited to the signed-in token's own folders for `rag:admin` tokens too. Before, an admin token saw every owner's counts, job folder names and search queries, contrary to the rule that `rag:admin` unlocks global settings only. Storage totals and the settings audit log stay admin-only.
 
 ### Search latency — MCP search p50 ~500 → ~330 ms, p95 ~600 → ~400 ms
