@@ -19,15 +19,18 @@ Design trade-offs:
 
 from __future__ import annotations
 
+import functools
 import time
 from dataclasses import dataclass, field
-from typing import Dict, List, Optional
+from typing import Any, Dict, List, Optional
 
 from llama_index.vector_stores.postgres import PGVectorStore
 
 from src.domain.rag.context_windows import Window, WindowHit, plan_windows, requested_range
-from src.domain.rag.hybrid_search import HybridSearcher, SearchOutcome, SearchSettings
-from src.domain.rag.merge_plan import MERGE_DISABLED, MergeGroup, arrange, plan_merges
+from src.domain.rag.hybrid_search import (HybridSearcher, SearchOutcome, SearchSettings,
+                                          record_stage)
+from src.domain.rag.merge_plan import (MERGE_DISABLED, MergeGroup, arrange, merge_candidates,
+                                       merging_enabled, plan_merges)
 from src.log import get_api_logger
 
 logger = get_api_logger()
@@ -93,29 +96,39 @@ class AutoMergingRetriever:
     ) -> List[MergedResult]:
         """Hybrid search → auto-merge → optional neighbour expansion.
 
-        DB interaction after retrieval is batched: parent counts, parent content and
-        neighbour rows are one query each. Neighbour windows are clipped to the
+        The merge and neighbour lookups are batched and run while the reranker scores
+        the candidate pool (for every pool leaf: a superset of the final top_k), so
+        they add nothing to the latency unless that prefetch failed, in which case
+        parent counts, parent content and neighbour rows are read afterwards, one
+        query each. Neighbour windows are clipped to the
         hit's section and merged per file (see context_windows.py), so adjacent
         hits come back as one passage instead of overlapping copies.
         """
         settings = (settings or SearchSettings.from_config()).with_overrides(
             top_k=top_k, similarity_cutoff=similarity_cutoff)
-        outcome = await self._searcher.search(query_text, settings)
+        expanding = expand_context and self._expand_context_neighbors > 0
+        prefetch = None
+        if merging_enabled(self._merge_threshold) or expanding:
+            prefetch = functools.partial(self._prefetch, expanding=expanding)
+        outcome = await self._searcher.search(query_text, settings, prefetch=prefetch)
         self.last_outcome = outcome
         leaf_nodes = outcome.nodes
         if not leaf_nodes:
             return []
+        pre: Optional[_Prefetched] = getattr(outcome, "prefetched", None)
+        if not isinstance(pre, _Prefetched):
+            pre = None
 
         t0 = time.perf_counter()
-        groups = await plan_merges(self._vector_store, leaf_nodes, self._merge_threshold)
+        groups = await plan_merges(self._vector_store, leaf_nodes, self._merge_threshold,
+                                   known_parents=pre.parents if pre else None)
         arranged = arrange(leaf_nodes, groups)
         _timing(outcome, "merge", t0)
 
-        expanding = expand_context and self._expand_context_neighbors > 0
         windows_by_leaf: Dict[str, Window] = {}
         if expanding:
             t0 = time.perf_counter()
-            windows_by_leaf = await self._plan_windows(arranged)
+            windows_by_leaf = await self._plan_windows(arranged, pre.rows if pre else None)
             _timing(outcome, "expand", t0)
 
         results: List[MergedResult] = []
@@ -175,10 +188,44 @@ class AutoMergingRetriever:
             f"window(s)) timings_ms={getattr(outcome, 'timings', {})}")
         return results
 
-    async def _plan_windows(self, arranged) -> Dict[str, Window]:
-        """Neighbour windows for the leaves that stay leaves (one batched query),
-        clipped to their section, skipping merged parents' chunks and merged per
-        file. Returns {leaf node id: its (possibly shared) window}."""
+    async def _prefetch(self, pool, expanding: bool) -> "_Prefetched":
+        """Everything merge and expansion could need for any leaf of the rerank
+        pool, read while the reranker scores it: the parent rows of every parent
+        with at least MIN_MERGE_HITS pool leaves, and the neighbour rows of every
+        pool leaf (two queries, run concurrently). The final top_k is a subset of the
+        pool, so these are supersets of what the post-rerank queries would read."""
+        import asyncio
+
+        from src.domain.rag.chunk_lookup import ChunkLookup
+
+        t0 = time.perf_counter()
+        pids = merge_candidates(pool) if merging_enabled(self._merge_threshold) else []
+        ranges = []
+        if expanding:
+            n = self._expand_context_neighbors
+            for leaf in pool:
+                md = leaf.node.metadata
+                fid, ci = md.get("file_id"), md.get("chunk_index")
+                if fid is not None and ci is not None:
+                    ranges.append((str(fid), *requested_range(int(ci), n)))
+
+        async def _none():
+            return None
+
+        parents, rows = await asyncio.gather(
+            ChunkLookup.afetch_nodes(self._vector_store, pids) if pids else _none(),
+            ChunkLookup.afetch_rows_in_ranges(self._vector_store, ranges) if ranges else _none())
+        record_stage("prefetch", t0)
+        # Both lookups return {} on a DB error: an empty answer to a non-empty
+        # question is treated as "not prefetched" and the work is redone afterwards.
+        return _Prefetched(parents=parents if (parents or not pids) else None,
+                           rows=rows if (rows or not ranges) else None)
+
+    async def _plan_windows(self, arranged, prefetched_rows=None) -> Dict[str, Window]:
+        """Neighbour windows for the leaves that stay leaves (one batched query,
+        or none when ``prefetched_rows`` covers them), clipped to their section,
+        skipping merged parents' chunks and merged per file. Returns {leaf node
+        id: its (possibly shared) window}."""
         from src.domain.rag.chunk_lookup import ChunkLookup
 
         n = self._expand_context_neighbors
@@ -201,11 +248,22 @@ class AutoMergingRetriever:
                 score=float(item.score or 0.0), text=item.node.text))
         if not hits:
             return {}
-        rows = await ChunkLookup.afetch_rows_in_ranges(
-            self._vector_store,
-            [(h.file_id, *requested_range(h.chunk_index, n)) for h in hits])
+        # Extra rows are harmless: a window never reaches past its hit's ±n range.
+        rows = prefetched_rows
+        if rows is None or any(h.file_id not in rows for h in hits):
+            rows = await ChunkLookup.afetch_rows_in_ranges(
+                self._vector_store,
+                [(h.file_id, *requested_range(h.chunk_index, n)) for h in hits])
         windows = plan_windows(hits, rows, n, blocked)
         return {h.node_id: w for w in windows for h in w.hits}
+
+
+@dataclass
+class _Prefetched:
+    """What AutoMergingRetriever._prefetch read for a rerank pool (None = not read)."""
+
+    parents: Optional[Dict[str, Any]] = None
+    rows: Optional[Dict[str, List[Any]]] = None
 
 
 def _timing(outcome, stage: str, started: float) -> None:

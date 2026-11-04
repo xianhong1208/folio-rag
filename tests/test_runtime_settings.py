@@ -72,6 +72,21 @@ class TestValidateAndApply:
         with pytest.raises(ValueError, match="between 0 and 1"):
             ro._check_constraints("rag.retrieval.min_relevance", 1.5)
 
+    def test_rerank_pool_settings_are_live_and_checked(self):
+        cfg = _mk_config()
+        for path in ("rerank_pool", "rerank_dense_candidates", "rerank_sparse_candidates"):
+            assert ro.EDITABLE[f"rag.retrieval.{path}"] == "live"
+        ro.validate_and_apply(cfg, {"rag.retrieval.rerank_pool": "fused",
+                                    "rag.retrieval.rerank_dense_candidates": "40",
+                                    "rag.retrieval.rerank_sparse_candidates": 0})
+        r = cfg.rag.retrieval
+        assert (r.rerank_pool, r.rerank_dense_candidates, r.rerank_sparse_candidates) == \
+               ("fused", 40, 0)
+        with pytest.raises(ValueError, match="must be one of"):
+            ro._check_constraints("rag.retrieval.rerank_pool", "dense")
+        with pytest.raises(ValueError, match="between 0 and 200"):
+            ro._check_constraints("rag.retrieval.rerank_dense_candidates", 500)
+
     def test_in_place_mutation_visible_via_held_reference(self):
         # A consumer (e.g. context_generator) holds a section reference — an in-place change must be immediately visible
         cfg = _mk_config()

@@ -176,7 +176,10 @@ rag:
     default_top_k: 10                           # number of chunks returned: incomplete answers → raise it; too much noise → lower it
     default_similarity_cutoff: 0.25             # vector similarity floor: raise it to filter weak matches, too high returns nothing
     default_sparse_top_k: 12                    # number of BM25-side candidates: proper nouns / IDs not found → raise it
-    rerank_candidates: 60                       # fused candidates the reranker sees: max(3 × top_k, this); cross-lingual / paraphrased hits often rank 30-60 before rerank
+    rerank_pool: "per_list"                     # what the reranker scores: per_list = dense top N + BM25 top M (below); fused = top rerank_candidates of the fused list
+    rerank_dense_candidates: 30                 # per_list: dense top N (at least 3 × top_k); cross-lingual / paraphrased hits sit at dense rank 15-30
+    rerank_sparse_candidates: 10                # per_list: BM25 top M
+    rerank_candidates: 60                       # fused: the reranker sees max(3 × top_k, this) fused candidates
     default_hybrid_alpha: 0.75                  # 0=pure BM25, 1=pure vector: lower it for term/code-heavy queries
     hybrid_search: true
     text_search_config: "simple"                # Postgres FTS config; Chinese is segmented in Python via CKIP (ckip-transformers), then tokenized here with `simple`
