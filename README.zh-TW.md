@@ -328,7 +328,7 @@ profile 做了什麼:
 | 頁面 | 功能 |
 |------|------|
 | **Overview** | 活的檢索管線、語料讀數、索引健康、模型服務狀態。 |
-| **Folders** | 建立資料夾(歸你的 token 所有);點進去可上傳檔案、看逐檔索引狀態、檢視 chunk(AI 脈絡說明與文件原文分開顯示)、重新索引、刪除。以舊版切塊流程索引的檔案會標示 **Re-index recommended**。 |
+| **Folders** | 建立資料夾(歸你的 token 所有);點進去可上傳檔案、看逐檔索引狀態、檢視 chunk(AI 脈絡說明與文件原文分開顯示)、重新索引、刪除。以舊版切塊流程索引的檔案會標示 **Re-index recommended**;資料夾列表會逐一統計(**N stale**),並可一鍵重建。 |
 | **Search Playground** | 對資料夾即時查詢,顯示**逐訊號檢索軌跡** —— Vector · BM25 · Hybrid · Rerank 各自名次並列 —— 並可加 RAG 答案。 |
 | **Index Jobs** | 索引任務即時串流與進度;可取消執行中的任務。 |
 | **Query Analytics** | 查詢量、延遲、零結果率、熱門查詢與知識缺口。 |
@@ -340,6 +340,10 @@ profile 做了什麼:
 ### 升級後重新索引
 
 切塊流程的版本逐檔記錄。以舊版流程索引的檔案照常可用,但資料夾檢視會標示 **Re-index recommended**(`GET /api/rag/file/{id}/index/status` 也會回 `reindex_recommended: true`)。按該列的重新索引按鈕,或用標題列的連結一次選取所有這類檔案,再按 *Reindex selected*。之後逐檔重新索引都是增量的;*Reindex Folder* 則會刪掉資料夾的資料表、全部重建。
+
+不用一個個點開資料夾去找:資料夾列表會在含有這類檔案的資料夾上顯示琥珀色的 **N stale** 標籤(`GET /api/admin/folders` 的 `reindex_recommended_files`),按該列的重新索引按鈕就只會重建那些檔案。
+
+目前的切塊流程是第 3 版(依章節對齊切塊,搭配第 3 版的脈絡說明 prompt),因此在此之前索引的檔案都會被標示。重新索引之前,檔案會保留舊的 chunk,照常可以搜尋。
 
 ## API 參考
 

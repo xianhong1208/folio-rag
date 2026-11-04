@@ -341,7 +341,7 @@ Paste the token on the login screen. Folders created earlier through the old *Ow
 | Page | What you do there |
 |------|-------------------|
 | **Overview** | The live retrieval pipeline, corpus readouts, index health, and model-service status. |
-| **Folders** | Create folders (owned by your token); open one to upload files, watch per-file index status, view chunks (with the AI context line shown apart from the document text), reindex, or delete. Files indexed by an older chunking pipeline show **Re-index recommended**. |
+| **Folders** | Create folders (owned by your token); open one to upload files, watch per-file index status, view chunks (with the AI context line shown apart from the document text), reindex, or delete. Files indexed by an older chunking pipeline show **Re-index recommended**; the folder list counts them per folder (**N stale**) with a one-click re-index. |
 | **Search Playground** | Run a live query against a folder and see the **per-signal retrieval trace** — Vector · BM25 · Hybrid · Rerank ranks side by side — plus an optional RAG answer. |
 | **Index Jobs** | Live stream of indexing jobs with progress; cancel a running job. |
 | **Query Analytics** | Volume, latency, zero-result rate, top queries and knowledge gaps. |
@@ -353,6 +353,10 @@ Paste the token on the login screen. Folders created earlier through the old *Ow
 ### Re-indexing after an upgrade
 
 Chunking changes are versioned per file. A file indexed by an older pipeline keeps working exactly as before, but shows **Re-index recommended** in the folder view (and `reindex_recommended: true` in `GET /api/rag/file/{id}/index/status`). Use the row's re-index button, or the header link that selects all such files, then *Reindex selected*. Per-file re-indexing is incremental from then on; *Reindex Folder* drops the folder's table and rebuilds everything.
+
+You don't have to open every folder to find them: the folder list shows an amber **N stale** badge on each folder that holds such files (`reindex_recommended_files` in `GET /api/admin/folders`), and the re-index button in that folder's row re-indexes just those files.
+
+The current pipeline is version 3 (section-aligned chunks, with the version-3 context prompt), so every file indexed before it is marked. Until it is re-indexed, a file keeps its old chunks and is still searchable.
 
 ## API reference
 
