@@ -9,10 +9,10 @@ from __future__ import annotations
 
 from typing import Any, Dict, List, Optional
 
-from sqlalchemy import func
+from sqlalchemy import and_, func, or_
 
 from db.db import File, FileIndex, Folder, IndexJob, Session
-from src.domain.rag.chunk_identity import reindex_recommended
+from src.domain.rag.chunk_identity import CHUNK_PIPELINE_VERSION, reindex_recommended
 from src.log import get_db_logger
 
 log = get_db_logger()
@@ -22,6 +22,14 @@ _JOB_ACTIVE = ("pending", "running", "queued")
 # FileIndex statuses that need attention (and a Retry) in the console: a failed parse,
 # a file the server restart interrupted, or one the user cancelled.
 _FILE_NEEDS_RETRY = ("failed", "interrupted", "cancelled")
+
+# SQL form of chunk_identity.reindex_recommended(): indexed by an older chunking
+# pipeline (NULL = indexed before versions were recorded). Keep the two in step.
+_FILE_NEEDS_REINDEX = and_(
+    FileIndex.status == "indexed",
+    or_(FileIndex.pipeline_version.is_(None),
+        FileIndex.pipeline_version != CHUNK_PIPELINE_VERSION),
+)
 
 
 def _ensure_bound() -> None:
@@ -82,6 +90,10 @@ def overview(owner: Optional[str] = None) -> Dict[str, Any]:
 def folders_with_index_stats(owner: Optional[str] = None) -> List[Dict[str, Any]]:
     """Folders plus their index summaries (single join query, no N+1).
 
+    ``reindex_recommended_files`` counts the folder's indexed files whose
+    pipeline_version is not the current CHUNK_PIPELINE_VERSION — the per-folder
+    total of the per-file ``reindex_recommended`` flag, computed in SQL.
+
     ``owner`` limits the list to folders bound to that owner key; None lists all.
     """
     _ensure_bound()
@@ -90,16 +102,18 @@ def folders_with_index_stats(owner: Optional[str] = None) -> List[Dict[str, Any]
             FileIndex.folder_id.label("fid"),
             func.count(FileIndex.id).filter(FileIndex.status == "indexed").label("indexed"),
             func.count(FileIndex.id).filter(FileIndex.status.in_(_FILE_NEEDS_RETRY)).label("failed"),
+            func.count(FileIndex.id).filter(_FILE_NEEDS_REINDEX).label("stale"),
             func.coalesce(func.sum(FileIndex.num_chunks), 0).label("chunks"),
             func.max(FileIndex.indexed_at).label("last_indexed"),
         ).group_by(FileIndex.folder_id).subquery()
-        q = s.query(Folder, idx.c.indexed, idx.c.failed, idx.c.chunks, idx.c.last_indexed) \
+        q = s.query(Folder, idx.c.indexed, idx.c.failed, idx.c.stale, idx.c.chunks,
+                    idx.c.last_indexed) \
             .outerjoin(idx, Folder.id == idx.c.fid)
         if owner is not None:
             q = q.filter(Folder.user_token == owner)
         rows = q.order_by(Folder.updated_at.desc()).all()
         out = []
-        for f, indexed, failed_n, chunks, last_indexed in rows:
+        for f, indexed, failed_n, stale_n, chunks, last_indexed in rows:
             out.append({
                 "id": f.id,
                 "name": f.name,
@@ -108,6 +122,8 @@ def folders_with_index_stats(owner: Optional[str] = None) -> List[Dict[str, Any]
                 "total_size_bytes": int(f.total_size or 0),
                 "indexed_files": indexed or 0,
                 "failed_files": failed_n or 0,
+                # Indexed by an older chunking pipeline: a re-index is recommended
+                "reindex_recommended_files": stale_n or 0,
                 "chunks": int(chunks or 0),
                 "vector_table": f"data_{f.id}_{f.vector_table_uuid}",
                 "token_prefix": (f.user_token or "")[:8] + "…" if f.user_token else None,
