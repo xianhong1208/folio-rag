@@ -70,6 +70,24 @@ async def _log_query(*, query: str, folder_id: int, token: Optional[str], result
         logger.debug(f"query log skipped: {e}")
 
 
+# QueryLog writes still in flight. The MCP search answers without waiting for its
+# log row (a thread-pool DB insert); the set keeps each task referenced until done.
+_pending_logs: "set[asyncio.Task]" = set()
+
+
+def _log_query_later(**kw) -> None:
+    """Schedule _log_query without awaiting it (keeps the insert off the response)."""
+    task = asyncio.ensure_future(_log_query(**kw))
+    _pending_logs.add(task)
+    task.add_done_callback(_pending_logs.discard)
+
+
+async def flush_query_logs() -> None:
+    """Wait for every scheduled QueryLog write (tests; graceful shutdown)."""
+    while _pending_logs:
+        await asyncio.gather(*list(_pending_logs), return_exceptions=True)
+
+
 class RAGQueryService:
     """Service handling REST flat hybrid query and agentic MCP query."""
 
@@ -284,7 +302,7 @@ class RAGQueryService:
                     similarity_cutoff=similarity_cutoff,
                     expand_context=expand_context,
                 )
-            await _log_query(
+            _log_query_later(
                 query=query, folder_id=folder.id, token=token,
                 result_count=int(response.get("total_results", len(response.get("results") or []))),
                 latency_ms=int((time.perf_counter() - started) * 1000),
