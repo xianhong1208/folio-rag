@@ -14,7 +14,9 @@ evals/rag/golden_qa.yaml through
                  carries its rank in the dense, BM25 and fused candidate lists.
 
 and (3) scores chunk-level Recall@5/10/20, MRR@10, nDCG@10, file-level Recall@5, the
-false-accept rate on unanswerable questions, MCP response size and latency, broken
+false-accept rate on unanswerable questions, the relevance cutoff (what each
+min_relevance threshold rejects and costs; the out-of-scope set in
+evals/rag/out_of_scope_qa.yaml is asked too), MCP response size and latency, broken
 down by question type and language. Gold evidence is file + quoted spans (see
 evals/retrieval_metrics.py), so the set survives chunking changes.
 
@@ -45,12 +47,16 @@ from evals import retrieval_metrics as rm  # noqa: E402
 
 DOCS_DIR = REPO / "evals" / "rag" / "documents"
 QA_FILE = REPO / "evals" / "rag" / "golden_qa.yaml"
+OOS_FILE = REPO / "evals" / "rag" / "out_of_scope_qa.yaml"
 OUT_DIR = REPO / "evals" / "baselines"
 FOLDER_NAME = "folio_eval_golden_v1"
 FOLDER_DESC = ("Folio retrieval eval corpus (evals/rag/documents): Taiwanese labour and "
                "personal-data laws, U.S. government pages, fictional company documents.")
-HARNESS_VERSION = 1
+HARNESS_VERSION = 2
 THRESHOLDS = (0.25, 0.5)
+# min_relevance values the relevance-cutoff sweep evaluates (rerank probabilities).
+SWEEP = (0.0, 0.25, 0.5, 0.75, 0.8, 0.85, 0.9, 0.95, 0.98, 0.99)
+OUT_OF_SCOPE = "out_of_scope"
 METRICS = ("recall@5", "recall@10", "recall@20", "mrr@10", "ndcg@10", "file_recall@5")
 
 
@@ -331,6 +337,10 @@ async def run_once(api: Folio, folder: dict, questions: List[dict], loc: dict,
                 "files": [r["file_name"] for r in res[:5]]})
             if m["data"].get("error"):
                 row["mcp"]["error"] = m["data"]["error"]
+            # The relevance signal as served (top_relevance is the best rerank score
+            # before score_threshold, so it exists even when no result survived).
+            for key in ("top_relevance", "low_relevance", "min_relevance"):
+                row["mcp"][key] = m["data"].get(key)
             m20 = await mcp_search(client, tool, q["question"], top_k=20)
             row["mcp_k20"] = score_results(mcp_results(m20["data"]), q, gold)
             t0 = time.perf_counter()
@@ -356,10 +366,45 @@ async def run_once(api: Folio, folder: dict, questions: List[dict], loc: dict,
 # -------------------------------------------------------------------- reporting
 
 
+def relevance_rows(rows: List[dict]) -> List[dict]:
+    """Rows for rm.relevance_sweep from the default MCP search of each question."""
+    out = []
+    for r in rows:
+        m = r["mcp"]
+        row = {"answerable": r["answerable"], "group": r["type"],
+               "top_relevance": m.get("top_relevance"), "n_results": m.get("n_results", 0)}
+        for k in ("recall@5", "recall@10"):
+            if k in m:
+                row[k] = m[k]
+        out.append(row)
+    return out
+
+
+def summarise_relevance(rows: List[dict]) -> dict:
+    """The min_relevance sweep plus the low_relevance flag as the server set it."""
+    sweep = rm.relevance_sweep(relevance_rows(rows), SWEEP)
+    served: Dict[str, Optional[float]] = {}
+    for label, members in (("answerable", [r for r in rows if r["answerable"]]),
+                           ("unanswerable", [r for r in rows if r["type"] == "unanswerable"]),
+                           (OUT_OF_SCOPE, [r for r in rows if r["type"] == OUT_OF_SCOPE])):
+        flags = [r["mcp"].get("low_relevance") for r in members]
+        served[label] = (round(sum(1 for f in flags if f) / len(flags), 4)
+                         if flags and any(f is not None for f in flags) else None)
+    cut = next((r["mcp"].get("min_relevance") for r in rows
+                if r["mcp"].get("min_relevance") is not None), None)
+    return {"sweep": {f"{x['threshold']:g}": x for x in sweep},
+            "served": {"min_relevance": cut, "low_relevance_rate": served}}
+
+
 def summarise(rows: List[dict]) -> dict:
+    # The out-of-scope set only feeds the relevance section: false-accept and the
+    # response-size / latency numbers stay over the golden set, comparable with
+    # earlier baselines.
+    golden = [r for r in rows if r["type"] != OUT_OF_SCOPE]
     ans = [r for r in rows if r["answerable"]]
-    una = [r for r in rows if not r["answerable"]]
-    out = {"n": len(rows), "n_answerable": len(ans), "n_unanswerable": len(una)}
+    una = [r for r in golden if not r["answerable"]]
+    out = {"n": len(golden), "n_answerable": len(ans), "n_unanswerable": len(una),
+           "n_out_of_scope": len(rows) - len(golden)}
     for mode in ("mcp", "mcp_k20", "trace"):
         flat = [dict(r[mode], type=r["type"], lang=r["lang"]) for r in ans]
         ks = [m for m in METRICS if any(m in f for f in flat)]
@@ -374,7 +419,8 @@ def summarise(rows: List[dict]) -> dict:
                 sum(1 for r in ans if (r[mode]["top_score"] or 0) >= t) / len(ans), 4) if ans else None
         s["thresholds"] = fa
         out[mode] = s
-    allm = [r["mcp"] for r in rows]
+    out["relevance"] = summarise_relevance(rows)
+    allm = [r["mcp"] for r in golden]
     out["mcp_response"] = {
         "tokens_mean": round(rm.mean(m["tokens"] for m in allm), 1),
         "tokens_p50": round(rm.percentile([m["tokens"] for m in allm], 50), 1),
@@ -383,9 +429,9 @@ def summarise(rows: List[dict]) -> dict:
         "dup_ratio_mean": round(rm.mean(m["dup_ratio"] for m in allm), 4),
         "latency_ms_p50": round(rm.percentile([m["ms"] for m in allm], 50), 1),
         "latency_ms_p95": round(rm.percentile([m["ms"] for m in allm], 95), 1),
-        "trace_latency_ms_p50": round(rm.percentile([r["trace"]["ms"] for r in rows], 50), 1),
-        "trace_latency_ms_p95": round(rm.percentile([r["trace"]["ms"] for r in rows], 95), 1),
-        "by_lang": rm.group_means([dict(m, lang=r["lang"]) for m, r in zip(allm, rows)],
+        "trace_latency_ms_p50": round(rm.percentile([r["trace"]["ms"] for r in golden], 50), 1),
+        "trace_latency_ms_p95": round(rm.percentile([r["trace"]["ms"] for r in golden], 95), 1),
+        "by_lang": rm.group_means([dict(m, lang=r["lang"]) for m, r in zip(allm, golden)],
                                   lambda f: f["lang"], ["tokens", "dup_ratio", "ms"]),
     }
     roles: Dict[str, int] = {}
@@ -470,12 +516,47 @@ def fmt(v) -> str:
     return "—" if v is None else (f"{v:.3f}" if isinstance(v, float) else str(v))
 
 
+def pct(v) -> str:
+    return "—" if v is None else f"{100 * v:.1f}%"
+
+
+def relevance_markdown(s: dict) -> List[str]:
+    """The min_relevance sweep table (harness v2+; empty for older reports)."""
+    rel = s.get("relevance")
+    if not rel:
+        return []
+    base = rel["sweep"].get("0") or next(iter(rel["sweep"].values()))
+    groups = list(base["by_group"])
+    served = rel["served"]
+    L = ["## Relevance cutoff (`rag.retrieval.min_relevance`)", "",
+         "What each cutoff would report as \"nothing relevant\" on the default MCP search: a "
+         "search is rejected when it returned nothing or its best rerank score "
+         "(`top_relevance`, before `score_threshold`) is below the cutoff. Recall columns "
+         "score a rejected answerable question as 0 (as if the results were dropped); "
+         "lost@5 = answerable questions with a top-5 hit that would be rejected. "
+         + ", ".join(f"{g}: n={base['by_group'][g]['n']}" for g in groups) + ".", "",
+         "| min_relevance | " + " | ".join(f"{g} rejected" for g in groups)
+         + " | all unanswerable rejected | answerable wrongly rejected | R@5 | R@10 | ΔR@5 | lost@5 |",
+         "|---" * (len(groups) + 7) + "|"]
+    for key, row in rel["sweep"].items():
+        d5 = (row["recall@5"] - base["recall@5"]) if row.get("recall@5") is not None else None
+        L.append(f"| {key} | " + " | ".join(pct(row["by_group"][g]["rejected"]) for g in groups)
+                 + f" | {pct(row['unanswerable_rejected'])} | {pct(row['answerable_rejected'])} | "
+                 f"{fmt(row.get('recall@5'))} | {fmt(row.get('recall@10'))} | "
+                 f"{'—' if d5 is None else f'{100 * d5:+.1f} pt'} | {fmt(row['lost@5'])} |")
+    rates = served["low_relevance_rate"]
+    L += ["", f"As served (min_relevance = {fmt(served['min_relevance'])}): `low_relevance: true` "
+          "on " + ", ".join(f"{k} {pct(v)}" for k, v in rates.items()) + ".", ""]
+    return L
+
+
 def markdown_report(rep: dict) -> str:
     s = rep["summary"]
     L = [f"# Retrieval baseline — {rep['date']} — `{rep['label']}`", "",
          f"Folio at {rep['server']} (code `{rep['code_ref']}`), folder `{rep['folder']['name']}` "
          f"(id {rep['folder']['id']}), {rep['corpus']['n_files']} documents, "
-         f"{s['n']} questions ({s['n_answerable']} answerable, {s['n_unanswerable']} unanswerable), "
+         f"{s['n']} questions ({s['n_answerable']} answerable, {s['n_unanswerable']} unanswerable)"
+         + (f" + {s['n_out_of_scope']} out-of-scope" if s.get("n_out_of_scope") else "") + ", "
          f"{rep['runs']} runs. Harness v{rep['harness']}; scores below are the mean of the runs.", "",
          "Models: " + ", ".join(f"{k} `{v}`" for k, v in rep["models"].items())
          + ("; environment: " + ", ".join(f"{k} {v}" for k, v in rep.get("environment", {}).items())
@@ -494,6 +575,7 @@ def markdown_report(rep: dict) -> str:
           "(answerable questions clearing the same bar: "
           + ", ".join(f"{t} → {fmt(s['mcp']['thresholds'][f'answerable_accept@{t}'])}" for t in THRESHOLDS)
           + " on the MCP path).", ""]
+    L += relevance_markdown(s)
     for dim, title in (("by_type", "By question type"), ("by_lang", "By question language")):
         L += [f"## {title}", "",
               "| group | n | MCP R@5 | MCP R@10 | MCP MRR@10 | MCP nDCG@10 | file R@5 | MCP k20 R@20 "
@@ -556,6 +638,14 @@ def load_questions(path: Path, limit: Optional[int] = None) -> List[dict]:
     return qs[:limit] if limit else qs
 
 
+def load_out_of_scope(path: Path = OOS_FILE) -> List[dict]:
+    """The hand-written out-of-scope questions, forced to type out_of_scope with no
+    evidence (they only feed the relevance section)."""
+    if not path.exists():
+        return []
+    return [dict(q, type=OUT_OF_SCOPE, evidence=[]) for q in load_questions(path)]
+
+
 def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
     ap.add_argument("--server", default="http://127.0.0.1:5039")
@@ -565,6 +655,8 @@ def main() -> int:
     ap.add_argument("--label", default=None, help="baseline label (default dev-<shortsha>)")
     ap.add_argument("--out", default=str(OUT_DIR))
     ap.add_argument("--index-only", action="store_true")
+    ap.add_argument("--no-out-of-scope", action="store_true",
+                    help="skip evals/rag/out_of_scope_qa.yaml (relevance section: near misses only)")
     ap.add_argument("--report", metavar="JSON", help="only re-render the Markdown of a results JSON")
     ap.add_argument("--env", action="append", default=[], metavar="KEY=VALUE",
                     help="environment facts the API cannot report (e.g. pgvector=0.8.7); "
@@ -585,6 +677,8 @@ def main() -> int:
         return 0
 
     questions = load_questions(QA_FILE, args.limit)
+    if not args.no_out_of_scope:
+        questions += load_out_of_scope()
     loc = localise_gold(api, folder, questions)
     n_ev = sum(len(q.get("evidence") or []) for q in questions)
     n_split = sum(1 for g in loc["gold"].values() for lo_hi in g.values() if lo_hi[0] != lo_hi[1])
@@ -620,8 +714,13 @@ def main() -> int:
         "corpus": {"n_files": len(folder["files"]),
                    "files": {n: {"chunks": f.get("chunks"), "status": f.get("status")}
                              for n, f in sorted(folder["files"].items())}},
-        "golden_set": {"file": str(QA_FILE.relative_to(REPO)), "n": len(questions),
+        "golden_set": {"file": str(QA_FILE.relative_to(REPO)),
+                       "n": sum(1 for q in questions if q.get("type") != OUT_OF_SCOPE),
                        "sha256": sha256_file(QA_FILE)},
+        "out_of_scope_set": ({"file": str(OOS_FILE.relative_to(REPO)),
+                              "n": sum(1 for q in questions if q.get("type") == OUT_OF_SCOPE),
+                              "sha256": sha256_file(OOS_FILE)}
+                             if any(q.get("type") == OUT_OF_SCOPE for q in questions) else None),
         "models": models, "config": config,
         "environment": dict(e.split("=", 1) for e in args.env if "=" in e),
         "gold_reachability": {"n_evidence": n_ev, "n_unreachable": len(loc["unreachable"]),
@@ -640,6 +739,9 @@ def main() -> int:
     o = summary["mcp"]["overall"]
     log(f"\nMCP R@5 {o['recall@5']:.3f} R@10 {o['recall@10']:.3f} MRR@10 {o['mrr@10']:.3f} "
         f"nDCG@10 {o['ndcg@10']:.3f} | tokens/call {summary['mcp_response']['tokens_mean']}")
+    served = summary["relevance"]["served"]
+    log(f"low_relevance at min_relevance={served['min_relevance']}: "
+        + ", ".join(f"{k} {v}" for k, v in served["low_relevance_rate"].items()))
     log(f"wrote {stem}.json and .md")
     return 0
 

@@ -1,0 +1,152 @@
+# Out-of-scope questions for the retrieval eval — hand-written, not generated.
+#
+# golden_qa.yaml's unanswerable items are near misses: on-topic for the corpus (the
+# same laws, products and company) but asking for something it does not say. These are
+# the other kind of "not found": questions about subjects the corpus does not cover at
+# all. scripts/eval_retrieval.py loads them next to the golden set (type out_of_scope,
+# no evidence) to measure the relevance cutoff (rag.retrieval.min_relevance) on both
+# kinds; they never count towards Recall / MRR / nDCG. A few are deliberately
+# adjacent to a document (high-speed rail fares in the travel policy, the Mid-Autumn
+# festival bonus in the labour rules) without answering the question.
+#
+# Each item: id (h-oos-NN), type, lang, question, answer: null, evidence: [].
+- id: h-oos-01
+  type: out_of_scope
+  lang: en
+  question: How long should I knead bread dough by hand?
+  answer: null
+  evidence: []
+  expected_files: []
+- id: h-oos-02
+  type: out_of_scope
+  lang: en
+  question: Who won the 2018 FIFA World Cup final?
+  answer: null
+  evidence: []
+  expected_files: []
+- id: h-oos-03
+  type: out_of_scope
+  lang: en
+  question: What is the distance from the Earth to the Moon?
+  answer: null
+  evidence: []
+  expected_files: []
+- id: h-oos-04
+  type: out_of_scope
+  lang: en
+  question: How do I reverse a linked list in Python?
+  answer: null
+  evidence: []
+  expected_files: []
+- id: h-oos-05
+  type: out_of_scope
+  lang: en
+  question: Which grape varieties are used in a classic Bordeaux blend?
+  answer: null
+  evidence: []
+  expected_files: []
+- id: h-oos-06
+  type: out_of_scope
+  lang: en
+  question: What causes the northern lights?
+  answer: null
+  evidence: []
+  expected_files: []
+- id: h-oos-07
+  type: out_of_scope
+  lang: en
+  question: How often should a guitar be restrung?
+  answer: null
+  evidence: []
+  expected_files: []
+- id: h-oos-08
+  type: out_of_scope
+  lang: en
+  question: What is the recommended tire pressure for a road bike?
+  answer: null
+  evidence: []
+  expected_files: []
+- id: h-oos-09
+  type: out_of_scope
+  lang: en
+  question: Who painted The Starry Night?
+  answer: null
+  evidence: []
+  expected_files: []
+- id: h-oos-10
+  type: out_of_scope
+  lang: en
+  question: How many players are on a volleyball team on court?
+  answer: null
+  evidence: []
+  expected_files: []
+- id: h-oos-11
+  type: out_of_scope
+  lang: zh
+  question: 紅燒肉要燉多久才會軟嫩？
+  answer: null
+  evidence: []
+  expected_files: []
+- id: h-oos-12
+  type: out_of_scope
+  lang: zh
+  question: 玉山的海拔高度是多少公尺？
+  answer: null
+  evidence: []
+  expected_files: []
+- id: h-oos-13
+  type: out_of_scope
+  lang: zh
+  question: 貓咪一天應該餵幾次飼料？
+  answer: null
+  evidence: []
+  expected_files: []
+- id: h-oos-14
+  type: out_of_scope
+  lang: zh
+  question: 台北到高雄搭高鐵大約要多久？
+  answer: null
+  evidence: []
+  expected_files: []
+- id: h-oos-15
+  type: out_of_scope
+  lang: zh
+  question: 光合作用的主要產物是什麼？
+  answer: null
+  evidence: []
+  expected_files: []
+- id: h-oos-16
+  type: out_of_scope
+  lang: zh
+  question: 如何在 Excel 中建立樞紐分析表？
+  answer: null
+  evidence: []
+  expected_files: []
+- id: h-oos-17
+  type: out_of_scope
+  lang: zh
+  question: 梵谷的《向日葵》系列共有幾幅？
+  answer: null
+  evidence: []
+  expected_files: []
+- id: h-oos-18
+  type: out_of_scope
+  lang: zh
+  question: 羽毛球比賽一局要打到幾分？
+  answer: null
+  evidence: []
+  expected_files: []
+- id: h-oos-19
+  type: out_of_scope
+  lang: zh
+  question: 月餅通常在哪個節日食用？
+  answer: null
+  evidence: []
+  expected_files: []
+- id: h-oos-20
+  type: out_of_scope
+  lang: zh
+  question: 黑洞是怎麼形成的？
+  answer: null
+  evidence: []
+  expected_files: []

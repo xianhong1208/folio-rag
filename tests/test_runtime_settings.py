@@ -66,6 +66,12 @@ class TestValidateAndApply:
             })
         assert cfg.rag.retrieval.default_top_k == before  # the valid item was not written either
 
+    def test_min_relevance_is_live_and_bounded(self):
+        assert ro.EDITABLE["rag.retrieval.min_relevance"] == "live"
+        assert ro._check_constraints("rag.retrieval.min_relevance", 0.9) == 0.9
+        with pytest.raises(ValueError, match="between 0 and 1"):
+            ro._check_constraints("rag.retrieval.min_relevance", 1.5)
+
     def test_in_place_mutation_visible_via_held_reference(self):
         # A consumer (e.g. context_generator) holds a section reference — an in-place change must be immediately visible
         cfg = _mk_config()
