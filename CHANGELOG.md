@@ -455,4 +455,6 @@ flags them.
   pgvector storage, per-token (`jti`) folder ownership, and the first React admin
   console.
 
-[1.1.0]: https://github.com/xianhong1208/agentic_rag/releases/tag/v1.1.0
+[Unreleased]: https://github.com/xianhong1208/folio-rag/compare/v1.2.0...dev
+[1.2.0]: https://github.com/xianhong1208/folio-rag/releases/tag/v1.2.0
+[1.1.0]: https://github.com/xianhong1208/folio-rag/releases/tag/v1.1.0
