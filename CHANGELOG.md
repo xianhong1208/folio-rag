@@ -278,6 +278,10 @@ flags them.
   `McpGateTokenVerifier`. Configuration and issued tokens are unaffected.
 
 ### Fixed
+- `GET /health/detailed` reported `connection_pool` as `degraded` on every call and logged
+  `Connection pool stats unavailable: 'QueuePool' object has no attribute 'checked_in_connections'`:
+  it called pool methods that do not exist. It now reports `size`, `checked_in`, `checked_out` and
+  `overflow` (extra connections beyond `pool_size`, never negative).
 - 4xx instead of 500: playground parameters of the wrong type or range,
   queries over 2000 characters or over the embedding model's context window
   (422), unsupported upload types (415), oversized uploads (413), folder names
