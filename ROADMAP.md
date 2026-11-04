@@ -11,9 +11,7 @@ tracked but not started. Items are grounded in the current codebase and its know
 - **Rebuild-FTS action.** *Shipped.* One-click `POST …/rebuild-fts` re-segments
   stored chunks with CKIP and rewrites `text_search_tsv` in place (no
   re-embedding), backfilling Chinese BM25 recall for folders indexed before the
-  CKIP upgrade. *Follow-up:* it runs synchronously, and a 5.6k-chunk folder took
-  ~10 min — past any sane HTTP timeout. Turn it into a background job with
-  progress, like indexing.
+  CKIP upgrade. Runs as a background job with progress, like indexing (1.2.0).
 - **Retire the legacy console.** *Shipped.* The root URL redirects to the React
   console, and the single-file `admin_console.html`, its loader and the
   `/admin-classic` route have been deleted (recoverable from git history).
@@ -135,6 +133,11 @@ fragmented chunks and weak precision.
 
 ## ✅ Recently shipped
 
+- **1.2.0**: renamed to Folio; retrieval golden set + eval harness (205 questions, public corpus);
+  chunk pipeline v3, a deeper rerank pool and an MCP response token budget (Recall@10 0.973 → 0.981,
+  zh→en 0.80 → 0.90, tokens per search 8.2k → 2.6k); MCP search reports `low_relevance`; search
+  latency p50 ~500 → ~330 ms; MCP Gate revocation feed; console aggregates scoped to the token's own
+  folders; folder-level re-index of stale files; background Rebuild-FTS; backend CI.
 - **Streaming RAG answers** over SSE in the Search Playground.
 - **Multi-modal retrieval v1**: Docling tables surfaced (badge + rendered HTML table).
 - **Evaluation depth**: LLM-graded answer quality + baseline history and trend.
@@ -142,8 +145,6 @@ fragmented chunks and weak precision.
 - **Frontend tests + CI** (Vitest + GitHub Actions) for the console SPA.
 - **React console is the front door** (root URL redirects to `/admin`); legacy
   console kept at `/admin-classic` (since deleted).
-- **Console i18n foundation** (English + 繁體中文): provider, language toggle,
-  translated shell + Folders page.
 - Admin console migrated from a single-file HTML app to a **React SPA** (Vite +
   React Router + Tailwind), "Retrieval Terminal" design.
 - Chinese full-text search via **CKIP** word segmentation (replaces pg_jieba).
