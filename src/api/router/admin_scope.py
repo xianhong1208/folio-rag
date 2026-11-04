@@ -45,6 +45,8 @@ def owned_folder_ids(ident: ConsoleIdentity) -> Optional[set[int]]:
 def aggregate_owner(ident: ConsoleIdentity) -> Optional[str]:
     """Owner filter for cross-folder aggregates (overview KPIs, jobs, analytics).
 
-    Admins (and open mode) see the whole server; everyone else only their own folders.
+    Always the session's own folders — ``rag:admin`` included: it unlocks global
+    settings, never other owners' folders, jobs or queries. None only in open mode
+    (auth disabled), where the identity owns every folder anyway.
     """
-    return None if ident.is_admin else ident.owner_key
+    return ident.owner_key
