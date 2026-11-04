@@ -18,9 +18,10 @@ from __future__ import annotations
 import asyncio
 import contextvars
 import re
+import threading
 import time
 from dataclasses import dataclass, field, replace
-from typing import Any, Dict, List, Optional, Sequence, Tuple
+from typing import Any, Awaitable, Callable, Dict, List, Optional, Sequence, Tuple
 
 from src.log import get_api_logger
 
@@ -34,9 +35,24 @@ FUSIONS = (FUSION_RRF, FUSION_CONCAT)
 # let the cross-encoder pick the final top_k — but never fewer than
 # rag.retrieval.rerank_candidates: a cross-lingual or paraphrased hit often sits at
 # fused rank 30-60, and a pool tied to top_k (30 for the MCP default of 10) never
-# lets the reranker see it. Reranking 60 pairs costs tens of milliseconds.
+# lets the reranker see it.
 RERANK_CANDIDATE_FACTOR = 3
 DEFAULT_RERANK_CANDIDATES = 60
+
+# Which candidates the cross-encoder scores (rag.retrieval.rerank_pool):
+# - "per_list": the dense top rerank_dense_candidates (at least 3 x top_k) plus the
+#   BM25 top rerank_sparse_candidates. The hits a deep pool exists for (cross-lingual,
+#   paraphrased) are dense-only, and RRF ranks them below every passage both lists
+#   found, so a fused cut has to go to 60 to reach dense rank ~30. Cutting each list
+#   on its own reaches them with about half the pairs, and rerank time grows with the
+#   number of pairs, not their length (a vLLM score call costs ~6 ms per pair).
+# - "fused": the top max(3 x top_k, rerank_candidates) of the fused list (the previous
+#   default).
+RERANK_POOL_PER_LIST = "per_list"
+RERANK_POOL_FUSED = "fused"
+RERANK_POOLS = (RERANK_POOL_PER_LIST, RERANK_POOL_FUSED)
+DEFAULT_RERANK_DENSE_CANDIDATES = 30
+DEFAULT_RERANK_SPARSE_CANDIDATES = 10
 
 # pgvector's default hnsw.ef_search. An HNSW scan returns at most ef_search rows,
 # so a dense query deeper than this would be silently cut short; the dense query
@@ -46,6 +62,27 @@ DEFAULT_EF_SEARCH = 40
 # How long a folder's segmenter stamp is trusted before it is read again (a
 # Rebuild FTS re-stamps the table; queries follow within this many seconds).
 SEGMENTER_STAMP_TTL_S = 60.0
+
+# Query segmentation runs on one dedicated thread. CKIP is a torch model, and on the
+# CPU every OS thread that calls torch gets its own OpenMP team (one worker per core,
+# spinning between calls); spreading queries over the shared to_thread pool built a
+# team per pool thread, and the teams fought over the cores - segmentation went from
+# ~40 ms to 140 ms p50, and to seconds when the host was busy. One thread = one team.
+_SEGMENT_EXECUTOR = None
+_SEGMENT_EXECUTOR_LOCK = threading.Lock()
+
+
+def _segment_executor():
+    global _SEGMENT_EXECUTOR
+    if _SEGMENT_EXECUTOR is None:
+        with _SEGMENT_EXECUTOR_LOCK:
+            if _SEGMENT_EXECUTOR is None:
+                from concurrent.futures import ThreadPoolExecutor
+
+                _SEGMENT_EXECUTOR = ThreadPoolExecutor(
+                    max_workers=1, thread_name_prefix="folio-query-segment")
+    return _SEGMENT_EXECUTOR
+
 
 # Per-request stage timings (ms). Set by HybridSearcher.search for the duration of
 # one call; the concurrent dense / BM25 tasks inherit the same dict through the
@@ -73,10 +110,15 @@ class SearchSettings:
     rrf_k: int = 60
     text_search_config: str = "simple"
     rerank_candidates: int = DEFAULT_RERANK_CANDIDATES
+    rerank_pool: str = RERANK_POOL_PER_LIST
+    rerank_dense_candidates: int = DEFAULT_RERANK_DENSE_CANDIDATES
+    rerank_sparse_candidates: int = DEFAULT_RERANK_SPARSE_CANDIDATES
 
     def __post_init__(self):
         if self.fusion not in FUSIONS:
             object.__setattr__(self, "fusion", FUSION_RRF)
+        if self.rerank_pool not in RERANK_POOLS:
+            object.__setattr__(self, "rerank_pool", RERANK_POOL_PER_LIST)
 
     def with_overrides(self, **overrides: Any) -> "SearchSettings":
         """Copy with every non-None override applied (None means "keep")."""
@@ -107,6 +149,11 @@ class SearchSettings:
                 rrf_k=int(_get("rrf_k", base.rrf_k)),
                 text_search_config=str(_get("text_search_config", base.text_search_config)),
                 rerank_candidates=int(_get("rerank_candidates", base.rerank_candidates)),
+                rerank_pool=str(_get("rerank_pool", base.rerank_pool)),
+                rerank_dense_candidates=int(_get("rerank_dense_candidates",
+                                                 base.rerank_dense_candidates)),
+                rerank_sparse_candidates=int(_get("rerank_sparse_candidates",
+                                                  base.rerank_sparse_candidates)),
             )
         return base.with_overrides(**overrides)
 
@@ -161,8 +208,11 @@ class SearchOutcome:
     fused: List[Any] = field(default_factory=list)
     fusion: str = FUSION_RRF             # how candidates were fused (see score_type)
     # Per-stage wall time in ms: embed, dense, segment, bm25, fuse, rerank (the
-    # MCP retriever adds merge / expand). dense and bm25 run concurrently.
+    # MCP retriever adds merge / expand, and prefetch, which runs during rerank).
+    # dense and bm25 run concurrently.
     timings: Dict[str, float] = field(default_factory=dict)
+    # What search(prefetch=...) returned for the rerank pool, if it ran and succeeded.
+    prefetched: Any = None
 
     @property
     def score_type(self) -> str:
@@ -470,7 +520,8 @@ class HybridSearcher:
             seg = get_segmenter(segmenter_name)
             if getattr(seg, "name", None) == "bigram":
                 return " ".join(bigram_query_terms(query_text)) or query_text
-            out = await asyncio.to_thread(seg.segment, query_text)
+            out = await asyncio.get_running_loop().run_in_executor(
+                _segment_executor(), seg.segment, query_text)
             return out or query_text
         except Exception as e:  # noqa: BLE001
             logger.debug(f"query segmentation failed, using raw text: {e}")
@@ -533,20 +584,20 @@ class HybridSearcher:
 
     # ----------------------------------------------------------------- fusion
     def candidate_depth(self, settings: SearchSettings) -> int:
-        """How many fused candidates to produce for this request."""
+        """How many fused candidates to produce for this request (also the depth of
+        the dense and BM25 queries)."""
         top_k = max(1, settings.top_k)
         if not self._reranker:
             return top_k
-        return max(top_k * RERANK_CANDIDATE_FACTOR, int(settings.rerank_candidates or 0))
+        depth = max(top_k * RERANK_CANDIDATE_FACTOR, int(settings.rerank_candidates or 0))
+        if settings.rerank_pool == RERANK_POOL_PER_LIST:
+            depth = max(depth, *per_list_depths(settings))
+        return depth
 
-    async def candidates(self, query_text: str, settings: SearchSettings,
-                         k: Optional[int] = None) -> Tuple[List[Any], List[Any], List[Any]]:
-        """Return (fused, dense, sparse) for the query.
-
-        ``dense`` / ``sparse`` are the per-path lists before fusion (their scores are
-        the raw cosine / ts_rank values, snapshotted before RRF rewrites them).
-        """
-        k = k or self.candidate_depth(settings)
+    async def _retrieve(self, query_text: str, settings: SearchSettings, k: int):
+        """(fused, dense, sparse, dense scores, sparse scores): the per-path lists
+        hold the same node objects as ``fused``; their raw cosine / ts_rank scores are
+        snapshotted before RRF rewrites ``node.score``."""
         # Independent paths: run them concurrently (latency = the slower one).
         dense, sparse = await asyncio.gather(
             self.dense(query_text, k),
@@ -558,30 +609,89 @@ class HybridSearcher:
         else:
             fused = rrf_fuse([dense, sparse], k, settings.rrf_k)
         record_stage("fuse", t0)
+        return fused, dense, sparse, dense_raw, sparse_raw
+
+    async def candidates(self, query_text: str, settings: SearchSettings,
+                         k: Optional[int] = None) -> Tuple[List[Any], List[Any], List[Any]]:
+        """Return (fused, dense, sparse) for the query.
+
+        ``dense`` / ``sparse`` are the per-path lists before fusion (their scores are
+        the raw cosine / ts_rank values, snapshotted before RRF rewrites them).
+        """
+        k = k or self.candidate_depth(settings)
+        fused, dense, sparse, dense_raw, sparse_raw = await self._retrieve(query_text, settings, k)
         # Expose the raw per-path scores even though RRF overwrote node.score.
         return fused, _with_scores(dense, dense_raw), _with_scores(sparse, sparse_raw)
 
+    def rerank_pool(self, fused: Sequence[Any], dense: Sequence[Any], sparse: Sequence[Any],
+                    settings: SearchSettings) -> List[Any]:
+        """The candidates the cross-encoder scores (see RERANK_POOLS).
+
+        ``per_list``: the dense top N plus the BM25 top M, de-duplicated, in fused
+        order first and then in dense / BM25 order (fused order only breaks score
+        ties). ``fused``: the fused list as it is. Concat fusion is never cut: its
+        "fused" list is already the whole union.
+        """
+        if settings.rerank_pool != RERANK_POOL_PER_LIST or settings.fusion == FUSION_CONCAT:
+            return list(fused)
+        dense_k, sparse_k = per_list_depths(settings)
+        chosen = {_node_id(n) for n in list(dense)[:dense_k]}
+        chosen.update(_node_id(n) for n in list(sparse)[:sparse_k])
+        pool: List[Any] = []
+        seen: set = set()
+        for n in (*fused, *dense, *sparse):
+            nid = _node_id(n)
+            if nid in chosen and nid not in seen:
+                seen.add(nid)
+                pool.append(n)
+        return pool
+
     # ----------------------------------------------------------------- search
-    async def search(self, query_text: str, settings: SearchSettings) -> SearchOutcome:
+    async def search(self, query_text: str, settings: SearchSettings,
+                     prefetch: Optional[Callable[[List[Any]], Awaitable[Any]]] = None
+                     ) -> SearchOutcome:
         """Candidates → rerank (if configured) → top_k leaves.
 
-        ``outcome.timings`` holds this call's per-stage milliseconds.
+        ``outcome.timings`` holds this call's per-stage milliseconds. ``prefetch``
+        (optional) is started with the rerank pool and runs while the reranker
+        scores it. Its result lands in ``outcome.prefetched`` - None when it failed,
+        when nothing was reranked or when the rerank failed - and whenever it is set,
+        the final nodes are a subset of the pool it was given.
         """
         timings: Dict[str, float] = {}
         token = _STAGE_TIMINGS.set(timings)
         try:
-            fused, dense, sparse = await self.candidates(query_text, settings)
+            fused, dense, sparse, dense_raw, sparse_raw = await self._retrieve(
+                query_text, settings, self.candidate_depth(settings))
+            pool = self.rerank_pool(fused, dense, sparse, settings) if self._reranker else fused
             # Snapshot the fused order and scores: rerank rewrites node.score in place.
-            outcome = SearchOutcome(nodes=[], candidates=len(fused), dense=dense, sparse=sparse,
+            outcome = SearchOutcome(nodes=[], candidates=len(pool),
+                                    dense=_with_scores(dense, dense_raw),
+                                    sparse=_with_scores(sparse, sparse_raw),
                                     fused=_with_scores(fused, _snapshot(fused)),
                                     fusion=settings.fusion, timings=timings)
-            if self._reranker and fused:
+            if self._reranker and pool:
                 from src.domain.rag.rerank_policy import rerank
 
-                t0 = time.perf_counter()
-                rr = await rerank(self._reranker, query_text, list(fused), settings.top_k)
-                record_stage("rerank", t0)
-                outcome.nodes = rr.nodes
+                # Work that only needs the candidates (e.g. the merge / neighbour
+                # lookups of AutoMergingRetriever) overlaps the rerank HTTP call.
+                side = _start_prefetch(prefetch, pool)
+                try:
+                    t0 = time.perf_counter()
+                    rr = await rerank(self._reranker, query_text, list(pool), settings.top_k)
+                    record_stage("rerank", t0)
+                except BaseException:  # cancelled request: do not leave the task behind
+                    if side is not None:
+                        side.cancel()
+                    raise
+                prefetched = await _finish_prefetch(side)
+                if rr.failed:
+                    # Retrieval order instead: the fused top_k, which need not lie in
+                    # the pool, so the prefetch does not cover it.
+                    outcome.nodes = list(fused)[: settings.top_k]
+                else:
+                    outcome.nodes = rr.nodes
+                    outcome.prefetched = prefetched
                 outcome.top_score = rr.top_score
                 outcome.reranked = not rr.failed
                 outcome.rerank_failed = rr.failed
@@ -610,6 +720,32 @@ class _ScoredView:
     @property
     def text(self):
         return self.node.text
+
+
+def per_list_depths(settings: SearchSettings) -> Tuple[int, int]:
+    """(dense, BM25) depth of a ``per_list`` rerank pool: the dense depth is never
+    below 3 x top_k, so a deep top_k still gets a deep pool."""
+    top_k = max(1, settings.top_k)
+    dense_k = max(int(settings.rerank_dense_candidates or 0), top_k * RERANK_CANDIDATE_FACTOR)
+    return dense_k, max(int(settings.rerank_sparse_candidates or 0), 0)
+
+
+def _start_prefetch(prefetch, pool) -> Optional["asyncio.Task"]:
+    if prefetch is None:
+        return None
+    return asyncio.ensure_future(prefetch(list(pool)))
+
+
+async def _finish_prefetch(task) -> Any:
+    """The prefetch result; None when there was none or it failed (callers then
+    do the work themselves — a prefetch is an optimisation, never a dependency)."""
+    if task is None:
+        return None
+    try:
+        return await task
+    except Exception as e:  # noqa: BLE001
+        logger.debug(f"search prefetch failed, falling back: {e}")
+        return None
 
 
 def _usable_segmenter(stamp: Optional[str]) -> Optional[str]:

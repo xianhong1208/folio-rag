@@ -287,7 +287,15 @@ class RAGRetrievalConfig(BaseModel):
     default_top_k: int
     default_similarity_cutoff: float
     default_sparse_top_k: int = 12
-    # Fused candidates handed to the reranker: max(3 x top_k, this). Ignored without a reranker.
+    # Which candidates the reranker scores (ignored without a reranker):
+    # per_list = the dense top rerank_dense_candidates (at least 3 x top_k) plus the BM25
+    #            top rerank_sparse_candidates, about 35 pairs instead of 60 at the same
+    #            recall on the golden set (evals/baselines/rag-2026-11-04-search-latency.md);
+    # fused    = the top max(3 x top_k, rerank_candidates) of the fused list.
+    rerank_pool: Literal["per_list", "fused"] = "per_list"
+    rerank_dense_candidates: int = Field(30, ge=0)
+    rerank_sparse_candidates: int = Field(10, ge=0)
+    # Fused candidates handed to the reranker with rerank_pool: fused: max(3 x top_k, this).
     rerank_candidates: int = 60
     default_hybrid_alpha: float = 0.75
     hybrid_search: bool

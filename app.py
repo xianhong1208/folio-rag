@@ -7,6 +7,7 @@ each (folder, user_token) pair.
 
 from __future__ import annotations
 
+import asyncio
 import importlib
 from contextlib import asynccontextmanager
 from pathlib import Path
@@ -123,6 +124,12 @@ def create_app(config: BaseModel, transport: str) -> FastAPI:
             finally:
                 if retention_task is not None:
                     retention_task.cancel()
+                # MCP searches answer before their QueryLog row is written.
+                try:
+                    from src.adapter.rag_query import flush_query_logs
+                    await asyncio.wait_for(flush_query_logs(), timeout=5)
+                except Exception as e:  # noqa: BLE001
+                    api_logger.warning(f"Shutdown: pending query-log writes dropped: {e}")
 
     # openapi_tags sets Swagger tag order and group descriptions.
     openapi_tags = [

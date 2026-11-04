@@ -96,6 +96,9 @@ EDITABLE: Dict[str, str] = {
     "rag.retrieval.default_similarity_cutoff": "live",
     "rag.retrieval.default_sparse_top_k": "live",
     "rag.retrieval.rerank_candidates": "live",
+    "rag.retrieval.rerank_pool": "live",
+    "rag.retrieval.rerank_dense_candidates": "live",
+    "rag.retrieval.rerank_sparse_candidates": "live",
     "rag.retrieval.min_relevance": "live",
     "rag.retrieval.default_hybrid_alpha": "live",
     "rag.retrieval.hybrid_fusion": "live",
@@ -126,6 +129,8 @@ _RANGES: Dict[str, Tuple[float, float]] = {
     "rag.retrieval.default_similarity_cutoff": (0.0, 1.0),
     "rag.retrieval.default_sparse_top_k": (1, 200),
     "rag.retrieval.rerank_candidates": (1, 200),
+    "rag.retrieval.rerank_dense_candidates": (0, 200),
+    "rag.retrieval.rerank_sparse_candidates": (0, 200),
     # A rerank score (probability), like rag.rerank.score_threshold.
     "rag.retrieval.min_relevance": (0.0, 1.0),
     "rag.retrieval.default_hybrid_alpha": (0.0, 1.0),
@@ -191,6 +196,7 @@ def _allowed_values(path: str):
         "rag.parsing.images": PARSING_MODES,
         "rag.parsing.on_page_failure": ("mark", "fail"),
         "rag.retrieval.hybrid_fusion": ("rrf", "concat"),
+        "rag.retrieval.rerank_pool": ("per_list", "fused"),
         "rag.retrieval.segmenter": _segmenters(),
         "rag.contextual_retrieval.reasoning_effort": ("low", "medium", "high"),
     }.get(path)
