@@ -137,7 +137,13 @@ Folio_product-docs  mode="search"  query="要怎麼輪替簽章金鑰?"
 
 每個資料夾的資料表會記錄它的關鍵字索引是哪個斷詞器建的。改了 `segmenter`（可在 Settings 即時改）之後,主控台會把用其他斷詞器建索引的資料夾標成 **FTS rebuild needed**;*Rebuild FTS* 會用目前設定的斷詞器重新斷詞 —— 不需重新 embedding。
 
-**重排。** reranker 對最多 3 × `top_k` 個融合候選評分,保留分數不低於 `rag.rerank.score_threshold` 的前 `top_k` 個。`mxbai-rerank-*-v2` 是以對話格式 prompt 訓練的 Qwen 模型;`rag.rerank.auto_template: true`（預設）時,若設定的模板是預設值或舊的無對話格式版本,會自動套上官方格式（若 rerank 服務已自行套用 chat template,請關掉)。套上後分數是校準過的機率,對這個模型而言 **`score_threshold: 0.5`** 才有意義;沒套的話無關段落也有 0.8 以上,任何門檻都濾不掉東西。reranker 失敗時,查詢會依檢索順序回傳前 `top_k` 個候選（而不是全部 3 × `top_k` 個）,且這個降級結果不會被快取。
+**重排。** reranker 對 `max(3 × top_k, rag.retrieval.rerank_candidates)` 個融合候選評分(預設 60),保留分數不低於 `rag.rerank.score_threshold` 的前 `top_k` 個。`mxbai-rerank-*-v2` 是以對話格式 prompt 訓練的 Qwen 模型;`rag.rerank.auto_template: true`（預設）時,若設定的模板是預設值或舊的無對話格式版本,會自動套上官方格式（若 rerank 服務已自行套用 chat template,請關掉)。套上後分數是校準過的機率,對這個模型而言 **`score_threshold: 0.5`** 才有意義;沒套的話無關段落也有 0.8 以上,任何門檻都濾不掉東西。reranker 失敗時,查詢會依檢索順序回傳前 `top_k` 個候選（而不是整個候選池）,且這個降級結果不會被快取。
+
+**候選池。** 候選池夠深對跨語言問題最重要:用中文問英文段落時,那段文字在向量與 BM25 檢索裡常常排得很後面,只有 cross-encoder 能把它拉上來。在 golden set 上,把候選池從 3 × `top_k` 加到 60,中→英 Recall@5 從 0.80 升到 0.90,整體 Recall@5 從 0.957 升到 0.976,代價是中位延遲多約 200 ms。想用召回率換速度,就在 Settings 調低 `rerank_candidates`(即時生效);沒有 reranker 時候選池就是 `top_k`。
+
+**回應大小。** MCP 搜尋的回應會控制在 `rag.retrieval.mcp_response_token_budget`(估算 token 數,預設 6000)以內:排名最低的結果會被省略,回應中以 `omitted_results` 與 `response_tokens_estimated` 註明,`_hint` 也會提示 agent 改問更精確的問題。設為 `0` 即不限制。
+
+**說出「找不到相關內容」。** 每次 MCP 搜尋都會回報資料夾的匹配程度:`top_relevance`（reranker 在所有候選上的最高分,在 `score_threshold` 之前)、`min_relevance`(設定的門檻)與 `low_relevance` —— 沒有結果、或 `top_relevance` 低於 `rag.retrieval.min_relevance` 時為 `true`,此時 `_hint` 會告訴 agent 這個資料夾多半無法回答這個問題。每筆經過重排的結果都帶 `relevance`,低於門檻的結果標上 `low_relevance: true`。結果**只標記、不刪除**(刪除是 `rag.rerank.score_threshold` 的工作):在 golden set 上,這個門檻能擋下所有跟語料無關的問題,但「差一點」的問題(問對了法條、問的細節卻不在文中)分數跟可回答的問題一樣高,所以最後的判斷留給 agent。預設的 `0.9` 是針對 `mxbai-rerank-v2` 校準的(掃描結果見 `evals/baselines/rag-2026-11-03-min-relevance.md`);設 `0` 關閉,沒有 reranker 時只有空結果會被標記。
 
 **知識缺口。** 每次 REST、主控台與 MCP 搜尋都會記錄（token 只存遮罩後的前綴）結果數與 reranker 的最高分。*Query Analytics* 把某資料夾中**最近一次**搜尋沒有結果、或最高分低於 `rag.rerank.gap_threshold`（預設 `0.5`）的問題列為知識缺口 —— 補上能回答它的文件、再問一次後,缺口就會消失。
 
@@ -166,6 +172,9 @@ Folio_product-docs  mode="search"  query="要怎麼輪替簽章金鑰?"
 | `rag.rerank.{model,base_url}` | `mixedbread-ai/mxbai-rerank-base-v2`、`:8787` | cross-encoder 重排器。 |
 | `rag.rerank.score_threshold` / `auto_template` | `0.0` / `true` | 濾掉分數低於門檻的結果（mxbai-rerank-v2 適合 0.5）;自動套用 mxbai-v2 的對話格式 prompt。 |
 | `rag.rerank.gap_threshold` | `0.5` | 知識缺口分析:最高 rerank 分數低於此值即視為「沒有好的匹配」。 |
+| `rag.retrieval.rerank_candidates` | `60` | 重排候選池:`max(3 × top_k, 此值)` 個融合候選送進 cross-encoder。越大召回越好、越慢;可即時調整(1–200)。 |
+| `rag.retrieval.mcp_response_token_budget` | `6000` | MCP 搜尋回應的估算 token 上限;超過時省略排名最低的結果並在回應中註明。`0` = 不限制。 |
+| `rag.retrieval.min_relevance` | 隨附設定檔為 `0.9`(未設定時 `0`) | MCP 搜尋:最高 rerank 分數低於此值 → `low_relevance: true`(只標記、不刪除)。依模型而定;`0` = 關閉。 |
 | `rag.asr.provider` | `fireredasr` | 音訊轉錄:`fireredasr`（本地繁中）· `docling-whisper` · `openai-compatible`。`rag.asr.enabled: false` 時音檔會以明確訊息標為失敗(不做任何轉錄)。 |
 | `rag.retrieval.segmenter` | `ckip`(`profile: cloud` 為 `bigram`) | 關鍵字檢索的中文斷詞器:`ckip` · `jieba` · `bigram`（見「中文斷詞」）。 |
 | `rag.docling.ocr_enabled` | `true` | 掃描 PDF 與圖片的 OCR。設 `false` 會真的關掉(重啟後生效);沒有文字層的掃描檔會以明確訊息失敗。 |
@@ -353,6 +362,16 @@ profile 做了什麼:
 | **維運** | `GET /health` |
 
 設 `ENABLE_API_DOCS=true` 可在 `/docs` 取得完整 OpenAPI 參考。
+
+## 量測檢索品質
+
+檢索與切塊的調整以數字判斷,不靠肉眼。`evals/` 有一套公開的 golden set:19 份文件(台灣法規、美國政府網頁、虛構公司文件、含表格的 PDF、合成的繁中會議逐字稿)上的 205 題,依題型與語言分層,約一成是無解題;另有 20 題超出範圍的問題,用來校準相關度門檻。評估工具透過 agent 實際使用的同一個 MCP 搜尋,對執行中的服務評分:
+
+```bash
+.venv/bin/python scripts/eval_retrieval.py --token-file <pat.json> --runs 2
+```
+
+它依題型回報 Recall@5/10/20、MRR、nDCG、回應 token 數、重複率與延遲,以及無解題的誤收率和 `min_relevance` 門檻掃描,結果寫到 `evals/baselines/rag-<日期>-<標籤>.{json,md}`。已提交的 baseline 記錄了每次改動前後的數字。token 檔格式、語料怎麼建、各指標的意義見 [`evals/README.md`](evals/README.md)。
 
 ## 架構
 

@@ -194,6 +194,12 @@ rag:
     # MCP search response budget (estimated tokens; CJK ≈ 0.7/char, other ≈ 0.25/char):
     # the lowest-ranked results are dropped to fit and the response says so. 0 = no budget
     mcp_response_token_budget: 6000
+    # MCP search relevance cutoff on the rerank score (0 = off; ignored without a reranker).
+    # Best score below it -> the response says low_relevance: true and tells the agent the
+    # folder probably does not answer the question; weaker results are flagged, never dropped
+    # (rerank.score_threshold drops). 0.9 is calibrated for mxbai-rerank-v2 with its chat
+    # template (evals/baselines/rag-2026-11-03-min-relevance.md); recalibrate for other models.
+    min_relevance: 0.9
 
     # Max concurrent queries (shared by REST+MCP; excess queues rather than being dropped)
     # Based on the DB pools: sync 5+10 / async 5+10 / per-folder PGVector 5+10 — 8 concurrent leaves each pool headroom

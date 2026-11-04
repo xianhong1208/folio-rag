@@ -30,6 +30,7 @@ three synthetic zh-TW meeting transcripts; sources and licenses in
 |---|---|
 | `rag/golden_qa.yaml` | ~200 questions, stratified by type (zh/en factual, cross-lingual both ways, keyword, paraphrase, table, multi-hop, ~10% unanswerable). Gold = file + exact quoted spans, never chunk ids. |
 | `rag/golden_qa_build_log.yaml` | every generated question that was dropped, with the reason |
+| `rag/out_of_scope_qa.yaml` | 20 hand-written questions about subjects the corpus does not cover (type `out_of_scope`); they feed only the relevance-cutoff section |
 | `rag/llm_cache.jsonl` | cached LLM responses — rebuilding the set or the transcripts replays them |
 | `rag/sources/` | Markdown sources of the PDFs |
 | `retrieval_metrics.py` | span matching, Recall/MRR/nDCG, token estimate, duplicate ratio, sampling (unit-tested) |
@@ -61,6 +62,12 @@ What the harness measures, per question type and question language:
   away whitespace, punctuation and Markdown), or when it is the leaf next to the chunk
   holding the span. File-level Recall@5.
 - unanswerable questions: false-accept rate = top score ≥ 0.25 / 0.5.
+- relevance cutoff (`rag.retrieval.min_relevance`): for each cutoff in a sweep, the share
+  of near-miss unanswerable (`golden_qa.yaml`) and out-of-scope questions it would report
+  as "nothing relevant", the share of answerable questions it would wrongly reject, and
+  Recall@5/10 if rejected searches returned nothing; plus the `low_relevance` flag as the
+  server set it. Uses `top_relevance` from the MCP response (harness v2; `--no-out-of-scope`
+  skips the extra set). False-accept and response size stay over the golden set only.
 - MCP response size (estimated tokens: CJK 0.7/char, other 0.25/char), duplicate-text
   ratio, p50/p95 latency; run-to-run variance over `--runs`.
 - gold reachability: evidence spans the indexed chunks no longer contain (parser loss).

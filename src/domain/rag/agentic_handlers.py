@@ -44,6 +44,13 @@ _HINT_FEW = (
 _HINT_OK = (
     "Results are ranked best first (score_type={score_type}). Cite file_name and page. "
     "Use mode='read' only when the user asks for a whole document.")
+_HINT_LOW_RELEVANCE = (
+    "Low relevance: the best passage scored {top:.2f}, below min_relevance {cut:.2f}. "
+    "This folder most likely does not answer the question - tell the user so instead "
+    "of answering from these passages, or retry once with the document's own terms.")
+_HINT_SOME_LOW = (
+    " {n} result(s) marked low_relevance scored below min_relevance {cut:.2f}; treat "
+    "them as weak matches.")
 _HINT_OMITTED = (
     " {omitted} lower-ranked result(s) were left out to keep this response under "
     "~{budget} tokens; ask a narrower query to surface them.")
@@ -77,6 +84,52 @@ def configured_response_budget() -> int:
 
 
 DEFAULT_RESPONSE_BUDGET = 6000
+
+
+def configured_min_relevance() -> float:
+    """``rag.retrieval.min_relevance`` (live), clamped to 0..1; 0.0 (check off) when
+    unset or unreadable."""
+    try:
+        from src.config.config_manager import Config
+
+        value = getattr(Config.get_config_model().rag.retrieval, "min_relevance", 0.0)
+        return min(1.0, max(0.0, float(value or 0.0)))
+    except Exception:  # noqa: BLE001
+        return 0.0
+
+
+def apply_relevance(response: dict, *, reranked: bool, top_score: Optional[float],
+                    min_relevance: float) -> dict:
+    """Add the relevance signal to a search response (in place) and return it.
+
+    Top level: ``top_relevance`` - the cross-encoder's best score over every
+    candidate, before ``rag.rerank.score_threshold`` (None when the results were
+    not reranked); ``min_relevance`` - the configured cutoff (0 = off); and
+    ``low_relevance`` - True when nothing came back, or when the best score is
+    below the cutoff. Per result (reranked only): ``relevance`` and, below the
+    cutoff, ``low_relevance: true``.
+
+    Results are flagged, never dropped: the eval shows the cutoff separates
+    off-topic questions cleanly but not questions that are near misses of the
+    corpus, so the caller decides (dropping is what rerank.score_threshold does).
+    """
+    results = response.get("results") or []
+    # Compared at the precision the caller sees (scores are rounded to 4 places), so a
+    # value shown as equal to the cutoff is never flagged.
+    top = round(float(top_score), 4) if reranked and top_score is not None else None
+    if reranked:
+        for r in results:
+            score = r.get("score")
+            if score is None:
+                continue
+            r["relevance"] = round(float(score), 4)
+            if min_relevance > 0 and r["relevance"] < min_relevance:
+                r["low_relevance"] = True
+    response["top_relevance"] = top
+    response["min_relevance"] = min_relevance
+    response["low_relevance"] = (not results) or (
+        top is not None and min_relevance > 0 and top < min_relevance)
+    return response
 
 
 def result_dict(r: MergedResult) -> dict:
@@ -247,16 +300,30 @@ async def handle_search(
         "total_results": len(results),
         "results": [result_dict(r) for r in results],
     }
+    outcome = getattr(retriever, "last_outcome", None)
+    min_relevance = configured_min_relevance()
+    apply_relevance(response, reranked=score_type == "rerank",
+                    top_score=getattr(outcome, "top_score", None),
+                    min_relevance=min_relevance)
 
     if not results:
         response["_hint"] = _HINT_NO_RESULTS
         hint_reason = "no_results"
-    elif len(results) < top_k:
-        response["_hint"] = _HINT_FEW.format(n=len(results))
-        hint_reason = "below_top_k"
+    elif response["low_relevance"]:
+        response["_hint"] = _HINT_LOW_RELEVANCE.format(
+            top=response["top_relevance"], cut=min_relevance)
+        hint_reason = "low_relevance"
     else:
-        response["_hint"] = _HINT_OK.format(score_type=score_type)
-        hint_reason = "normal"
+        if len(results) < top_k:
+            response["_hint"] = _HINT_FEW.format(n=len(results))
+            hint_reason = "below_top_k"
+        else:
+            response["_hint"] = _HINT_OK.format(score_type=score_type)
+            hint_reason = "normal"
+        weak = sum(1 for r in response["results"] if r.get("low_relevance"))
+        if weak:
+            response["_hint"] += _HINT_SOME_LOW.format(n=weak, cut=min_relevance)
+            hint_reason += "+weak"
 
     budget = configured_response_budget() if token_budget is None else int(token_budget)
     fit_to_budget(response, budget)
@@ -280,6 +347,8 @@ async def handle_search(
             f"expanded:{role_counts.get('expanded', 0)}}} "
             f"unique_files={len(file_counts)} "
             f"scores=[{score_stats}] score_type={score_type} "
+            f"top_relevance={response.get('top_relevance')} "
+            f"low_relevance={response.get('low_relevance')} "
             f"tokens~{response.get('response_tokens_estimated')} "
             f"hint={hint_reason} "
             f"elapsed={elapsed_ms:.0f}ms"
