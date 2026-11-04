@@ -8,9 +8,10 @@
 - /api/admin/eval/*                  — retrieval evaluation for one of your folders
 
 Auth: every endpoint needs a console session (or a bearer PAT). Per-folder data is
-limited to folders owned by the session's token (jti); cross-folder aggregates cover
-the whole server only for admins (``rag:admin``). The settings audit log and system
-resources are admin-only. See src/api/router/admin_scope.py.
+limited to folders owned by the session's token (jti), and so are cross-folder
+aggregates (overview, jobs, analytics) — for admins too: ``rag:admin`` never reveals
+other owners' folders or queries. The settings audit log and system resources
+(storage totals, no folder content) are admin-only. See src/api/router/admin_scope.py.
 """
 
 from __future__ import annotations
@@ -180,7 +181,7 @@ async def eval_history(folder_id: int = Query(...), limit: int = Query(30, ge=1,
 async def get_overview(ident: ConsoleIdentity = Depends(require_console_session)):
     """Overview KPIs + in-progress jobs + a summary of the current model configuration.
 
-    KPIs cover your own folders, or the whole server for admins (``scope``).
+    KPIs cover your own folders (``scope: own``); ``all`` only in open mode.
     """
     from db import admin_stats
     from src.config import runtime_overrides as ro
@@ -285,7 +286,7 @@ async def system_resources_endpoint():
 @router.get("/api/admin/jobs")
 async def list_jobs(limit: int = Query(20, ge=1, le=100),
                     ident: ConsoleIdentity = Depends(require_console_session)):
-    """Recent index jobs (ordered by last update): your folders', or every folder's for admins.
+    """Recent index jobs on your folders (ordered by last update), admins included.
 
     Each job carries ``owned`` (whether you can act on it, e.g. cancel)."""
     from db import admin_stats
@@ -302,8 +303,8 @@ async def query_analytics(
     """Query analytics: query volume / average latency / zero-result rate / top queries /
     knowledge gaps / daily trend.
 
-    folder_id must be one of your folders; omitting it = all your folders (every folder
-    for admins); days = the statistics window. The data source is QueryLog
+    folder_id must be one of your folders; omitting it = all your folders (admins
+    included); days = the statistics window. The data source is QueryLog
     (best-effort one record per REST / console / MCP search). Knowledge gaps use
     rag.rerank.gap_threshold on each question's latest search."""
     from db.query_log_db import QueryLogDB

@@ -6,6 +6,9 @@ to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Security
+- Console aggregates (Overview KPIs and trend, Index Jobs, Query Analytics) are now limited to the signed-in token's own folders for `rag:admin` tokens too. Before, an admin token saw every owner's counts, job folder names and search queries, contrary to the rule that `rag:admin` unlocks global settings only. Storage totals and the settings audit log stay admin-only.
+
 ### Retrieval quality and cost (Phase 1) — measured on the new golden set
 Golden set: 205 questions over a public 19-document corpus (`evals/rag/`), baseline vs
 this release on the same index host (`evals/baselines/rag-2026-11-03-*`):

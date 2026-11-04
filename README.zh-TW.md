@@ -320,7 +320,7 @@ profile 做了什麼:
 登入方式是貼上一把**由 MCP Gate 發給本服務的 access token**,通常是 personal access token(PAT)。伺服器會用跟 REST / MCP 呼叫完全相同的方式離線驗證一次(簽章、issuer、audience、到期時間;token 必須帶 `jti`),通過後設定一個 HttpOnly 的 session cookie。Token 本身不會被儲存,也不會回傳。
 
 - **Session 就是那把 token 的身分。** 你看到、能管理的,正好是這把 token 擁有的資料夾(資料夾以它的 `jti` 綁定)—— 也就是它透過 REST 與 MCP 能存取的那些。在主控台建立的資料夾同樣歸它所有。其他 token 的資料夾完全看不到;要管理它們,請用那把 token 登入。
-- **兩個層級。** 任何有效的 token 都能登入並管理自己的資料夾。修改執行期 **Settings**、測試任意端點、讀取設定 **Audit Log** 與全伺服器的儲存用量,需要 **`rag:admin`** scope。沒有它時,Settings 與 System Health 為唯讀(secret 一律遮蔽),Overview / Index Jobs / Query Analytics 只涵蓋自己的資料夾;有它時則涵蓋整台伺服器。
+- **兩個層級。** 任何有效的 token 都能登入並管理自己的資料夾。修改執行期 **Settings**、測試任意端點、讀取設定 **Audit Log** 與全伺服器的儲存用量,需要 **`rag:admin`** scope。沒有它時,Settings 與 System Health 為唯讀(secret 一律遮蔽),Overview / Index Jobs / Query Analytics 一律只涵蓋自己的資料夾——`rag:admin` 只開放全域設定,永遠看不到其他 token 的資料夾、工作或查詢。
 - **Session** 持續 `auth.console.session_hours`(8 小時)或到 token 到期為止,取較早者。啟用 [revocation feed](#token-撤銷) 後,在 MCP Gate 撤銷 token 也會在一個輪詢間隔內結束它的 session;未啟用時,進行中的 session 會持續到到期或按 *Sign out*(驗證是離線的)。
 
 **在 MCP Gate 發 token。** MCP Gate 不需要任何程式修改:
