@@ -138,7 +138,13 @@ Left unset, `segmenter` follows the profile: `ckip`, or `bigram` under `profile:
 
 Each folder's table records which segmenter built its keyword index. After changing `segmenter` (live, from Settings), the console marks folders whose index was built with another one (**FTS rebuild needed**); *Rebuild FTS* re-segments them with the configured segmenter — no re-embedding.
 
-**Reranking.** The reranker scores up to 3 × `top_k` fused candidates and keeps the best `top_k` above `rag.rerank.score_threshold`. `mxbai-rerank-*-v2` is a Qwen model trained on a chat-formatted prompt; with `rag.rerank.auto_template: true` (default) that format is applied automatically when the configured templates are the default or the old chat-less form (turn it off if your rerank server already applies a chat template). With it, scores are calibrated probabilities and **`score_threshold: 0.5`** is meaningful for that model; without it unrelated chunks score 0.8+ and no threshold filters anything. If the reranker fails, the query returns the top `top_k` candidates in retrieval order (not all 3 × `top_k`), and that degraded result is not cached.
+**Reranking.** The reranker scores `max(3 × top_k, rag.retrieval.rerank_candidates)` fused candidates (default 60) and keeps the best `top_k` above `rag.rerank.score_threshold`. `mxbai-rerank-*-v2` is a Qwen model trained on a chat-formatted prompt; with `rag.rerank.auto_template: true` (default) that format is applied automatically when the configured templates are the default or the old chat-less form (turn it off if your rerank server already applies a chat template). With it, scores are calibrated probabilities and **`score_threshold: 0.5`** is meaningful for that model; without it unrelated chunks score 0.8+ and no threshold filters anything. If the reranker fails, the query returns the top `top_k` candidates in retrieval order (not the whole pool), and that degraded result is not cached.
+
+**Candidate pool.** A deep pool matters most for cross-lingual questions: a Chinese question about an English passage often ranks that passage low in both dense and BM25 search, and only the cross-encoder lifts it. On the golden set, raising the pool from 3 × `top_k` to 60 took zh→en Recall@5 from 0.80 to 0.90 and overall Recall@5 from 0.957 to 0.976, at about +200 ms median latency. Lower `rerank_candidates` (live, from Settings) to trade recall for speed; without a reranker the pool is just `top_k`.
+
+**Response size.** An MCP search response is fitted to `rag.retrieval.mcp_response_token_budget` (estimated tokens, default 6000): the lowest-ranked results are left out, the response reports `omitted_results` and `response_tokens_estimated`, and the `_hint` tells the agent to ask a narrower query. `0` turns the budget off.
+
+**Saying "nothing relevant found".** Every MCP search reports how well the folder matched: `top_relevance` (the reranker's best score over all candidates, before `score_threshold`), `min_relevance` (the configured cutoff) and `low_relevance` — `true` when nothing came back or `top_relevance` is below `rag.retrieval.min_relevance`; the `_hint` then tells the agent the folder most likely does not answer the question. Each reranked result carries `relevance`, and results below the cutoff are marked `low_relevance: true`. Results are **flagged, never dropped** (dropping is `rag.rerank.score_threshold`'s job): on the golden set the cutoff rejects every out-of-scope question, but questions that are near misses of the corpus (the right law, a detail it does not state) score as high as answerable ones, so the final call stays with the agent. The shipped `0.9` is calibrated for `mxbai-rerank-v2` (sweep in `evals/baselines/rag-2026-11-03-min-relevance.md`); `0` turns the check off, and without a reranker only an empty result is flagged.
 
 **Knowledge gaps.** Every REST, console and MCP search is logged (masked token prefix only) with its result count and the reranker's best score. *Query Analytics* lists a question as a knowledge gap when its **latest** search in a folder returned nothing or its best score was below `rag.rerank.gap_threshold` (default `0.5`) — so a gap disappears once documents that answer it are added and the question is asked again.
 
@@ -167,6 +173,9 @@ Settings live in `config/config.yaml`; secrets come from environment variables (
 | `rag.rerank.{model,base_url}` | `mixedbread-ai/mxbai-rerank-base-v2`, `:8787` | Cross-encoder reranker. |
 | `rag.rerank.score_threshold` / `auto_template` | `0.0` / `true` | Drop results scoring below the threshold (0.5 suits mxbai-rerank-v2); apply mxbai-v2's chat prompt automatically. |
 | `rag.rerank.gap_threshold` | `0.5` | Knowledge-gap analytics: best rerank score below this counts as "no good match". |
+| `rag.retrieval.rerank_candidates` | `60` | Rerank pool: `max(3 × top_k, this)` fused candidates go to the cross-encoder. Higher = better recall, slower; live-tunable (1–200). |
+| `rag.retrieval.mcp_response_token_budget` | `6000` | Estimated-token cap on an MCP search response; lowest-ranked results are dropped to fit and the response says so. `0` = no cap. |
+| `rag.retrieval.min_relevance` | `0.9` in the shipped config (`0` when unset) | MCP search: best rerank score below this → `low_relevance: true` (flagged, not dropped). Model-specific; `0` = off. |
 | `rag.asr.provider` | `fireredasr` | Audio transcription: `fireredasr` (local zh-TW) · `docling-whisper` · `openai-compatible`. `rag.asr.enabled: false` fails audio files with a clear message (nothing is transcribed). |
 | `rag.retrieval.segmenter` | `ckip` (`bigram` under `profile: cloud`) | Chinese segmenter for keyword search: `ckip` · `jieba` · `bigram` (see *Chinese segmentation*). |
 | `rag.docling.ocr_enabled` | `true` | OCR for scanned PDFs and images. `false` really skips it (restart to apply); a scan with no text layer then fails with a clear message. |
@@ -370,6 +379,16 @@ The current pipeline is version 3 (section-aligned chunks, with the version-3 co
 | **Operational** | `GET /health` |
 
 Set `ENABLE_API_DOCS=true` for the full OpenAPI reference at `/docs`.
+
+## Measuring retrieval
+
+Retrieval and chunking changes are judged by numbers, not by eye. `evals/` holds a public golden set — 205 questions over a 19-document corpus (Taiwanese laws, U.S. government pages, fictional company documents, PDFs with tables, synthetic zh-TW meeting transcripts), stratified by question type and language, with ~10% unanswerable — plus 20 out-of-scope questions for the relevance cutoff. The harness scores a running server through the same MCP search an agent uses:
+
+```bash
+.venv/bin/python scripts/eval_retrieval.py --token-file <pat.json> --runs 2
+```
+
+It reports Recall@5/10/20, MRR, nDCG, response tokens, duplicate ratio and latency per question type, the false-accept rate on unanswerable questions and a `min_relevance` sweep, and writes `evals/baselines/rag-<date>-<label>.{json,md}`. Committed baselines record each change's before and after. See [`evals/README.md`](evals/README.md) for the token file, how the corpus is built and what each metric means.
 
 ## Architecture
 
