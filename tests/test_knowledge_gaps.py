@@ -124,6 +124,9 @@ class TestMcpLogging:
             out = await svc.query_agentic(folder_name="docs", mode="search", query="what?",
                                           file_id=None, top_k=5, similarity_cutoff=0.0,
                                           expand_context=False, token="tok-123456789")
+            from src.adapter.rag_query import flush_query_logs
+
+            await flush_query_logs()   # the row is written after the response
         assert out["total_results"] == 2
         kw = rec.call_args.kwargs
         assert kw["query"] == "what?" and kw["folder_id"] == 4 and kw["result_count"] == 2
@@ -146,4 +149,33 @@ class TestMcpLogging:
             out = await svc.query_agentic(folder_name="docs", mode="search", query="q?",
                                           file_id=None, top_k=5, similarity_cutoff=0.0,
                                           expand_context=False, token="t")
+            from src.adapter.rag_query import flush_query_logs
+
+            await flush_query_logs()
         assert out["mode"] == "search"
+
+    async def test_search_does_not_wait_for_the_log_row(self):
+        from src.adapter import rag_query
+
+        ctx = MagicMock()
+        ctx.merge_threshold, ctx.auto_merging_enabled, ctx.expand_neighbors = 0.5, True, 0
+        svc = rag_query.RAGQueryService(ctx)
+        folder = SimpleNamespace(id=4, name="docs", vector_table_uuid="u")
+        gate = asyncio.Event()
+
+        async def slow_log(**kw):
+            await gate.wait()
+
+        with patch("src.domain.rag.folder_acl.verify_folder_access", return_value=folder), \
+             patch("src.adapter.rag_query._query_semaphore", asyncio.Semaphore(4)), \
+             patch("src.adapter.rag_query.AutoMergingRetriever", return_value=MagicMock(last_outcome=None)), \
+             patch("src.domain.rag.agentic_handlers.handle_search",
+                   new=AsyncMock(return_value={"mode": "search", "results": []})), \
+             patch("src.adapter.rag_query._log_query", new=slow_log):
+            out = await svc.query_agentic(folder_name="docs", mode="search", query="q?",
+                                          file_id=None, top_k=5, similarity_cutoff=0.0,
+                                          expand_context=False, token="t")
+            assert out["mode"] == "search" and len(rag_query._pending_logs) == 1
+            gate.set()
+            await rag_query.flush_query_logs()
+        assert not rag_query._pending_logs

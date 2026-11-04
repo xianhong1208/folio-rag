@@ -5,15 +5,16 @@ at least ``MIN_MERGE_HITS`` of its leaves were hit in this result set and the hi
 ratio (hits / the parent's leaf count) reaches ``merge_threshold``. The merged
 entry takes the place of its best-ranked leaf and the score of its best leaf.
 
-DB access is two batched queries (children counts, parent content); either one
-failing degrades to "no merge" — retrieval never fails because of merging.
+DB access is two batched queries (children counts, parent content), or none when
+the caller already holds the parent rows; either query failing degrades to "no
+merge" — retrieval never fails because of merging.
 """
 
 from __future__ import annotations
 
 from collections import defaultdict
 from dataclasses import dataclass
-from typing import Any, Dict, List, Union
+from typing import Any, Dict, List, Optional, Union
 
 from src.log import get_api_logger
 
@@ -68,22 +69,52 @@ def select_parents(parent_hits: Dict[str, List[Any]], children_counts: Dict[str,
     return chosen
 
 
-async def plan_merges(vector_store, leaves: List[Any], merge_threshold: float
+def merge_candidates(leaves: List[Any]) -> List[str]:
+    """Parents with enough hits among ``leaves`` to be worth a merge check."""
+    return [pid for pid, hits in group_by_parent(leaves).items() if len(hits) >= MIN_MERGE_HITS]
+
+
+def merging_enabled(merge_threshold: Optional[float]) -> bool:
+    return merge_threshold is not None and merge_threshold <= 1.0
+
+
+def _counts_from_nodes(parents: Dict[str, Any]) -> Dict[str, int]:
+    """chunk_count of parent rows, as aget_parent_children_counts reads it."""
+    out = {}
+    for pid, node in parents.items():
+        md = node.metadata or {}
+        if md.get("node_role") == "parent" and md.get("chunk_count") is not None:
+            out[pid] = int(md["chunk_count"])
+    return out
+
+
+async def plan_merges(vector_store, leaves: List[Any], merge_threshold: float,
+                      known_parents: Optional[Dict[str, Any]] = None
                       ) -> Dict[str, MergeGroup]:
-    """Decide which parents replace their leaves and fetch their content."""
-    if merge_threshold is None or merge_threshold > 1.0:
+    """Decide which parents replace their leaves and fetch their content.
+
+    ``known_parents`` ({parent id: TextNode}, e.g. fetched while the reranker ran)
+    replaces both queries when it holds every parent worth checking; otherwise
+    the parents are read here.
+    """
+    if not merging_enabled(merge_threshold):
         return {}
     from src.domain.rag.chunk_lookup import ChunkLookup
 
     parent_hits = group_by_parent(leaves)
-    worth_counting = [pid for pid, hits in parent_hits.items() if len(hits) >= MIN_MERGE_HITS]
+    worth_counting = merge_candidates(leaves)
     if not worth_counting:
         return {}
-    counts = await ChunkLookup.aget_parent_children_counts(vector_store, worth_counting)
-    pids = select_parents(parent_hits, counts, merge_threshold)
-    if not pids:
-        return {}
-    parents = await ChunkLookup.afetch_nodes(vector_store, pids)
+    if known_parents is not None and all(pid in known_parents for pid in worth_counting):
+        counts = _counts_from_nodes({pid: known_parents[pid] for pid in worth_counting})
+        pids = select_parents(parent_hits, counts, merge_threshold)
+        parents = {pid: known_parents[pid] for pid in pids}
+    else:
+        counts = await ChunkLookup.aget_parent_children_counts(vector_store, worth_counting)
+        pids = select_parents(parent_hits, counts, merge_threshold)
+        if not pids:
+            return {}
+        parents = await ChunkLookup.afetch_nodes(vector_store, pids)
     groups = {pid: MergeGroup(parent=parents[pid], hits=parent_hits[pid])
               for pid in pids if pid in parents}
     if groups:

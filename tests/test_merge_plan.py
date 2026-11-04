@@ -142,3 +142,139 @@ class TestAutoMergingRetriever:
         searcher.search = AsyncMock(return_value=SearchOutcome(nodes=[]))
         retr = AutoMergingRetriever(MagicMock(), searcher=searcher)
         assert await retr.aquery("q", SearchSettings()) == []
+
+
+class TestKnownParents:
+    """plan_merges(known_parents=...) - parent rows read while the reranker ran."""
+
+    async def test_covering_known_parents_replace_both_queries(self):
+        leaves = [nws("a", 0.9, parent="P"), nws("b", 0.8, parent="P"), nws("c", 0.7)]
+        known = {"P": parent("P", chunk_count=3), "Q": parent("Q", chunk_count=2)}
+        with patch(f"{_CL}.aget_parent_children_counts", new=AsyncMock()) as counts, \
+             patch(f"{_CL}.afetch_nodes", new=AsyncMock()) as fetch:
+            groups = await mp.plan_merges(MagicMock(), leaves, 0.5, known_parents=known)
+        counts.assert_not_awaited()
+        fetch.assert_not_awaited()
+        assert list(groups) == ["P"] and groups["P"].parent is known["P"]
+
+    async def test_known_parents_follow_the_same_rule(self):
+        leaves = [nws("a", 0.9, parent="P"), nws("b", 0.8, parent="P")]
+        below = {"P": parent("P", chunk_count=5)}                 # 2/5 < 0.5
+        no_count = {"P": parent("P")}                              # no chunk_count: no merge
+        not_parent = {"P": TextNode(id_="P", text="x", metadata={"chunk_count": 2})}
+        for known in (below, no_count, not_parent):
+            assert await mp.plan_merges(MagicMock(), leaves, 0.5, known_parents=known) == {}
+        assert await mp.plan_merges(MagicMock(), leaves, 1.1, known_parents=below) == {}
+
+    async def test_missing_parent_falls_back_to_the_queries(self):
+        leaves = [nws("a", 0.9, parent="P"), nws("b", 0.8, parent="P")]
+        with patch(f"{_CL}.aget_parent_children_counts",
+                   new=AsyncMock(return_value={"P": 2})) as counts, \
+             patch(f"{_CL}.afetch_nodes", new=AsyncMock(return_value={"P": parent("P")})):
+            groups = await mp.plan_merges(MagicMock(), leaves, 0.5,
+                                          known_parents={"Q": parent("Q", chunk_count=2)})
+        counts.assert_awaited_once()
+        assert list(groups) == ["P"]
+
+
+class TestRetrieverPrefetch:
+    """The MCP retriever reads merge / neighbour rows while the reranker runs."""
+
+    def _leaves(self):
+        return [nws("a", parent="P", chunk_index=0), nws("b", parent="P", chunk_index=1),
+                nws("c", chunk_index=7), nws("z", parent="Z", chunk_index=20)]
+
+    def _retriever(self, reranker, n=1, threshold=0.5):
+        from src.domain.rag.auto_merging import AutoMergingRetriever
+
+        s = searcher_with(self._leaves(), [], reranker=reranker)
+        return AutoMergingRetriever(MagicMock(), merge_threshold=threshold,
+                                    expand_context_neighbors=n, searcher=s)
+
+    def _rows(self):
+        return {"f1": [(0, "zero", "P"), (1, "one", "P"), (2, "two", "P"),
+                       (6, "six", None), (7, "seven", None), (8, "eight", None),
+                       (19, "n19", "Z"), (20, "n20", "Z"), (21, "n21", "Z")]}
+
+    async def test_prefetch_replaces_the_post_rerank_queries(self):
+        from tests.test_hybrid_search import FakeReranker
+
+        retr = self._retriever(FakeReranker({"a": 0.9, "b": 0.8, "c": 0.7, "z": 0.1}))
+        with patch(f"{_CL}.aget_parent_children_counts", new=AsyncMock()) as counts, \
+             patch(f"{_CL}.afetch_nodes",
+                   new=AsyncMock(return_value={"P": parent("P", chunk_count=2)})) as fetch, \
+             patch(f"{_CL}.afetch_rows_in_ranges",
+                   new=AsyncMock(return_value=self._rows())) as rows:
+            out = await retr.aquery("q", SearchSettings(top_k=3))
+        counts.assert_not_awaited()
+        assert fetch.await_count == 1 and fetch.await_args.args[1] == ["P"]
+        assert rows.await_count == 1                     # every pool leaf, z included
+        assert ("f1", 19, 21) in rows.await_args.args[1]
+        assert [r.node_role for r in out] == ["parent", "expanded"]
+        assert out[1].text == "six\n\nseven\n\neight"
+        assert "prefetch" in retr.last_outcome.timings
+
+    async def test_same_results_as_without_prefetch(self):
+        from tests.test_hybrid_search import FakeReranker
+        from src.domain.rag.auto_merging import AutoMergingRetriever
+
+        table = {"a": 0.9, "b": 0.8, "c": 0.7, "z": 0.1}
+        patches = dict(
+            aget_parent_children_counts=AsyncMock(return_value={"P": 2}),
+            afetch_nodes=AsyncMock(return_value={"P": parent("P", chunk_count=2)}),
+            afetch_rows_in_ranges=AsyncMock(return_value=self._rows()))
+        with patch.multiple(_CL, **patches):
+            with_pre = await self._retriever(FakeReranker(table)).aquery(
+                "q", SearchSettings(top_k=3))
+            leaves = [n for n in self._leaves() if n.node.node_id != "z"]
+            for n, sc in zip(leaves, (0.9, 0.8, 0.7)):
+                n.score = sc
+            searcher = MagicMock()
+            searcher.search = AsyncMock(return_value=SearchOutcome(nodes=leaves))
+            plain = await AutoMergingRetriever(
+                MagicMock(), merge_threshold=0.5, expand_context_neighbors=1,
+                searcher=searcher).aquery("q", SearchSettings(top_k=3))
+        assert [(r.node_id, r.text, r.node_role, r.chunk_index_range) for r in with_pre] == \
+               [(r.node_id, r.text, r.node_role, r.chunk_index_range) for r in plain]
+
+    async def test_empty_prefetch_answers_are_redone(self):
+        """The lookups return {} on a DB error: that must not mean "no merge"."""
+        from tests.test_hybrid_search import FakeReranker
+
+        retr = self._retriever(FakeReranker({"a": 0.9, "b": 0.8, "c": 0.7}))
+        with patch(f"{_CL}.aget_parent_children_counts",
+                   new=AsyncMock(return_value={"P": 2})) as counts, \
+             patch(f"{_CL}.afetch_nodes",
+                   new=AsyncMock(side_effect=[{}, {"P": parent("P")}])), \
+             patch(f"{_CL}.afetch_rows_in_ranges",
+                   new=AsyncMock(side_effect=[{}, self._rows()])) as rows:
+            out = await retr.aquery("q", SearchSettings(top_k=3))
+        counts.assert_awaited_once()
+        assert rows.await_count == 2
+        assert [r.node_role for r in out] == ["parent", "expanded"]
+
+    async def test_nothing_to_prefetch(self):
+        from tests.test_hybrid_search import FakeReranker
+
+        # merging off and no expansion: no prefetch at all
+        retr = self._retriever(FakeReranker({"a": 1.0}), n=0, threshold=1.1)
+        with patch(f"{_CL}.afetch_nodes", new=AsyncMock()) as fetch, \
+             patch(f"{_CL}.afetch_rows_in_ranges", new=AsyncMock()) as rows:
+            out = await retr.aquery("q", SearchSettings(top_k=1))
+        fetch.assert_not_awaited()
+        rows.assert_not_awaited()
+        assert retr.last_outcome.prefetched is None and out[0].node_role == "leaf"
+
+    async def test_prefetch_without_merge_candidates_reads_rows_only(self):
+        from src.domain.rag.auto_merging import AutoMergingRetriever
+        from tests.test_hybrid_search import FakeReranker
+
+        s = searcher_with([nws("c", chunk_index=7)], [], reranker=FakeReranker({"c": 1.0}))
+        retr = AutoMergingRetriever(MagicMock(), merge_threshold=0.5,
+                                    expand_context_neighbors=1, searcher=s)
+        with patch(f"{_CL}.afetch_nodes", new=AsyncMock()) as fetch, \
+             patch(f"{_CL}.afetch_rows_in_ranges",
+                   new=AsyncMock(return_value=self._rows())) as rows:
+            out = await retr.aquery("q", SearchSettings(top_k=1))
+        fetch.assert_not_awaited()
+        assert rows.await_count == 1 and out[0].text == "six\n\nseven\n\neight"

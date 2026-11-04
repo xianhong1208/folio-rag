@@ -9,6 +9,33 @@ to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 ### Security
 - Console aggregates (Overview KPIs and trend, Index Jobs, Query Analytics) are now limited to the signed-in token's own folders for `rag:admin` tokens too. Before, an admin token saw every owner's counts, job folder names and search queries, contrary to the rule that `rag:admin` unlocks global settings only. Storage totals and the settings audit log stay admin-only.
 
+### Search latency — MCP search p50 ~500 → ~330 ms, p95 ~600 → ~400 ms
+Same instance, interleaved runs, quality unchanged on the golden set (R@5 0.976, R@10
+0.981, nDCG@10 0.938, zh→en R@5 0.90; MRR@10 0.938 → 0.939). Per-stage table and the
+rejected ideas in `evals/baselines/rag-2026-11-04-search-latency.md`.
+
+- **Rerank pool per list** (new `rag.retrieval.rerank_pool`, default `per_list`): the
+  cross-encoder scores the dense top `rerank_dense_candidates` (default 30, at least
+  3 × `top_k`) plus the BM25 top `rerank_sparse_candidates` (default 10) — about 35
+  pairs — instead of the top 60 of the fused list. The deep pool exists for
+  dense-only hits (cross-lingual, paraphrased), which RRF ranks below everything both
+  lists found; cutting each list on its own reaches them with half the pairs. A
+  vLLM score call costs ~6 ms per pair whatever the length, so the rerank step went
+  from ~360 to ~225 ms p50. All three keys are live (console *Settings → Retrieval*);
+  `rerank_pool: fused` restores the old pool (`rerank_candidates` keeps its meaning).
+  With `top_k=20` the dense side is 60 deep, so that path scores slightly more pairs
+  than before. A failed rerank still falls back to the fused order.
+- The MCP search reads the auto-merge parents and neighbour rows for every candidate
+  **while the reranker runs** (two concurrent queries, a superset of what the final
+  top_k needs) instead of three sequential queries after it (~20 ms p50). If that
+  read fails, the old queries run as before.
+- **CKIP query segmentation runs on one dedicated thread.** On the CPU each thread
+  that calls torch gets its own OpenMP worker pool; queries landing on different
+  pool threads built several pools that fought over the cores (segmentation
+  ~40 → ~140 ms p50, seconds on a busy host). Output is unchanged.
+- The MCP search no longer waits for its QueryLog row (written in the background,
+  flushed on shutdown).
+
 ### Retrieval quality and cost (Phase 1) — measured on the new golden set
 Golden set: 205 questions over a public 19-document corpus (`evals/rag/`), baseline vs
 this release on the same index host (`evals/baselines/rag-2026-11-03-*`):
