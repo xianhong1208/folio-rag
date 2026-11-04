@@ -6,6 +6,8 @@ to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [1.2.0] — 2026-11-04
+
 ### Security
 - Console dependencies: React Router 6 → 7.18 (open redirect via a backslash in `<Link>` /
   `useNavigate`, the only advisory that reached the shipped bundle), Vite 6.4.3 → 6.4.5 (dev
