@@ -221,23 +221,27 @@ class TestAggregates:
         r, owner, trend_owner = self._overview(as_b)
         assert (owner, trend_owner) == (JTI_B, JTI_B) and r.json()["data"]["scope"] == "own"
 
-    def test_overview_global_for_admin(self, as_admin):
-        r, owner, _ = self._overview(as_admin)
-        assert owner is None and r.json()["data"]["scope"] == "all"
+    def test_overview_own_only_even_for_admin(self, as_admin):
+        # rag:admin unlocks global settings, never other owners' data
+        r, owner, trend_owner = self._overview(as_admin)
+        assert (owner, trend_owner) == (JTI_ADMIN, JTI_ADMIN)
+        assert r.json()["data"]["scope"] == "own"
 
     def test_jobs(self, as_b, as_admin):
         with patch("db.admin_stats.recent_jobs", return_value=[]) as m:
             as_b.get("/api/admin/jobs")
             as_admin.get("/api/admin/jobs")
         assert m.call_args_list[0].kwargs == {"owner": JTI_B, "viewer": JTI_B}
-        assert m.call_args_list[1].kwargs == {"owner": None, "viewer": JTI_ADMIN}
+        assert m.call_args_list[1].kwargs == {"owner": JTI_ADMIN, "viewer": JTI_ADMIN}
 
     def test_analytics_without_folder(self, as_b, as_admin):
         with patch("db.query_log_db.QueryLogDB.analytics", return_value={}) as m:
             as_b.get("/api/admin/analytics")
             as_admin.get("/api/admin/analytics")
         assert m.call_args_list[0].kwargs["folder_ids"] == {2}
-        assert m.call_args_list[1].kwargs["folder_ids"] is None
+        admin_ids = m.call_args_list[1].kwargs["folder_ids"]
+        # only the admin token's own folders (none here) — never A's or B's
+        assert admin_ids == {f.id for f in FOLDERS.values() if f.user_token == JTI_ADMIN}
 
     def test_active_stages_filtered(self, as_b):
         from src.domain.rag.index_job_manager import IndexingJobManager
