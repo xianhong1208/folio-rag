@@ -25,6 +25,22 @@ logger = get_api_logger()
 router = APIRouter(tags=["Health"], prefix="/health")
 
 
+def _pool_stats(pool) -> dict[str, int]:
+    """Connection counts of a SQLAlchemy ``QueuePool``.
+
+    ``overflow()`` starts at ``-pool_size`` and only turns positive once connections beyond
+    ``pool_size`` are open; it is reported clamped at 0 so the field reads as "extra
+    connections in use". Pools without these counters (e.g. ``NullPool``) raise
+    ``AttributeError``, which the caller reports as degraded.
+    """
+    return {
+        "size": pool.size(),
+        "checked_in": pool.checkedin(),
+        "checked_out": pool.checkedout(),
+        "overflow": max(pool.overflow(), 0),
+    }
+
+
 # Liveness probe (K8s / Docker): no dependencies.
 @router.get(
     "",
@@ -114,10 +130,7 @@ async def detailed_health_check():
 
         checks["connection_pool"] = {
             "status": "healthy",
-            "size": pool.size(),
-            "checked_in": pool.checked_in_connections(),
-            "checked_out": pool.checked_out_connections(),
-            "overflow": pool.overflow(),
+            **_pool_stats(pool),
             "message": "Connection pool operational"
         }
         logger.debug("Connection pool health check: OK")
