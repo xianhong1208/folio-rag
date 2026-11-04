@@ -135,7 +135,8 @@ class TestSearch:
         rr = FakeReranker({"f": 0.9, "e": 0.8, "h": 1.0})
         s = searcher_with(dense, [], reranker=rr)
         # rerank_candidates=1 isolates the 3 × top_k floor (the default pool is 60)
-        out = await s.search("q", SearchSettings(top_k=2, rerank_candidates=1))
+        out = await s.search("q", SearchSettings(top_k=2, rerank_candidates=1,
+                                                 rerank_pool="fused"))
         assert s.dense.await_args.args[1] == 6          # max(3 × top_k, rerank_candidates)
         assert ids(out.nodes) == ["f", "e"] and out.reranked  # h was never a candidate
         assert rr.calls[0][2] == 2
@@ -355,3 +356,169 @@ class TestRerankCandidatePool:
         a = hs.cache_fingerprint("q", SearchSettings(rerank_candidates=60))
         b = hs.cache_fingerprint("q", SearchSettings(rerank_candidates=80))
         assert a != b
+
+
+class TestPerListRerankPool:
+    """rerank_pool=per_list: dense top N + BM25 top M go to the cross-encoder."""
+
+    def _searcher(self, reranker):
+        return HybridSearcher(MagicMock(), reranker=reranker, index=MagicMock())
+
+    def test_defaults(self):
+        st = SearchSettings()
+        assert st.rerank_pool == "per_list"
+        assert (st.rerank_dense_candidates, st.rerank_sparse_candidates) == (30, 10)
+
+    def test_unknown_pool_becomes_per_list(self):
+        assert SearchSettings(rerank_pool="bogus").rerank_pool == "per_list"
+
+    def test_depths_keep_three_times_top_k(self):
+        assert hs.per_list_depths(SearchSettings(top_k=10)) == (30, 10)
+        assert hs.per_list_depths(SearchSettings(top_k=20)) == (60, 10)
+        assert hs.per_list_depths(SearchSettings(top_k=1, rerank_dense_candidates=0,
+                                                 rerank_sparse_candidates=-3)) == (3, 0)
+
+    def test_retrieval_depth_covers_both_pools(self):
+        s = self._searcher(MagicMock())
+        # The fused list (trace view, rerank-failure fallback) keeps its old depth...
+        assert s.candidate_depth(SearchSettings(top_k=10)) == 60
+        # ...and grows when a per-list depth is deeper than it.
+        assert s.candidate_depth(SearchSettings(top_k=10, rerank_dense_candidates=90)) == 90
+        assert s.candidate_depth(SearchSettings(top_k=10, rerank_sparse_candidates=70)) == 70
+        assert s.candidate_depth(SearchSettings(top_k=10, rerank_dense_candidates=90,
+                                                rerank_pool="fused")) == 60
+
+    def test_pool_is_dense_head_plus_bm25_head_in_fused_order(self):
+        s = self._searcher(MagicMock())
+        dense = [nws(c) for c in "abcdef"]
+        sparse = [nws(c) for c in "xyaz"]
+        fused = rrf_fuse([dense, sparse], k=10)          # a first (in both lists)
+        st = SearchSettings(top_k=1, rerank_dense_candidates=3, rerank_sparse_candidates=2)
+        pool = s.rerank_pool(fused, dense, sparse, st)
+        assert sorted(ids(pool)) == ["a", "b", "c", "x", "y"]
+        assert ids(pool) == [i for i in ids(fused) if i in {"a", "b", "c", "x", "y"}]
+
+    def test_pool_reaches_past_the_fused_cut(self):
+        """A dense-only hit below the fused cut still reaches the reranker."""
+        s = self._searcher(MagicMock())
+        dense = [nws(c) for c in "abcd"]
+        sparse = [nws(c) for c in "xyz"]
+        fused = rrf_fuse([dense, sparse], k=3)            # a, x, b
+        st = SearchSettings(top_k=1, rerank_dense_candidates=4, rerank_sparse_candidates=1)
+        pool = s.rerank_pool(fused, dense, sparse, st)
+        assert ids(pool) == ["a", "x", "b", "c", "d"]
+
+    def test_fused_mode_and_concat_fusion_keep_the_fused_list(self):
+        s = self._searcher(MagicMock())
+        dense, sparse = [nws(c) for c in "abc"], [nws(c) for c in "xy"]
+        fused = rrf_fuse([dense, sparse], k=5)
+        tiny = dict(rerank_dense_candidates=1, rerank_sparse_candidates=0, top_k=1)
+        assert ids(s.rerank_pool(fused, dense, sparse,
+                                 SearchSettings(rerank_pool="fused", **tiny))) == ids(fused)
+        union = concat_fuse(dense, sparse)
+        assert ids(s.rerank_pool(union, dense, sparse,
+                                 SearchSettings(fusion="concat", **tiny))) == ids(union)
+
+    async def test_search_reranks_the_per_list_pool(self):
+        dense = [nws(c) for c in "abcdefgh"]
+        sparse = [nws(c) for c in "xyzw"]
+        rr = FakeReranker({"h": 1.0, "w": 0.9, "f": 0.8})
+        s = searcher_with(dense, sparse, reranker=rr)
+        st = SearchSettings(top_k=2, rerank_candidates=1, rerank_dense_candidates=6,
+                            rerank_sparse_candidates=2)
+        out = await s.search("q", st)
+        assert sorted(rr.calls[0][1]) == sorted("abcdefxy")   # h, w are beyond the heads
+        assert ids(out.nodes) == ["f", "a"]
+        assert out.candidates == 8 and out.reranked
+        assert len(out.fused) == 6           # depth max(3 × top_k, 1, 6, 2); x, y lie beyond it
+
+    async def test_failed_rerank_falls_back_to_fused_order(self):
+        dense = [nws(c) for c in "abcd"]
+        sparse = [nws(c) for c in "xa"]
+        s = searcher_with(dense, sparse, reranker=_FailingScorer())
+        out = await s.search("q", SearchSettings(top_k=2, rerank_dense_candidates=1,
+                                                 rerank_sparse_candidates=1))
+        assert out.rerank_failed and ids(out.nodes) == ["a", "x"]
+
+
+class _FailingScorer:
+    score_threshold = 0.0
+
+    async def ascore(self, query, texts):
+        raise RuntimeError("reranker down")
+
+
+class TestRerankPrefetch:
+    """search(prefetch=...) overlaps side work with the rerank call."""
+
+    async def test_prefetch_gets_the_pool_and_lands_on_the_outcome(self):
+        seen = []
+
+        async def prefetch(pool):
+            seen.append(ids(pool))
+            return {"rows": len(pool)}
+
+        rr = FakeReranker({"b": 1.0})
+        s = searcher_with([nws(c) for c in "abc"], [], reranker=rr)
+        out = await s.search("q", SearchSettings(top_k=1), prefetch=prefetch)
+        assert seen == [rr.calls[0][1]]
+        assert out.prefetched == {"rows": 3} and ids(out.nodes) == ["b"]
+
+    async def test_prefetch_runs_concurrently_with_rerank(self):
+        order = []
+
+        class SlowReranker(FakeReranker):
+            async def arerank(self, query, nodes, top_n=None):
+                order.append("rerank start")
+                await asyncio.sleep(0.02)
+                order.append("rerank end")
+                return await super().arerank(query, nodes, top_n)
+
+        async def prefetch(pool):
+            order.append("prefetch")
+            return True
+
+        s = searcher_with([nws("a")], [], reranker=SlowReranker())
+        await s.search("q", SearchSettings(top_k=1), prefetch=prefetch)
+        assert order.index("prefetch") < order.index("rerank end")
+
+    async def test_failing_prefetch_is_ignored(self):
+        async def prefetch(pool):
+            raise RuntimeError("db down")
+
+        s = searcher_with([nws("a")], [], reranker=FakeReranker({"a": 1.0}))
+        out = await s.search("q", SearchSettings(top_k=1), prefetch=prefetch)
+        assert out.prefetched is None and ids(out.nodes) == ["a"]
+
+    async def test_no_prefetch_result_when_rerank_failed_or_absent(self):
+        async def prefetch(pool):
+            return "data"
+
+        s = searcher_with([nws("a")], [], reranker=_FailingScorer())
+        out = await s.search("q", SearchSettings(top_k=1), prefetch=prefetch)
+        assert out.rerank_failed and out.prefetched is None
+        s = searcher_with([nws("a")], [])
+        out = await s.search("q", SearchSettings(top_k=1), prefetch=prefetch)
+        assert out.prefetched is None
+
+    async def test_cancelled_rerank_cancels_the_prefetch(self):
+        started = asyncio.Event()
+        holder = {}
+
+        class HangingReranker(FakeReranker):
+            async def arerank(self, query, nodes, top_n=None):
+                started.set()
+                await asyncio.sleep(10)
+
+        async def prefetch(pool):
+            holder["task"] = asyncio.current_task()
+            await asyncio.sleep(10)
+
+        s = searcher_with([nws("a")], [], reranker=HangingReranker())
+        task = asyncio.ensure_future(s.search("q", SearchSettings(top_k=1), prefetch=prefetch))
+        await started.wait()
+        task.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await task
+        await asyncio.sleep(0)
+        assert holder["task"].cancelled() or holder["task"].done()

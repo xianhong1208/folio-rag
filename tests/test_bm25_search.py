@@ -255,3 +255,22 @@ class TestSegmentQuery:
         s = HybridSearcher(MagicMock(), index=MagicMock())
         with patch("src.domain.rag.text_segmenter.get_segmenter", side_effect=RuntimeError):
             assert await s.segment_query("raw text", SearchSettings()) == "raw text"
+
+    async def test_segmentation_runs_on_one_dedicated_thread(self):
+        """Every query is segmented on the same thread (one torch/OpenMP team)."""
+        import threading
+
+        threads = set()
+
+        def segment(text):
+            threads.add(threading.current_thread().name)
+            return text
+
+        seg = MagicMock()
+        seg.segment.side_effect = segment
+        s = HybridSearcher(MagicMock(), index=MagicMock())
+        with patch("src.domain.rag.text_segmenter.get_segmenter", return_value=seg):
+            await asyncio.gather(*(s.segment_query(f"查詢{i}", SearchSettings())
+                                   for i in range(6)))
+        assert len(threads) == 1 and next(iter(threads)).startswith("folio-query-segment")
+        assert hs._segment_executor() is hs._segment_executor()
