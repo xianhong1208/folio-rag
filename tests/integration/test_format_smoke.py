@@ -30,6 +30,16 @@ def samples(tmp_path_factory):
 
     # Pure-parser text family
     w("t.md", f"# 標題\n\n{SENT}\n")
+    w("t.markdown", f"# 標題\n\n{SENT}\n")
+    # MIME web archive as browsers save it: quoted-printable HTML part with its charset in the part header
+    import quopri
+    html = f"<html><body><p>{SENT}</p><img src=\"http://127.0.0.1:9/x.png\"></body></html>"
+    qp = quopri.encodestring(html.encode("utf-8")).decode("ascii")
+    mht = ("MIME-Version: 1.0\r\nContent-Type: multipart/related; boundary=\"B\"; type=\"text/html\"\r\n\r\n"
+           "--B\r\nContent-Type: text/html; charset=utf-8\r\nContent-Transfer-Encoding: quoted-printable\r\n"
+           f"Content-Location: http://example.invalid/t.html\r\n\r\n{qp}\r\n--B--\r\n")
+    w("t.mht", mht)
+    w("t.mhtml", mht)
     w("t.qmd", f"---\ntitle: x\n---\n\n{SENT}\n")
     w("t.rmd", f"---\ntitle: x\n---\n\n{SENT}\n")
     for ext in ("adoc", "asciidoc", "asc"):
@@ -50,6 +60,16 @@ def samples(tmp_path_factory):
     import openpyxl
     wb = openpyxl.Workbook(); wb.active["A1"] = SENT; wb.save(S / "t.xlsx")
     shutil.copy(S / "t.xlsx", S / "t.xlsm")
+    wb.template = True; wb.save(S / "t.xltx")
+    # .xltm: an xltx whose workbook part declares the macro-enabled template type
+    with zipfile.ZipFile(S / "t.xltx") as zin, zipfile.ZipFile(S / "t.xltm", "w") as zout:
+        for item in zin.infolist():
+            data = zin.read(item.filename)
+            if item.filename == "[Content_Types].xml":
+                data = data.replace(
+                    b"application/vnd.openxmlformats-officedocument.spreadsheetml.template.main+xml",
+                    b"application/vnd.ms-excel.template.macroEnabled.main+xml")
+            zout.writestr(item, data)
 
     # epub (minimal zip)
     with zipfile.ZipFile(S / "t.epub", "w") as z:
@@ -77,7 +97,7 @@ def samples(tmp_path_factory):
         def conv(to, src):
             subprocess.run([_SOFFICE, "--headless", "--convert-to", to, str(S / src),
                             "--outdir", str(S)], capture_output=True, timeout=120)
-        conv("doc", "t.docx"); conv("dot", "t.docx")
+        conv("doc", "t.docx"); conv("dot", "t.docx"); conv("rtf", "t.docx")
         conv("xls", "t.xlsx"); conv("xlt", "t.xlsx")
         conv("ppt", "t.odp"); conv("pot", "t.odp"); conv("pps", "t.odp")
         # pptx family: soffice produces pptx; macro/show variants are isomorphic renames (potx cannot be opened in practice, so it is excluded)
@@ -98,10 +118,10 @@ def converter(itest_db):
 _PURE_PARSER_EXTS = [
     "md", "qmd", "rmd", "adoc", "asciidoc", "asc",
     "html", "htm", "xhtml", "tex", "latex", "vtt", "eml",
-    "docx", "dotx", "docm", "dotm", "xlsx", "xlsm",
+    "docx", "dotx", "docm", "dotm", "xlsx", "xlsm", "xltx", "xltm", "markdown", "mht", "mhtml",
     "epub", "odt", "ods", "odp",
 ]
-_LEGACY_EXTS = ["doc", "dot", "xls", "xlt", "ppt", "pot", "pps",
+_LEGACY_EXTS = ["doc", "dot", "rtf", "xls", "xlt", "ppt", "pot", "pps",
                 "pptx", "ppsx", "pptm", "potm", "ppsm"]
 
 

@@ -6,12 +6,16 @@ to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Added
+- **New upload formats from docling 2.146**, each parsed end to end first: **RTF** (docling's Word backend through LibreOffice, like `.doc`; headings and tables survive), **MHTML / MHT** web archives (the HTML part is indexed; local and remote references are never fetched), **GIF** (OCR on every frame, like a multi-page TIFF; the cloud parser counts frames against `rag.parsing.max_pages_per_file`), **`.markdown`**, and **Excel templates** `.xltx` / `.xltm`.
+- MHTML is decoded with the charset its HTML part declares. docling's MHTML backend ignored it, so a short Chinese page without `<meta charset>` came out as Thai (cp874) — the failure `_declare_html_utf8` already fixed for plain HTML.
+
 ### Security
 - **Dependency advisories fixed within the current major versions** (pip-audit: 168 → 89 advisories; the remaining ones need pillow 13, transformers 5, filelock 4 and setuptools 84, which follow separately). Upgraded: pyjwt 2.13.0 → 2.15.1 (the console and MCP token verifiers use it), pypdf 6.18.0 → 6.21.4, docling 2.126.0 → 2.146.0 (with docling-core 2.105, docling-parse 7.24), authlib 1.8.0 → 1.9.4, joserfc 1.7.5 → 1.8.0, aiohttp 3.14.3 → 3.14.5, urllib3 2.7.0 → 2.8.0, nltk 3.10.3 → 3.10.4, multidict 6.8.0 → 6.9.1, dnspython 2.8.0 → 2.9.2, opentelemetry-api 1.44.0 → 1.45.2 and banks 2.5.0 → 2.5.1.
 - **pillow 12.2.0 → 13.0.0 and filelock 3.32.6 → 4.2.8** (major versions; 77 advisories). pillow was pinned to 12.2.0 since the first commit with no recorded reason; the pin becomes `>=13.0.0` (docling-ibm-models moves to 4.0.4 with it). Cloud-parser page rendering (multi-frame TIFF, RGBA/palette, oversized images, PDF pages) and Docling parsing of the eval corpus are unchanged on 13.0. pip-audit: 89 → 12 advisories; what remains needs transformers 5 (pinned `<5` until sentence-transformers / llama-index / CKIP are checked against it) or setuptools 84 (conflicts with the ROCm torch builds).
-- **uv installs by copying** (`[tool.uv] link-mode = "copy"`). NLTK 3.10.4 refuses to open a data file with more than one hard link, and uv hard-links packages from its cache whenever the cache and the venv share a filesystem (CI, Docker), which broke the NLTK stopwords that llama-index ships.
+- **uv installs by copying** (`[tool.uv] link-mode = "copy"`). NLTK 3.10.4 refuses to open a data file with more than one hard link, and uv hard-links packages from its cache whenever the cache and the venv share a filesystem (CI, Docker), which broke the NLTK stopwords that llama-index ships. The same NLTK release also refuses data owned or writable by another account: run Folio as the user that owns `.venv` (README → Install).
 - Docling 2.146 changes chunk text slightly: bare URLs and email addresses become Markdown links (`[url](url)`), and spaces between CJK characters in PDFs are dropped. Measured on the golden set with every context prefix regenerated, twice: R@10 0.981 → 0.987 in both runs, R@5 0.965 → 0.973 / 0.976, nDCG@10 0.935 → 0.940 / 0.934. Every per-question difference is within the run-to-run noise of regenerating the prefixes. Tokens per call rose 1–2%, and the 0.9 relevance cutoff behaves the same.
-- Docling 2.146 lists new input formats (RTF, MHTML, GIF, `.markdown`, Excel templates, Keynote, Numbers, AFP). None is added to the upload allow-list: each needs an end-to-end test first.
+- Docling 2.146 lists new input formats. Each was parsed end to end before it was accepted (see *Added*); Keynote, Numbers (need the `docling[format-iwork]` extra) and AFP (mainframe print stream) stay rejected.
 
 ## [1.2.0] — 2026-11-04
 

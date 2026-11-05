@@ -46,7 +46,7 @@ class FileDB(BaseDB):
         # Office Open XML (including template/macro variants; parsed structurally via Docling)
         'pdf', 'docx', 'dotx', 'docm', 'dotm',
         'pptx', 'ppsx', 'pptm', 'potm', 'ppsm',  # potx excluded: docling cannot open it
-        'xlsx', 'xlsm',
+        'xlsx', 'xlsm', 'xltx', 'xltm',
         # OpenDocument (including templates) / e-books / LaTeX / MIME email / subtitles;
         # conformance tests live in test_upload_formats
         'odt', 'ods', 'odp',  # template variants ott/ots/otp excluded: docling cannot open them
@@ -56,12 +56,15 @@ class FileDB(BaseDB):
         # image/machine; when missing, indexing fails explicitly rather than
         # silently producing garbage.
         'doc', 'dot', 'xls', 'xlt', 'ppt', 'pot', 'pps',
+        'rtf',  # same LibreOffice route as .doc (docling's Word backend)
         # Outlook mail (docling 2.119+; python-oxmsg is pure Python, no system deps)
         'msg',
         # Markup languages
-        'md', 'html', 'htm', 'xhtml', 'adoc', 'asciidoc', 'asc',
+        'md', 'markdown', 'html', 'htm', 'xhtml', 'adoc', 'asciidoc', 'asc',
+        # MIME web archives (docling's HTML backend; local / remote references are never fetched)
+        'mht', 'mhtml',
         # Images (Docling + RapidOcr)
-        'png', 'jpg', 'jpeg', 'tiff', 'tif', 'bmp', 'webp',
+        'png', 'jpg', 'jpeg', 'tiff', 'tif', 'bmp', 'webp', 'gif',
         # Audio (AsrProvider: local docling whisper or cloud; aligned with docling's official 6 formats)
         'wav', 'mp3', 'm4a', 'aac', 'ogg', 'flac',
     }
