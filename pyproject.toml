@@ -58,7 +58,7 @@ dependencies = [
     "opencc>=1.1.9",
     # Page rendering for cloud PDF parsing (and page counts for progress)
     "pymupdf==1.26.7",
-    "pillow==12.2.0",
+    "pillow>=13.0.0",
     "openpyxl>=3.1.5",
     "python-docx>=1.2.0",
     # Test
