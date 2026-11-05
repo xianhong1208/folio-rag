@@ -47,8 +47,8 @@ License: MIT&nbsp;·&nbsp;Python 3.12&nbsp;·&nbsp;PostgreSQL + pgvector&nbsp;·
 - Node.js 22.12+ — only if you work on the console UI (Vitest 5 needs it).
 
 ```bash
-git clone https://github.com/xianhong1208/agentic_rag.git
-cd agentic_rag
+git clone https://github.com/xianhong1208/folio-rag.git
+cd folio-rag
 
 # 1. Install — local models need the `local` extra; torch follows a PEP 735 dependency group
 #    per platform, so ALWAYS pass --group with it. (All-cloud deployments: plain `uv sync`,

@@ -47,8 +47,8 @@ License: MIT&nbsp;·&nbsp;Python 3.12&nbsp;·&nbsp;PostgreSQL + pgvector&nbsp;·
 - Node.js 22.12+ —— 只有要開發主控台 UI 時才需要(Vitest 5 需要)。
 
 ```bash
-git clone https://github.com/xianhong1208/agentic_rag.git
-cd agentic_rag
+git clone https://github.com/xianhong1208/folio-rag.git
+cd folio-rag
 
 # 1. 安裝 —— 本地模型需要 `local` extra;torch 依平台走 PEP 735 dependency group,務必一起帶 --group。
 #    （全雲端部署:直接 `uv sync`,見下方「雲端 profile」。）
