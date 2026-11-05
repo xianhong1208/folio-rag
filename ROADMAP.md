@@ -133,6 +133,8 @@ fragmented chunks and weak precision.
 
 ## ✅ Recently shipped
 
+- **1.3.0**: dependency security updates (pip-audit 168 → 12: pyjwt, pypdf, docling, pillow 13, …);
+  new upload formats RTF, MHTML, GIF, `.markdown`, Excel templates; MHTML decoded with its declared charset.
 - **1.2.0**: renamed to Folio; retrieval golden set + eval harness (205 questions, public corpus);
   chunk pipeline v3, a deeper rerank pool and an MCP response token budget (Recall@10 0.973 → 0.981,
   zh→en 0.80 → 0.90, tokens per search 8.2k → 2.6k); MCP search reports `low_relevance`; search
