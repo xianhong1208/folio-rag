@@ -95,6 +95,12 @@ def test_official_docling_format_parity():
         "boxnote": "proprietary Box collaboration format; no use case",
         "ebcdic": "mainframe encoding; no use case",
         "iwork_pages": "needs the docling[format-iwork] extra, which is not installed",
+        # added by docling 2.127-2.146; not accepted until each is tested end to end (a new parser is new attack surface)
+        "rtf": "new in docling >= 2.127; untested here, not accepted yet",
+        "mhtml": "new in docling >= 2.127; web archives can embed remote references, untested here",
+        "iwork_keynote": "same as iwork_pages",
+        "iwork_numbers": "same as iwork_pages",
+        "afp": "IBM print-stream format, new in docling >= 2.127; no use case",
     }
     # ext-level exclusions: individual extensions the official mapping lists but that **fail in practice** (the format itself is accepted)
     _EXCLUDED_EXTS = {
@@ -102,6 +108,10 @@ def test_official_docling_format_parity():
         "ots": "same as ott (spreadsheet template)",
         "otp": "same as ott (presentation template)",
         "potx": "tested 2026-09-02: docling's MsPowerpointDocument cannot open a potx template (pptx/ppsx/pptm/potm/ppsm all work)",
+        "markdown": "listed for md since docling 2.127; .md is accepted, the long spelling is not on the allow-list yet",
+        "gif": "listed for image since docling 2.127; untested here, not accepted yet",
+        "xltm": "listed for xlsx since docling 2.127; spreadsheet templates are untested here (cf. ots)",
+        "xltx": "same as xltm",
     }
     routed = {e.lstrip(".") for e in DOCLING_EXTENSIONS} | {
         e.lstrip(".") for e in _TEXT_EXTENSIONS
