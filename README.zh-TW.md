@@ -32,7 +32,7 @@ License: MIT&nbsp;·&nbsp;Python 3.12&nbsp;·&nbsp;PostgreSQL + pgvector&nbsp;·
 - **增量重建索引。** 重新索引一個檔案時,沒變的 chunk 沿用原本的脈絡說明與 embedding,只改一個章節大約只花一次 LLM 呼叫與一次 embedding。檔案的 chunk 在單一交易內替換 —— 過程中不會從搜尋結果消失。
 - **每資料夾一個 MCP 工具,依 token 隔離。** 每個資料夾註冊成 `Folio_<folder>` 工具;呼叫者看到的工具清單會依其 token 過濾 —— 你只看得到自己擁有的資料夾。歸屬以 token 穩定的 `jti` 為 key。工具名稱一律符合所有 MCP 用戶端的限制(`[A-Za-z0-9_-]`、最長 64 字元):含空白、中日韓文字或其他符號的資料夾名稱會變成 `Folio_<ASCII 部分>_<8 碼雜湊>`,每次都是同一個名稱。
 - **OAuth 2.1 resource server。** 一個 `RemoteAuthProvider` + `JWTVerifier` 保護 `/mcp`;token 用 MCP Gate 的 JWKS 在本地離線驗證（RS256),並綁定本伺服器的 audience,別台的 token 在這裡無效。
-- **文件 + 音訊匯入。** [Docling](https://github.com/DS4SD/docling) 解析 PDF / DOCX / PPTX / XLSX / 圖片（含 OCR）;**FireRedASR** 在本地做繁體中文語音轉錄（或任何 OpenAI 相容的 `/v1/transcriptions`）。
+- **文件 + 音訊匯入。** [Docling](https://github.com/DS4SD/docling) 解析 PDF、Office（含舊版 `.doc` / `.xls` / `.ppt`、RTF 與 Excel 範本）、OpenDocument、HTML 與 MHTML 網頁封存檔、Markdown、EPUB、電子郵件與圖片（含 OCR）;舊版 Office 與 RTF 經 LibreOffice 轉換,需安裝 `soffice`。**FireRedASR** 在本地做繁體中文語音轉錄（或任何 OpenAI 相容的 `/v1/transcriptions`）。
 - **內建評測 harness。** 從你自己的 chunk 自動生成問題,對正式檢索管線(與 `/api/rag/query` 同一路徑)以及 `vector` / `bm25` / `rrf` / `rerank`(全部走正式檢索路徑)評 **Recall@k · MRR · nDCG@k**,讓你針對真實語料調校檢索。
 - **Retrieval Terminal 主控台。** `/admin` 的 React 單頁主控台:管線總覽、資料夾與檔案、會顯示**逐訊號檢索軌跡**的 Search Playground、即時索引任務串流、查詢分析、評測 harness、即時設定、健康狀態與稽核時間軸。
 - **跑在你的 GPU 上。** PyTorch 以 PEP 735 dependency group 依平台選擇（`rocm-r714` / `rocm-r713` / `cuda` / `cpu`）—— AMD ROCm、NVIDIA CUDA 或純 CPU。
@@ -64,6 +64,8 @@ uv run python main.py
 ```
 
 伺服器預設監聽 `http://0.0.0.0:5039`;MCP 端點是 `/mcp`,主控台在 `/admin`。
+
+請用擁有 `.venv` 的使用者執行伺服器。NLTK 3.10.4 起會拒絕讀取其他帳號擁有或可寫入的資料檔,所以 `.venv` 若屬於別的使用者,llama-index 內建的停用詞與斷句器會丟出 `LookupError`,較長的純文字段落就無法切分。修正方式:`chown -R <執行服務的使用者> .venv`。
 
 ## 快速開始
 

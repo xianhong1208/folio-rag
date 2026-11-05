@@ -45,7 +45,7 @@ from src.storage.file_storage import FileStorage
 logger = get_api_logger()
 
 # Formats whose text can come only from OCR when the file has no text layer.
-_OCR_EXTENSIONS = {".pdf", ".png", ".jpg", ".jpeg", ".tiff", ".tif", ".bmp", ".webp"}
+_OCR_EXTENSIONS = {".pdf", ".png", ".jpg", ".jpeg", ".tiff", ".tif", ".bmp", ".webp", ".gif"}
 
 
 def clean_text(text: str) -> str:
