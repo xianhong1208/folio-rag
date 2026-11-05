@@ -246,6 +246,7 @@ _EXT_TO_MIME: Dict[str, str] = {
     "pptx": "application/vnd.openxmlformats-officedocument.presentationml.presentation",
     "txt":  "text/plain",
     "md":   "text/markdown",
+    "rtf":  "application/rtf",
     "json": "application/json",
     "html": "text/html",
     "png":  "image/png",
@@ -254,6 +255,7 @@ _EXT_TO_MIME: Dict[str, str] = {
     "tiff": "image/tiff",
     "tif":  "image/tiff",
     "webp": "image/webp",
+    "gif":  "image/gif",
     "wav":  "audio/wav",
     "mp3":  "audio/mpeg",
 }
