@@ -32,7 +32,7 @@ License: MIT&nbsp;·&nbsp;Python 3.12&nbsp;·&nbsp;PostgreSQL + pgvector&nbsp;·
 - **Incremental re-indexing.** Re-indexing a file reuses the context line and embedding of every unchanged chunk, so editing one section costs about one LLM call and one embedding. The file's chunks are swapped in a single transaction — it never disappears from search mid-way.
 - **Per-folder MCP tools, scoped per token.** Every folder is registered as a `Folio_<folder>` tool; the tool list a caller sees is filtered by their token — you only see folders you own. Ownership is keyed on the token's stable `jti`. Tool names stay within what every MCP client accepts (`[A-Za-z0-9_-]`, 64 chars): a folder name with spaces, CJK or other symbols becomes `Folio_<ascii part>_<8-char hash>`, the same name every time.
 - **OAuth 2.1 resource server.** One `RemoteAuthProvider` + `JWTVerifier` protects `/mcp`; tokens are verified locally against MCP Gate's JWKS (RS256, offline), and are bound to this server's audience so a token for another server never works here.
-- **Document + audio ingestion.** [Docling](https://github.com/DS4SD/docling) parses PDF / DOCX / PPTX / XLSX / images (with OCR); **FireRedASR** transcribes audio locally in Traditional Chinese (or any OpenAI-compatible `/v1/transcriptions` endpoint).
+- **Document + audio ingestion.** [Docling](https://github.com/DS4SD/docling) parses PDF, Office (including legacy `.doc` / `.xls` / `.ppt`, RTF and Excel templates), OpenDocument, HTML and MHTML web archives, Markdown, EPUB, email and images (with OCR); legacy Office and RTF go through LibreOffice, so `soffice` must be installed. **FireRedASR** transcribes audio locally in Traditional Chinese (or any OpenAI-compatible `/v1/transcriptions` endpoint).
 - **Built-in evaluation harness.** Auto-generates questions from your own chunks and scores the production pipeline (the same call as `/api/rag/query`) against `vector` / `bm25` / `rrf` / `rerank` — all through the production search path — on **Recall@k · MRR · nDCG@k**, so you can tune retrieval against your real corpus.
 - **Retrieval Terminal console.** A React single-page console at `/admin`: pipeline overview, folders & files, a **Search Playground** that shows the per-signal retrieval trace, live index-job stream, query analytics, the evaluation harness, live settings, health and an audit timeline.
 - **Runs on your GPU.** PyTorch is selected per platform with PEP 735 dependency groups (`rocm-r714` / `rocm-r713` / `cuda` / `cpu`) — AMD ROCm, NVIDIA CUDA or pure CPU.
@@ -65,6 +65,8 @@ uv run python main.py
 ```
 
 The server listens on `http://0.0.0.0:5039` by default; the MCP endpoint is `/mcp` and the console is at `/admin`.
+
+Run the server as the user that owns `.venv`. NLTK 3.10.4+ refuses data files owned or writable by another account, so with a `.venv` owned by someone else, llama-index's bundled stopwords and sentence tokenizer fail with `LookupError` and long plain-text paragraphs cannot be split. Fix it with `chown -R <service user> .venv`.
 
 ## Quick start
 

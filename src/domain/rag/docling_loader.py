@@ -45,20 +45,23 @@ DOCLING_EXTENSIONS = {
     ".pdf",
     ".docx", ".dotx", ".docm", ".dotm",
     ".pptx", ".ppsx", ".pptm", ".potm", ".ppsm",  # potx: docling can't open it in practice
-    ".xlsx", ".xlsm",
+    ".xlsx", ".xlsm", ".xltx", ".xltm",
     # Legacy Office (docling 2.119+; internally converted to modern formats via LibreOffice `soffice`
     # before parsing — the deployment image/machine must have libreoffice-writer installed, or indexing
     # fails explicitly. Quality verified: .doc and .docx of the same content give 51 chunks, 96% line overlap)
     ".doc", ".dot", ".xls", ".xlt", ".ppt", ".pot", ".pps",
+    ".rtf",  # docling 2.127+: Word backend, converted through LibreOffice like .doc
     # OpenDocument (including template variants)
     ".odt", ".ods", ".odp",  # template variants ott/ots/otp: docling's odfdo backend can't open them in practice
     # Markup / scientific documents
-    ".html", ".htm", ".xhtml", ".md", ".qmd", ".rmd",
+    ".html", ".htm", ".xhtml", ".md", ".markdown", ".qmd", ".rmd",
+    # MIME web archives (docling 2.127+, HTML backend; local/remote references are not fetched)
+    ".mht", ".mhtml",
     ".adoc", ".asciidoc", ".asc", ".tex", ".latex",
     # Email (.msg = python-oxmsg, pure Python; .eml = MIME) / ebooks / subtitles
     ".msg", ".eml", ".epub", ".vtt",
     # Images
-    ".png", ".jpg", ".jpeg", ".tiff", ".tif", ".bmp", ".webp",
+    ".png", ".jpg", ".jpeg", ".tiff", ".tif", ".bmp", ".webp", ".gif",
     # Audio (docling's 6 official audio types; transcription goes through AsrProvider)
     ".wav", ".mp3", ".m4a", ".aac", ".ogg", ".flac",
 }
@@ -1296,6 +1299,38 @@ def _declare_html_utf8(data: bytes) -> bytes:
     return _UTF8_BOM + data
 
 
+_MHTML_EXTENSIONS = {".mht", ".mhtml"}
+
+
+def _mhtml_to_html(data: bytes) -> Optional[bytes]:
+    """The root HTML of a MIME web archive, decoded with the charset its part header declares.
+
+    docling's MHTML backend hands the HTML part to BeautifulSoup without that charset, so a
+    short CJK page with no ``<meta charset>`` came out as cp874 (Thai) — the failure
+    ``_declare_html_utf8`` fixes for plain HTML. With a declared charset the part is decoded
+    here and returned as BOM-marked UTF-8 (BeautifulSoup trusts a BOM over any guess or
+    ``<meta>``); without one it goes through ``_declare_html_utf8``. Returns None when the
+    archive has no text/html part, leaving the file to docling as it is. The other parts
+    (images, CSS) are dropped: docling neither fetches nor indexes them.
+    """
+    from email import message_from_bytes, policy
+
+    msg = message_from_bytes(data, policy=policy.default)
+    for part in msg.walk():
+        if part.get_content_type() != "text/html":
+            continue
+        raw = part.get_payload(decode=True) or b""
+        charset = part.get_content_charset()
+        if not charset:
+            return _declare_html_utf8(raw)
+        try:
+            text = raw.decode(charset)
+        except (LookupError, UnicodeDecodeError):
+            text = raw.decode("utf-8", errors="replace")
+        return _UTF8_BOM + text.encode("utf-8")
+    return None
+
+
 def chunk_docling_document(
     doc: Any,
     file_name: str,
@@ -1381,18 +1416,25 @@ def docling_convert_once(
         # (.md / .html / .csv / .vtt / .latex / .adoc) fail to detect. Wrapping into a
         # DocumentStream carrying the original file_name restores extension detection.
         path_obj = Path(file_path)
-        is_html = Path(file_name).suffix.lower() in _HTML_EXTENSIONS
+        suffix = Path(file_name).suffix.lower()
+        is_html = suffix in _HTML_EXTENSIONS
+        is_mhtml = suffix in _MHTML_EXTENSIONS
         # Only convert() holds the inference lock; keep file reading outside to shorten hold time.
-        if (path_obj.suffix == "" and Path(file_name).suffix != "") or is_html:
+        if (path_obj.suffix == "" and Path(file_name).suffix != "") or is_html or is_mhtml:
             from docling.datamodel.base_models import DocumentStream
             from io import BytesIO
             with path_obj.open("rb") as f:
                 data = f.read()
+            stream_name = file_name
             if is_html:
                 data = _declare_html_utf8(data)
+            elif is_mhtml:
+                html = _mhtml_to_html(data)
+                if html is not None:
+                    data, stream_name = html, f"{Path(file_name).stem}.html"
 
             def _source():  # a stream is consumed by convert(): build a fresh one per attempt
-                return DocumentStream(name=file_name, stream=BytesIO(data))
+                return DocumentStream(name=stream_name, stream=BytesIO(data))
         else:
             def _source():
                 return file_path

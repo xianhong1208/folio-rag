@@ -52,7 +52,7 @@ from src.utils.http_retry import RETRYABLE_STATUS, RetryPolicy, compute_delay
 logger = get_api_logger()
 
 PDF_EXTENSIONS = {".pdf"}
-IMAGE_EXTENSIONS = {".png", ".jpg", ".jpeg", ".tiff", ".tif", ".bmp", ".webp"}
+IMAGE_EXTENSIONS = {".png", ".jpg", ".jpeg", ".tiff", ".tif", ".bmp", ".webp", ".gif"}
 
 CONTINUE_TOKEN = "<<<CONTINUE>>>"
 # U+2063 INVISIBLE SEPARATOR around the marker: never produced by a vision model.
