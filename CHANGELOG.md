@@ -6,6 +6,8 @@ to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [1.3.0] — 2026-11-05
+
 ### Added
 - **New upload formats from docling 2.146**, each parsed end to end first: **RTF** (docling's Word backend through LibreOffice, like `.doc`; headings and tables survive), **MHTML / MHT** web archives (the HTML part is indexed; local and remote references are never fetched), **GIF** (OCR on every frame, like a multi-page TIFF; the cloud parser counts frames against `rag.parsing.max_pages_per_file`), **`.markdown`**, and **Excel templates** `.xltx` / `.xltm`.
 - MHTML is decoded with the charset its HTML part declares. docling's MHTML backend ignored it, so a short Chinese page without `<meta charset>` came out as Thai (cp874) — the failure `_declare_html_utf8` already fixed for plain HTML.
@@ -466,6 +468,7 @@ flags them.
   pgvector storage, per-token (`jti`) folder ownership, and the first React admin
   console.
 
-[Unreleased]: https://github.com/xianhong1208/folio-rag/compare/v1.2.0...dev
+[Unreleased]: https://github.com/xianhong1208/folio-rag/compare/v1.3.0...dev
+[1.3.0]: https://github.com/xianhong1208/folio-rag/releases/tag/v1.3.0
 [1.2.0]: https://github.com/xianhong1208/folio-rag/releases/tag/v1.2.0
 [1.1.0]: https://github.com/xianhong1208/folio-rag/releases/tag/v1.1.0
