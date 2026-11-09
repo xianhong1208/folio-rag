@@ -50,6 +50,7 @@ concurrency:
   cancel-in-progress: true
 
 env:
+  UV_PYTHON_DOWNLOADS: never
   UV_VERSION: '0.9.24'
   PYTHON_VERSION: '3.12'
   # First-time downloads include ~1 GB of CPU torch wheels.
@@ -67,9 +68,12 @@ jobs:
     timeout-minutes: 5
     steps:
       - uses: actions/checkout@v4
-      - uses: astral-sh/setup-uv@v6
+      # Python and uv without GitHub release downloads, which returned 504 under
+      # load for anonymous runners: Python from the runner's tool cache, uv from PyPI.
+      - uses: actions/setup-python@v5
         with:
-          version: ${{ env.UV_VERSION }}
+          python-version: ${{ env.PYTHON_VERSION }}
+      - run: pip install "uv==${{ env.UV_VERSION }}"
       # Pinned so a ruff release cannot turn the build red on its own; rules live in
       # pyproject.toml [tool.ruff].
       - run: uvx ruff@0.17.4 check .
@@ -80,12 +84,16 @@ jobs:
     timeout-minutes: 45
     steps:
       - uses: actions/checkout@v4
-      - uses: astral-sh/setup-uv@v6
+      # Python and uv without GitHub release downloads, which returned 504 under
+      # load for anonymous runners: Python from the runner's tool cache, uv from PyPI.
+      - uses: actions/setup-python@v5
         with:
-          version: ${{ env.UV_VERSION }}
           python-version: ${{ env.PYTHON_VERSION }}
-          enable-cache: true
-          cache-dependency-glob: uv.lock
+      - run: pip install "uv==${{ env.UV_VERSION }}"
+      - uses: actions/cache@v4
+        with:
+          path: ~/.cache/uv
+          key: uv-${{ runner.os }}-${{ hashFiles('uv.lock') }}
       - name: Cache Hugging Face models
         uses: actions/cache@v4
         with:
@@ -130,12 +138,16 @@ jobs:
       RAG_ITEST_DB: agentic_rag_itest
     steps:
       - uses: actions/checkout@v4
-      - uses: astral-sh/setup-uv@v6
+      # Python and uv without GitHub release downloads, which returned 504 under
+      # load for anonymous runners: Python from the runner's tool cache, uv from PyPI.
+      - uses: actions/setup-python@v5
         with:
-          version: ${{ env.UV_VERSION }}
           python-version: ${{ env.PYTHON_VERSION }}
-          enable-cache: true
-          cache-dependency-glob: uv.lock
+      - run: pip install "uv==${{ env.UV_VERSION }}"
+      - uses: actions/cache@v4
+        with:
+          path: ~/.cache/uv
+          key: uv-${{ runner.os }}-${{ hashFiles('uv.lock') }}
       - name: Cache Hugging Face models
         uses: actions/cache@v4
         with:
@@ -160,12 +172,16 @@ jobs:
     timeout-minutes: 25
     steps:
       - uses: actions/checkout@v4
-      - uses: astral-sh/setup-uv@v6
+      # Python and uv without GitHub release downloads, which returned 504 under
+      # load for anonymous runners: Python from the runner's tool cache, uv from PyPI.
+      - uses: actions/setup-python@v5
         with:
-          version: ${{ env.UV_VERSION }}
           python-version: ${{ env.PYTHON_VERSION }}
-          enable-cache: true
-          cache-dependency-glob: uv.lock
+      - run: pip install "uv==${{ env.UV_VERSION }}"
+      - uses: actions/cache@v4
+        with:
+          path: ~/.cache/uv
+          key: uv-${{ runner.os }}-${{ hashFiles('uv.lock') }}
       - name: Install ffmpeg
         # Audio transcription shells out to ffmpeg (resample, silence detection, trim);
         # the tests that exercise it run the real binary.
