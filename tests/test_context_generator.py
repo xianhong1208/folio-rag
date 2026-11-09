@@ -95,10 +95,19 @@ def test_mismatch_cjk_chunk_empty_or_numeric_prefix():
     assert _is_script_mismatch("中文內容", "12345") is True
 
 
-def test_mismatch_mixed_chunk_uses_non_latin_main_script():
-    """A mixed Chinese-English chunk is judged by its dominant non-Latin script: pure-English prefix -> True, Chinese prefix -> False"""
-    assert _is_script_mismatch("中文 mixed with English", "english only prefix") is True
-    assert _is_script_mismatch("中文 mixed with English", "中文前綴") is False
+def test_mismatch_mixed_chunk_uses_its_main_script():
+    """A mixed chunk is judged by the script it is mostly written in."""
+    zh_with_terms = "使用 Kubernetes 部署 PostgreSQL 資料庫並設定備份排程"
+    assert _is_script_mismatch(zh_with_terms, "english only prefix") is True
+    assert _is_script_mismatch(zh_with_terms, "中文前綴") is False
+
+
+def test_mostly_english_chunk_with_a_chinese_line_keeps_an_english_prefix():
+    """QA 2026-11-09: one Chinese line made a mostly English chunk count as Chinese,
+    so its correct English context prefix was thrown away."""
+    chunk = ("The quarterly report covers revenue, operating costs and the hiring plan for "
+             "the support team, with figures for each region.\n負責人：林雅婷")
+    assert _is_script_mismatch(chunk, "From the Q3 report, revenue and hiring by region.") is False
 
 
 def test_mismatch_hangul_chunk_latin_prefix():

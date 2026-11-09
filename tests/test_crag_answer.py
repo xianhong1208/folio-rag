@@ -77,7 +77,7 @@ class TestAnswer:
         out = crag.answer(client, "m", "¿Cuál es la política?", _results(3))
         prompt = client.chat.completions.create.call_args_list[1].kwargs["messages"][0]["content"]
         assert "[2] (f2.pdf › Ch 1) chunk 2" in prompt and "[1]" not in prompt.split("Context:")[1]
-        assert "same language as the question" in prompt
+        assert "language of the question" in prompt and "Latin alphabet" in prompt
         assert out["answer"] == "Per [2] and [3] — not."
         assert out["citations"] == [2, 3] and out["invalid_citations"] == [1]
         assert out["confidence"] == "high" and out["kept"] == 2 and out["dropped"] == 1

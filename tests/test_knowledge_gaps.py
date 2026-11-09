@@ -133,6 +133,31 @@ class TestMcpLogging:
         assert kw["top_score"] == pytest.approx(0.31) and kw["latency_ms"] >= 0
         assert "tok-123456789" not in (kw["token_prefix"] or "")
 
+    async def test_a_rejected_query_is_not_logged(self):
+        """QA 2026-11-09: a query refused as too long was logged as a zero-result search
+        and showed up as a knowledge gap."""
+        from src.adapter.rag_query import RAGQueryService, flush_query_logs
+
+        ctx = MagicMock()
+        ctx.merge_threshold, ctx.auto_merging_enabled, ctx.expand_neighbors = 0.5, True, 0
+        svc = RAGQueryService(ctx)
+        folder = SimpleNamespace(id=4, name="docs", vector_table_uuid="u")
+
+        async def refused(**kw):
+            return {"error": "Query too long (max 2000 characters)"}
+
+        with patch("src.domain.rag.folder_acl.verify_folder_access", return_value=folder), \
+             patch("src.adapter.rag_query._query_semaphore", asyncio.Semaphore(4)), \
+             patch("src.adapter.rag_query.AutoMergingRetriever", return_value=MagicMock()), \
+             patch("src.domain.rag.agentic_handlers.handle_search", new=AsyncMock(side_effect=refused)), \
+             patch("db.query_log_db.QueryLogDB.record") as rec:
+            out = await svc.query_agentic(folder_name="docs", mode="search", query="x" * 5000,
+                                          file_id=None, top_k=5, similarity_cutoff=0.0,
+                                          expand_context=False, token="tok-123456789")
+            await flush_query_logs()
+        assert "error" in out
+        rec.assert_not_called()
+
     async def test_logging_failure_never_breaks_search(self):
         from src.adapter.rag_query import RAGQueryService
 

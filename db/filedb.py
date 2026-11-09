@@ -23,6 +23,10 @@ class FileTooLargeError(ValueError):
     """Upload exceeds MAX_FILE_SIZE (HTTP 413)."""
 
 
+class FileNameConflictError(ValueError):
+    """The folder already holds a file with this name (409)."""
+
+
 class UnsupportedFileTypeError(ValueError):
     """Upload extension is not in ALLOWED_EXTENSIONS (HTTP 415)."""
 

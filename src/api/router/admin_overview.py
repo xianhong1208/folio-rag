@@ -214,6 +214,13 @@ async def get_overview(ident: ConsoleIdentity = Depends(require_console_session)
                 "provider": eff.get("rag.asr.provider"),
                 "available": _asr_available(cfg)},
     }
+    # How retrieval fuses vector and BM25 results (the overview used to claim a fixed
+    # ".75/.25" weighting that is not used).
+    try:
+        from src.domain.rag.hybrid_search import SearchSettings
+        data["retrieval"] = {"fusion": SearchSettings.from_config().fusion}
+    except Exception:
+        data["retrieval"] = {"fusion": None}
     return {"data": data, "message": "ok"}
 
 

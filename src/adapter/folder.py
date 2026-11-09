@@ -30,6 +30,19 @@ from src.adapter.folder_events import (
 logger = get_adapter_logger()
 
 
+class FolderNameConflictError(ValueError):
+    """The token already owns a folder with this name (409).
+
+    Names must be unique per owner: the MCP tool registry, the storage directory and
+    name-based queries are all keyed on (owner, name), so two folders sharing a name
+    overwrite each other's tool and files.
+    """
+
+
+class FolderStorageMoveError(RuntimeError):
+    """A rename could not move the folder's storage directory; nothing was changed (409)."""
+
+
 class FolderAdapter:
     @staticmethod
     def create_folder(
@@ -58,7 +71,7 @@ class FolderAdapter:
 
             folder = FolderDB.get(name=name, user_token=user_token)
             if folder:
-                raise ValueError(f"Folder with name '{name}' already exists for this user.")
+                raise FolderNameConflictError(f"A folder named '{name}' already exists.")
             folder_dict = FolderDB.create(
                 user_token=user_token,
                 name=name,
@@ -148,6 +161,11 @@ class FolderAdapter:
             # On rename, keep storage directory and stored file paths in sync
             # (filesystem rename + a bulk UPDATE: both blocking, so off the loop).
             if name is not None and name != old_name:
+                from src.storage.file_storage import _validate_safe_name
+                _validate_safe_name(name, "folder_name")
+                taken = await run_db(FolderDB.get, name=name, user_token=user_token)
+                if taken:  # this folder cannot match: its name differs
+                    raise FolderNameConflictError(f"A folder named '{name}' already exists.")
                 await run_db(FolderAdapter._rename_storage, folder_id, user_token,
                              old_folder.user_token, old_name, name)
 
@@ -188,13 +206,21 @@ class FolderAdapter:
     @staticmethod
     def _rename_storage(folder_id: int, user_token: str, owner_token: Optional[str],
                         old_name: str, name: str) -> None:
-        """Rename the folder's storage directory and rewrite its files' stored paths (blocking)."""
+        """Rename the folder's storage directory and rewrite its files' stored paths (blocking).
+
+        Raises FolderStorageMoveError, changing nothing, when the directory exists but
+        cannot be moved (e.g. the target name is already taken on disk): rewriting the
+        paths anyway would point this folder's files into another directory.
+        """
         if owner_token:
-            renamed = FileStorage.rename_folder(owner_token, old_name, name)
-            if renamed:
+            if (FileStorage.STORAGE_ROOT / owner_token / old_name).exists():
+                if not FileStorage.rename_folder(owner_token, old_name, name):
+                    raise FolderStorageMoveError(
+                        f"Could not move the folder's files to '{name}': that storage directory "
+                        f"already exists or cannot be written. Nothing was changed.")
                 logger.info(f"Storage folder renamed: {old_name} -> {name}")
             else:
-                logger.warning(f"Storage folder rename failed or not exists: {old_name}")
+                logger.warning(f"Storage folder not found, only the name changes: {old_name}")
 
         try:
             engine = get_engine()
