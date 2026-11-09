@@ -15,6 +15,7 @@ from typing import Any, Dict
 from fastapi import APIRouter, Body, Request, Response
 
 from src.auth.console_session import (
+    COOKIE_NAME,
     check_csrf,
     get_console_auth,
     resolve_identity,
@@ -56,8 +57,13 @@ async def get_session(request: Request):
 
 @router.delete("")
 async def delete_session(request: Request, response: Response):
-    """Sign out. Idempotent; carries no authority, so it needs no CSRF check."""
+    """Sign out: the session ends on the server too, so a copy of the cookie stops
+    working. Idempotent; ending your own session carries no authority, and the cookie
+    is SameSite=Strict, so it needs no CSRF check."""
     auth = get_console_auth()
     if auth.enabled:
+        cookie = request.cookies.get(COOKIE_NAME)
+        if cookie:
+            auth.end_session(cookie)
         auth.clear_cookie(response, request)
     return {"data": {"signed_out": True}, "message": "Signed out"}
