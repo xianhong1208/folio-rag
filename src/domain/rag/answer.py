@@ -21,6 +21,7 @@ import re
 from dataclasses import dataclass, field
 from typing import Iterable, List, Optional, Sequence
 
+from src.domain.rag.han_script import fix_simplified, is_traditional
 from src.domain.rag.token_budget import excerpt, truncate_to_tokens
 
 MAX_CONTEXTS = 6
@@ -148,6 +149,47 @@ def contexts_for(results: Sequence[dict], keep: Iterable[bool]) -> List[Context]
             for i, (r, k) in enumerate(zip(results, keep)) if k]
 
 
+_HAN = re.compile(r"[\u3400-\u4dbf\u4e00-\u9fff\uf900-\ufaff]")
+_KANA = re.compile(r"[\u3040-\u30ff]")
+_HANGUL = re.compile(r"[\uac00-\ud7af]")
+_LATIN = re.compile(r"[A-Za-z]")
+
+
+def answer_language(query: str, contexts: Sequence[Context] = ()) -> Optional[str]:
+    """The language the answer must be in, read from the question's own script.
+
+    "Answer in the same language as the question" was not enough: with Chinese
+    context, an English question got a Chinese — and Simplified — answer. Returns
+    "Japanese", "Korean", "Traditional Chinese", "Simplified Chinese", "Latin" (a
+    Latin-alphabet question: answer in its language, never in a CJK one) or None.
+    A Chinese question too short to show its script follows the context's script.
+    """
+    q = query or ""
+    if _KANA.search(q):
+        return "Japanese"
+    if _HANGUL.search(q):
+        return "Korean"
+    if _HAN.search(q):
+        trad = is_traditional(q, min_chars=1)
+        if trad is None:
+            trad = is_traditional("".join(c.text for c in contexts))
+        return "Simplified Chinese" if trad is False else "Traditional Chinese"
+    if _LATIN.search(q):
+        return "Latin"
+    return None
+
+
+def _language_instruction(language: Optional[str]) -> str:
+    if language == "Traditional Chinese":
+        return "Answer in Traditional Chinese (繁體中文); never use Simplified characters."
+    if language == "Latin":
+        return ("Answer in the language of the question. It is written in the Latin alphabet, "
+                "so do not answer in Chinese, Japanese or Korean, even when the context is.")
+    if language:
+        return f"Answer in {language}."
+    return "Answer in the same language as the question."
+
+
 def answer_prompt(query: str, contexts: Sequence[Context]) -> str:
     ctx = "\n\n".join(
         f"[{c.number}]" + (f" ({c.source})" if c.source else "")
@@ -155,8 +197,18 @@ def answer_prompt(query: str, contexts: Sequence[Context]) -> str:
         for c in contexts)
     return ("You are a helpful assistant. Answer the question using ONLY the context below. "
             "Cite sources inline with their bracketed numbers, e.g. [2]. If the context lacks "
-            "the answer, say so. Answer in the same language as the question.\n\n"
+            f"the answer, say so. {_language_instruction(answer_language(query, contexts))}\n\n"
             f"Context:\n{ctx}\n\nQuestion: {query}\n\nAnswer:")
+
+
+def fit_script(text: str, query: str, contexts: Sequence[Context]) -> str:
+    """Turn Simplified characters that slipped into a Traditional Chinese answer into
+    Traditional (the model drifts even when told not to)."""
+    if answer_language(query, contexts) != "Traditional Chinese":
+        return text
+    # fix_simplified leaves the text alone unless this reference is clearly Traditional,
+    # and never touches a character the reference itself uses.
+    return fix_simplified(text, "\n".join([query, *(c.text for c in contexts)]))
 
 
 # ----------------------------------------------------------------- cleanup
@@ -223,7 +275,7 @@ def answer(client, model: str, query: str, results: Sequence[dict]) -> dict:
     if not (raw or "").strip():
         return {"answer": EMPTY_ANSWER_MESSAGE, "confidence": CONF_LOW, **base,
                 "note": f"generation returned empty (finish={finish})"}
-    cleaned = clean_answer(raw, [c.number for c in contexts])
+    cleaned = clean_answer(fit_script(raw, query, contexts), [c.number for c in contexts])
     return {"answer": cleaned.text, "confidence": confidence(grading, len(contexts)), **base,
             "note": _answer_note(grading, len(contexts)),
             "citations": cleaned.citations, "invalid_citations": cleaned.invalid_citations}
@@ -235,13 +287,13 @@ def _answer_note(grading: Grading, kept: int) -> str:
     return f"Answered from {kept} relevant chunk(s)"
 
 
-def finish_stream(raw: str, contexts: Sequence[Context], grading: Grading) -> dict:
+def finish_stream(raw: str, contexts: Sequence[Context], grading: Grading, query: str = "") -> dict:
     """The streaming path's ``done`` frame: the cleaned full answer (the tokens
     already shown may contain unnormalised or invalid citations)."""
     if not (raw or "").strip():
         return {"answer": EMPTY_ANSWER_MESSAGE, "note": "generation returned empty",
                 "confidence": CONF_LOW, "citations": [], "invalid_citations": []}
-    cleaned = clean_answer(raw, [c.number for c in contexts])
+    cleaned = clean_answer(fit_script(raw, query, contexts), [c.number for c in contexts])
     return {"answer": cleaned.text, "note": _answer_note(grading, len(contexts)),
             "confidence": confidence(grading, len(contexts)),
             "citations": cleaned.citations, "invalid_citations": cleaned.invalid_citations}

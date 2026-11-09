@@ -6,6 +6,10 @@ to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Fixed
+- **Answers came back in the context's language instead of the question's.** An English question over Chinese documents got a Chinese answer — in Simplified characters. The answer prompt now names the language from the question's own script (English and other Latin-alphabet questions are told not to answer in Chinese, Japanese or Korean; a Chinese question too short to show its script follows the documents'), and Simplified characters that slip into a Traditional Chinese answer are converted, for the console's streamed answers too.
+- **Context prefixes were thrown away for mainly English chunks with one Chinese line.** The script check counted any non-Latin character as the chunk's script, so the correct English prefix was rejected as a mismatch and the chunk was indexed without context (5 of 18 files in the QA run). The check now uses the script a chunk is mostly written in.
+
 ## [1.4.0] — 2026-11-09
 
 ### Added
