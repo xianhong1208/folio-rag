@@ -1,7 +1,6 @@
-"""OAuth discovery fallbacks (src/api/router/oauth_discovery.py) and the per-token
-owner key (src/auth/owner_key.py) — both were below the per-file coverage floor."""
+"""OAuth discovery fallbacks (src/api/router/oauth_discovery.py) and the owner key
+(src/auth/owner_key.py) — both were below the per-file coverage floor."""
 
-import hashlib
 from types import SimpleNamespace
 from unittest.mock import patch
 
@@ -11,20 +10,22 @@ from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
 from src.api.router import oauth_discovery as od
-from src.auth.owner_key import owner_key_from_bearer
+from src.auth.owner_key import MissingSubjectError, owner_key_from_bearer
 
 
 class TestOwnerKey:
-    def test_jti_is_the_key(self):
-        tok = jwt.encode({"jti": "abc", "sub": "u"}, "k", algorithm="HS256")
-        assert owner_key_from_bearer(tok) == "abc"
+    def test_sub_is_the_key(self):
+        tok = jwt.encode({"jti": "abc", "sub": "u"}, "k" * 32, algorithm="HS256")
+        assert owner_key_from_bearer(tok) == "sub:u"
 
-    def test_token_without_jti_hashes(self):
-        tok = jwt.encode({"sub": "u"}, "k", algorithm="HS256")
-        assert owner_key_from_bearer(tok) == hashlib.sha256(tok.encode()).hexdigest()
+    def test_token_without_sub_is_refused(self):
+        tok = jwt.encode({"jti": "abc"}, "k" * 32, algorithm="HS256")
+        with pytest.raises(MissingSubjectError):
+            owner_key_from_bearer(tok)
 
-    def test_opaque_token_hashes(self):
-        assert owner_key_from_bearer("opaque") == hashlib.sha256(b"opaque").hexdigest()
+    def test_opaque_token_is_refused(self):
+        with pytest.raises(MissingSubjectError):
+            owner_key_from_bearer("opaque")
 
 
 _SETTINGS = SimpleNamespace(audience="http://rs/mcp", issuer="http://as",

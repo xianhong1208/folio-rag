@@ -8,7 +8,7 @@
 - /api/admin/eval/*                  — retrieval evaluation for one of your folders
 
 Auth: every endpoint needs a console session (or a bearer PAT). Per-folder data is
-limited to folders owned by the session's token (jti), and so are cross-folder
+limited to folders owned by the session's person (sub), and so are cross-folder
 aggregates (overview, jobs, analytics) — for admins too: ``rag:admin`` never reveals
 other owners' folders or queries. The settings audit log and system resources
 (storage totals, no folder content) are admin-only. See src/api/router/admin_scope.py.
@@ -182,6 +182,8 @@ async def get_overview(ident: ConsoleIdentity = Depends(require_console_session)
     """Overview KPIs + in-progress jobs + a summary of the current model configuration.
 
     KPIs cover your own folders (``scope: own``); ``all`` only in open mode.
+    Admins also get ``legacy_owned_folders``: how many folders server-wide still belong
+    to a pre-1.4.1 per-token key, waiting for their token to be used again.
     """
     from db import admin_stats
     from src.config import runtime_overrides as ro
@@ -190,6 +192,9 @@ async def get_overview(ident: ConsoleIdentity = Depends(require_console_session)
     owner = aggregate_owner(ident)
     data = admin_stats.overview(owner=owner)
     data["scope"] = "own" if owner is not None else "all"
+    if ident.is_admin:
+        from src.adapter.folder_claim import count_legacy_folders
+        data["legacy_owned_folders"] = count_legacy_folders()
     try:
         data["trend"] = admin_stats.indexing_trend(7, owner=owner)
     except Exception:

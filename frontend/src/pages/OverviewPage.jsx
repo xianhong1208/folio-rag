@@ -3,6 +3,7 @@ import { useNavigate } from 'react-router-dom'
 import { get } from '../services/api'
 import { fmtNum, fmtBytes, shortModel } from '../lib/format'
 import { serviceStates } from '../lib/health'
+import { foldersFoot } from '../lib/overview'
 import { useSession } from '../contexts/SessionContext'
 
 const Svg = ({ children }) => <svg viewBox="0 0 24 24">{children}</svg>
@@ -76,7 +77,7 @@ export default function OverviewPage() {
   }
 
   const ribbon = [
-    { k: 'Folders', v: fmtNum(d.folders), cls: 'cy', d: d.scope === 'all' ? 'all owners' : 'owned by your token', nav: '/folders' },
+    { k: 'Folders', v: fmtNum(d.folders), cls: 'cy', d: foldersFoot(d), nav: '/folders' },
     { k: 'Files', v: fmtNum(d.files), cls: '', d: fmtBytes(d.total_size_bytes) + ' indexed' },
     { k: 'Chunks', v: fmtNum(ix.total_chunks), cls: 'am', d: 'vectors in store' },
     { k: 'Active Jobs', v: fmtNum(d.jobs.active.length), cls: 'gr', d: jobsFoot, nav: '/jobs' },

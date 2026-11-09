@@ -136,7 +136,7 @@ class TestProbeRoute:
         from src.api.router.admin_settings import router
         app = FastAPI()
         app.include_router(router)
-        return TestClient(as_identity(app, make_identity("owner-tok", admin=True)))
+        return TestClient(as_identity(app, make_identity("sub:owner-tok", admin=True)))
 
     def test_probe_route(self, client):
         with FakeModelServer() as srv, \
@@ -153,7 +153,7 @@ class TestProbeRoute:
         from src.api.router.admin_settings import router
         app = FastAPI()
         app.include_router(router)
-        c = TestClient(as_identity(app, make_identity("owner-tok", admin=False)))
+        c = TestClient(as_identity(app, make_identity("sub:owner-tok", admin=False)))
         assert c.post("/api/admin/probe/embedding").status_code == 403
 
 
@@ -248,7 +248,7 @@ class TestHealthListsVision:
         from src.api.router.admin_settings import router
         app = FastAPI()
         app.include_router(router)
-        return TestClient(as_identity(app, make_identity("owner-tok", admin=False)))
+        return TestClient(as_identity(app, make_identity("sub:owner-tok", admin=False)))
 
     @pytest.mark.parametrize("parsing,listed", [
         ({"pdf": "cloud", "vision": {"model": "vlm", "base_url": "http://v/v1"}}, True),

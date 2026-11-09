@@ -51,7 +51,7 @@ export default function LoginPage() {
             onKeyDown={(e) => { if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) submit(e) }}
           />
           <ul className="login-help">
-            <li>You will see and manage the folders owned by this token — the same ones it reaches over REST and MCP.</li>
+            <li>You will see and manage your folders — the same ones every token of your account reaches over REST and MCP.</li>
             <li>Changing settings needs a token with the <code>rag:admin</code> scope.</li>
             <li>The token is checked once and is not stored; the session ends when the token expires or after the configured session length (8 hours by default).</li>
           </ul>

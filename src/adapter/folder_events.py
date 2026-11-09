@@ -96,3 +96,27 @@ def notify_folder_renamed(
         logger.warning(f"Failed to register MCP tool for folder {new_name}: {e}")
         ok = False
     return ok
+
+
+def notify_folder_owner_changed(
+    old_name: str, old_owner: str, new_name: str, new_owner: str, description: Optional[str]
+) -> bool:
+    """Move a folder's MCP tool from its old owner (and name) to its new owner.
+
+    Used when a legacy per-token folder is claimed by its person. Like a rename: a
+    failed unregister still attempts the register. Returns False on failure.
+    """
+    if _register_tool is None or _unregister_tool is None:
+        return _unwired("owner_changed")
+    ok = True
+    try:
+        _unregister_tool(old_name, user_token=old_owner)
+    except Exception as e:
+        logger.warning(f"Failed to unregister MCP tool '{old_name}' of the old owner: {e}")
+        ok = False
+    try:
+        _register_tool(new_name, description, new_owner)
+    except Exception as e:
+        logger.warning(f"Failed to register MCP tool for folder {new_name}: {e}")
+        ok = False
+    return ok

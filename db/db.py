@@ -25,9 +25,11 @@ class Folder(Base):
     description = Column(Text)
     file_count = Column(Integer, default=0)
     total_size = Column(BigInteger, default=0)
-    # user_token stores the owner key of this folder (the creating token's JWT jti, see
-    # src/auth/owner_key.py), used for authorization filtering. Not a FK: tokens are
-    # issued and stored by MCP Gate, not here.
+    # user_token stores the owner key of this folder, used for authorization filtering:
+    # "sub:<sub>" — the person the creating token belongs to (src/auth/owner_key.py) —,
+    # "console" in open mode, or, for folders not yet claimed, the creating token's jti
+    # (the pre-1.4.1 per-token key; src/adapter/folder_claim.py). Not a FK: users and
+    # tokens live in MCP Gate, not here.
     user_token = Column(String(256), nullable=True)
     vector_table_uuid = Column(PostgresUUID(as_uuid=True), default=uuid.uuid4, nullable=False, unique=True)
     

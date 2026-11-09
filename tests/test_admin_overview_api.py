@@ -18,16 +18,16 @@ from src.api.router.admin_settings import router
 
 @pytest.fixture()
 def client(as_identity, make_identity):
-    # Signed in as the owner of the folders the tests use ("owner-tok", with rag:admin).
+    # Signed in as the owner of the folders the tests use ("sub:owner-tok", with rag:admin).
     app = FastAPI()
     app.include_router(router)
-    return TestClient(as_identity(app, make_identity("owner-tok", admin=True)))
+    return TestClient(as_identity(app, make_identity("sub:owner-tok", admin=True)))
 
 
 _STATS = "db.admin_stats"
 
 
-def _owned_folder(folder_id, token="owner-tok", name="f"):
+def _owned_folder(folder_id, token="sub:owner-tok", name="f"):
     return SimpleNamespace(id=folder_id, name=name, user_token=token)
 
 
@@ -95,7 +95,7 @@ class TestOverviewApi:
         with patch(f"{_STATS}.recent_jobs", return_value=[]) as m:
             assert client.get("/api/admin/jobs?limit=5").status_code == 200
         # Admin identity: still only its own folders' jobs (rag:admin is settings-only).
-        m.assert_called_once_with(5, owner="owner-tok", viewer="owner-tok")
+        m.assert_called_once_with(5, owner="sub:owner-tok", viewer="sub:owner-tok")
         assert client.get("/api/admin/jobs?limit=0").status_code == 422
         assert client.get("/api/admin/jobs?limit=999").status_code == 422
 

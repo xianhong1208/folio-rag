@@ -237,14 +237,14 @@ def client(as_identity, make_identity):
     from src.api.router.admin_settings import router
     app = FastAPI()
     app.include_router(router)
-    return TestClient(as_identity(app, make_identity("owner-tok", admin=False)))
+    return TestClient(as_identity(app, make_identity("sub:owner-tok", admin=False)))
 
 
 _DB = "db.cached_folderdb.CachedFolderDB.get_by_id"
 
 
 def _folder():
-    return SimpleNamespace(id=7, name="f", user_token="owner-tok", vector_table_uuid="u")
+    return SimpleNamespace(id=7, name="f", user_token="sub:owner-tok", vector_table_uuid="u")
 
 
 class TestConsole:

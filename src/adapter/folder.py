@@ -65,8 +65,8 @@ class FolderAdapter:
             # Fail fast: validate name/token against the same safe-name whitelist
             # used for path safety, before creating any DB row. Otherwise an
             # invalid name would leave a ghost row that cannot even be deleted.
-            from src.storage.file_storage import _validate_safe_name
-            _validate_safe_name(user_token, "user_token")
+            from src.storage.file_storage import _validate_safe_name, owner_dir_name
+            owner_dir_name(user_token)  # the owner must map to a safe storage directory
             _validate_safe_name(name, "folder_name")
 
             folder = FolderDB.get(name=name, user_token=user_token)
@@ -166,8 +166,8 @@ class FolderAdapter:
                 taken = await run_db(FolderDB.get, name=name, user_token=user_token)
                 if taken:  # this folder cannot match: its name differs
                     raise FolderNameConflictError(f"A folder named '{name}' already exists.")
-                await run_db(FolderAdapter._rename_storage, folder_id, user_token,
-                             old_folder.user_token, old_name, name)
+                await run_db(FolderAdapter._move_storage, folder_id, user_token,
+                             user_token, old_name, name)
 
             update_kwargs = {"id": folder_id, "user_token": user_token}
             if name is not None:
@@ -176,7 +176,12 @@ class FolderAdapter:
                 update_kwargs["description"] = description
             
             updated_folder = await run_db(FolderDB.update, **update_kwargs)
-            
+            # The id / name lookups are cached; a rename must not leave the old row
+            # (old name) behind for up to the cache TTL.
+            from db.cached_folderdb import CachedFolderDB
+            CachedFolderDB.invalidate_folder_caches(old_folder)
+            CachedFolderDB.invalidate_folder_caches(updated_folder)
+
             logger.info(f"Successfully updated folder: {folder_id}")
 
             # Re-register the MCP tool on name/description change. The hook always
@@ -204,43 +209,53 @@ class FolderAdapter:
             raise 
 
     @staticmethod
-    def _rename_storage(folder_id: int, user_token: str, owner_token: Optional[str],
-                        old_name: str, name: str) -> None:
-        """Rename the folder's storage directory and rewrite its files' stored paths (blocking).
+    def _move_storage(folder_id: int, old_owner: str, new_owner: str,
+                      old_name: str, new_name: str, conn=None) -> bool:
+        """Move a folder's storage directory to another owner and/or name and rewrite its
+        files' stored paths (blocking). Returns whether a directory was moved.
 
-        Raises FolderStorageMoveError, changing nothing, when the directory exists but
-        cannot be moved (e.g. the target name is already taken on disk): rewriting the
-        paths anyway would point this folder's files into another directory.
+        Shared by a rename (same owner, new name) and claiming a legacy folder (new owner,
+        maybe a new name). Raises FolderStorageMoveError, changing nothing, when the
+        directory exists but cannot be moved (e.g. the target is already taken on disk):
+        rewriting the paths anyway would point this folder's files into another directory.
+
+        With ``conn`` the path rewrite runs on that connection, inside the caller's
+        transaction, and a failure propagates; without it the rewrite commits on its own
+        connection and a failure is logged (the rename path's long-standing behaviour).
         """
-        if owner_token:
-            if (FileStorage.STORAGE_ROOT / owner_token / old_name).exists():
-                if not FileStorage.rename_folder(owner_token, old_name, name):
-                    raise FolderStorageMoveError(
-                        f"Could not move the folder's files to '{name}': that storage directory "
-                        f"already exists or cannot be written. Nothing was changed.")
-                logger.info(f"Storage folder renamed: {old_name} -> {name}")
-            else:
-                logger.warning(f"Storage folder not found, only the name changes: {old_name}")
+        moved = False
+        if FileStorage.folder_dir(old_owner, old_name).exists():
+            if not FileStorage.move_folder(old_owner, old_name, new_owner, new_name):
+                raise FolderStorageMoveError(
+                    f"Could not move the folder's files to '{new_name}': that storage directory "
+                    f"already exists or cannot be written. Nothing was changed.")
+            moved = True
+            logger.info(f"Storage folder moved: {old_name} -> {new_name}")
+        else:
+            logger.warning(f"Storage folder not found, only the record changes: {old_name}")
 
+        stmt = text('''
+            UPDATE "Files"
+            SET file_path = REPLACE(file_path, :old_path, :new_path)
+            WHERE folder_id = :folder_id
+        ''')
+        params = {
+            "old_path": FileStorage.relative_folder_path(old_owner, old_name),
+            "new_path": FileStorage.relative_folder_path(new_owner, new_name),
+            "folder_id": folder_id,
+        }
+        if conn is not None:
+            conn.execute(stmt, params)
+            return moved
         try:
             engine = get_engine()
-            with engine.connect() as conn:
-                conn.execute(
-                    text('''
-                        UPDATE "Files" 
-                        SET file_path = REPLACE(file_path, :old_path, :new_path)
-                        WHERE folder_id = :folder_id
-                    '''),
-                    {
-                        "old_path": f"storage/{user_token}/{old_name}/",
-                        "new_path": f"storage/{user_token}/{name}/",
-                        "folder_id": folder_id
-                    }
-                )
-                conn.commit()
-                logger.info(f"Updated file paths for folder {folder_id}: {old_name} -> {name}")
+            with engine.connect() as own:
+                own.execute(stmt, params)
+                own.commit()
+                logger.info(f"Updated file paths for folder {folder_id}: {old_name} -> {new_name}")
         except Exception as e:
             logger.error(f"Failed to update file paths: {e}")
+        return moved
 
     @staticmethod
     def _delete_folder_contents(folder) -> None:

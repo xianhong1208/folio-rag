@@ -1,8 +1,11 @@
 """File storage management on the local filesystem.
 
-Storage layout: storage/{user_token}/{folder_name}/{file_id}
+Storage layout: storage/{owner_dir}/{folder_name}/{file_id}, where ``owner_dir`` is
+derived from the folder's owner key by :func:`owner_dir_name` (``sub:<sub>`` ->
+``sub_<sub>``; a legacy per-token key is used as-is).
 """
 
+import hashlib
 import os
 import re
 import shutil
@@ -52,6 +55,35 @@ def _validate_safe_name(name: str, kind: str = "name") -> None:
         )
 
 
+_OWNER_DIR_SUB_MAX = 200
+
+
+def owner_dir_name(owner_key: str) -> str:
+    """Storage directory name for a folder owner key (path-safe, deterministic, injective).
+
+    - ``sub:<sub>`` (a person) -> ``sub_<sub>`` when the sub is a safe name of at most
+      200 characters (MCP Gate's user ids are UUIDs), else ``subh_<sha256 of the sub>``.
+      ``:`` is not a safe path character, hence the mapping; the two prefixes cannot
+      produce the same directory.
+    - anything else (a legacy per-token jti, ``console`` in open mode) is used as-is
+      after the safe-name check, so existing folders keep their directories.
+
+    Raises ValueError when a legacy key is not a safe name.
+    """
+    from src.auth.owner_key import OWNER_PREFIX
+    if owner_key and owner_key.startswith(OWNER_PREFIX):
+        sub = owner_key[len(OWNER_PREFIX):]
+        try:
+            _validate_safe_name(sub, "sub")
+            if len(sub) <= _OWNER_DIR_SUB_MAX:
+                return f"sub_{sub}"
+        except ValueError:
+            pass
+        return "subh_" + hashlib.sha256(sub.encode("utf-8")).hexdigest()
+    _validate_safe_name(owner_key, "user_token")
+    return owner_key
+
+
 class FileStorage:
     """File storage management class."""
 
@@ -81,13 +113,24 @@ class FileStorage:
 
         Raises ValueError if user_token or folder_name fails safe-name validation.
         """
-        _validate_safe_name(user_token, "user_token")
+        owner_dir = owner_dir_name(user_token)
         _validate_safe_name(folder_name, "folder_name")
         cls._ensure_storage_root()
-        folder_path = cls.STORAGE_ROOT / user_token / folder_name
+        folder_path = cls.STORAGE_ROOT / owner_dir / folder_name
         folder_path.mkdir(parents=True, exist_ok=True)
         return folder_path
     
+    @classmethod
+    def folder_dir(cls, user_token: str, folder_name: str) -> Path:
+        """Absolute storage directory of a folder (not created)."""
+        _validate_safe_name(folder_name, "folder_name")
+        return cls.STORAGE_ROOT / owner_dir_name(user_token) / folder_name
+
+    @staticmethod
+    def relative_folder_path(user_token: str, folder_name: str) -> str:
+        """Prefix of a folder's stored file paths: ``storage/<owner_dir>/<folder>/``."""
+        return f"storage/{owner_dir_name(user_token)}/{folder_name}/"
+
     @classmethod
     def save_file(cls, user_token: str, folder_name: str, file_id: str, file_content: bytes) -> str:
         """Save a file and return its path relative to the project root.
@@ -101,7 +144,7 @@ class FileStorage:
             with open(file_path, 'wb') as f:
                 f.write(file_content)
 
-            relative_path = f"storage/{user_token}/{folder_name}/{file_id}"
+            relative_path = cls.relative_folder_path(user_token, folder_name) + str(file_id)
             logger.info(f"File saved successfully: {relative_path}")
             return relative_path
 
@@ -156,9 +199,7 @@ class FileStorage:
     def delete_folder(cls, user_token: str, folder_name: str) -> bool:
         """Delete an entire folder; return whether it succeeded."""
         try:
-            _validate_safe_name(user_token, "user_token")
-            _validate_safe_name(folder_name, "folder_name")
-            folder_path = cls.STORAGE_ROOT / user_token / folder_name
+            folder_path = cls.folder_dir(user_token, folder_name)
             if not folder_path.exists():
                 logger.warning(f"Folder not found for deletion: {user_token[:8] if user_token else 'N/A'}.../{folder_name}")
                 return False
@@ -176,27 +217,39 @@ class FileStorage:
     @classmethod
     def rename_folder(cls, user_token: str, old_folder_name: str, new_folder_name: str) -> bool:
         """Rename a folder; return whether it succeeded."""
+        return cls.move_folder(user_token, old_folder_name, user_token, new_folder_name)
+
+    @classmethod
+    def move_folder(cls, old_owner: str, old_folder_name: str,
+                    new_owner: str, new_folder_name: str) -> bool:
+        """Move a folder's directory to another owner and/or name; return whether it moved.
+
+        False when the source is missing, the target already exists or the move fails.
+        Raises ValueError for an unsafe owner key or folder name.
+        """
         try:
-            _validate_safe_name(user_token, "user_token")
             _validate_safe_name(old_folder_name, "old_folder_name")
             _validate_safe_name(new_folder_name, "new_folder_name")
-            old_path = cls.STORAGE_ROOT / user_token / old_folder_name
-            new_path = cls.STORAGE_ROOT / user_token / new_folder_name
+            old_path = cls.STORAGE_ROOT / owner_dir_name(old_owner) / old_folder_name
+            new_path = cls.STORAGE_ROOT / owner_dir_name(new_owner) / new_folder_name
 
             if not old_path.exists():
-                logger.warning(f"Folder not found for renaming: {user_token[:8] if user_token else 'N/A'}.../{old_folder_name}")
+                logger.warning(f"Folder not found for moving: {old_owner[:8]}.../{old_folder_name}")
                 return False
 
             if new_path.exists():
-                logger.error(f"Target folder already exists: {user_token[:8] if user_token else 'N/A'}.../{new_folder_name}")
+                logger.error(f"Target folder already exists: {new_owner[:8]}.../{new_folder_name}")
                 return False
 
+            new_path.parent.mkdir(parents=True, exist_ok=True)
             old_path.rename(new_path)
-            logger.info(f"Folder renamed successfully: {user_token[:8] if user_token else 'N/A'}.../{old_folder_name} -> {new_folder_name}")
+            logger.info(f"Folder moved: {old_owner[:8]}.../{old_folder_name} -> "
+                        f"{new_owner[:8]}.../{new_folder_name}")
             return True
 
         except ValueError:
             raise
         except Exception as e:
-            logger.error(f"Failed to rename folder {user_token[:8] if user_token else 'N/A'}.../{old_folder_name} to {new_folder_name}: {str(e)}")
+            logger.error(f"Failed to move folder {old_owner[:8]}.../{old_folder_name} to "
+                         f"{new_owner[:8]}.../{new_folder_name}: {e}")
             return False

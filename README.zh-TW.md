@@ -13,7 +13,7 @@ License: MIT&nbsp;·&nbsp;Python 3.12&nbsp;·&nbsp;PostgreSQL + pgvector&nbsp;·
 ```
 ┌────────────────┐     Folio_<folder> 工具呼叫（Bearer JWT）    ┌───────────────────────────────┐
 │    MCP 用戶端   │ ───────────────────────────────────────────▶ │  Folio（resource server）      │
-│  Claude / IDE  │ ◀─────────────────────────────────────────── │  /mcp · 依 token 過濾的資料夾   │
+│  Claude / IDE  │ ◀─────────────────────────────────────────── │  /mcp · 依使用者過濾的資料夾  │
 └───────┬────────┘        auto-merge 後的段落 + 分數            └───────────────┬───────────────┘
         │ OAuth 流程                                                             │ 離線驗證 JWT
         ▼                                                                        ▼
@@ -30,7 +30,7 @@ License: MIT&nbsp;·&nbsp;Python 3.12&nbsp;·&nbsp;PostgreSQL + pgvector&nbsp;·
 - **Cross-encoder 重排。** 以 `bge-reranker-v2-m3` / `mxbai-rerank-base-v2` 對融合後的候選重新評分,提升 Top-K 精度。
 - **Contextual Retrieval。** 索引時由 LLM 依文件大綱與 chunk 所在章節,以文件本身的語言為每個 chunk 寫一句脈絡說明（Anthropic 建議的做法）。這句說明與麵包屑只用來*找到* chunk(embedding、BM25、rerank);結果一律顯示文件原文。
 - **增量重建索引。** 重新索引一個檔案時,沒變的 chunk 沿用原本的脈絡說明與 embedding,只改一個章節大約只花一次 LLM 呼叫與一次 embedding。檔案的 chunk 在單一交易內替換 —— 過程中不會從搜尋結果消失。
-- **每資料夾一個 MCP 工具,依 token 隔離。** 每個資料夾註冊成 `Folio_<folder>` 工具;呼叫者看到的工具清單會依其 token 過濾 —— 你只看得到自己擁有的資料夾。歸屬以 token 穩定的 `jti` 為 key。工具名稱一律符合所有 MCP 用戶端的限制(`[A-Za-z0-9_-]`、最長 64 字元):含空白、中日韓文字或其他符號的資料夾名稱會變成 `Folio_<ASCII 部分>_<8 碼雜湊>`,每次都是同一個名稱。
+- **每資料夾一個 MCP 工具,依使用者隔離。** 每個資料夾註冊成 `Folio_<folder>` 工具;呼叫者看到的工具清單會依其 token 所屬的使用者過濾 —— 你只看得到自己擁有的資料夾。歸屬以 token 的 `sub`(MCP Gate 使用者)為 key,所以同一位使用者的每一把 token —— personal access token 與 OAuth 登入皆然 —— 看到的是同一組資料夾(見[資料夾歸屬](#資料夾歸屬))。工具名稱一律符合所有 MCP 用戶端的限制(`[A-Za-z0-9_-]`、最長 64 字元):含空白、中日韓文字或其他符號的資料夾名稱會變成 `Folio_<ASCII 部分>_<8 碼雜湊>`,每次都是同一個名稱。
 - **OAuth 2.1 resource server。** 一個 `RemoteAuthProvider` + `JWTVerifier` 保護 `/mcp`;token 用 MCP Gate 的 JWKS 在本地離線驗證（RS256),並綁定本伺服器的 audience,別台的 token 在這裡無效。
 - **文件 + 音訊匯入。** [Docling](https://github.com/DS4SD/docling) 解析 PDF、Office（含舊版 `.doc` / `.xls` / `.ppt`、RTF 與 Excel 範本）、OpenDocument、HTML 與 MHTML 網頁封存檔、Markdown、EPUB、電子郵件與圖片（含 OCR）;舊版 Office 與 RTF 經 LibreOffice 轉換,需安裝 `soffice`。**FireRedASR** 在本地做繁體中文語音轉錄（或任何 OpenAI 相容的 `/v1/transcriptions`）。
 - **內建評測 harness。** 從你自己的 chunk 自動生成問題,對正式檢索管線(與 `/api/rag/query` 同一路徑)以及 `vector` / `bm25` / `rrf` / `rerank`(全部走正式檢索路徑)評 **Recall@k · MRR · nDCG@k**,讓你針對真實語料調校檢索。
@@ -191,6 +191,22 @@ Folio_product-docs  mode="search"  query="要怎麼輪替簽章金鑰?"
 
 GPU 選擇是 `uv sync --extra local --group {rocm-r714|cuda|cpu}` 的取捨 —— 見 `pyproject.toml` 開頭,每個 group 對應到各自的 PyTorch index。
 
+### 資料夾歸屬
+
+資料夾屬於**一個人** —— 也就是 token 所發給的那位 MCP Gate 使用者 —— 而不是某一把 token。擁有者 key 是 token 的 `sub` claim,存成 `sub:<sub>`(`Folders.user_token`;檔案放在 `storage/sub_<sub>/<folder>/`)。MCP Gate 在 `sub` 放的是:
+
+| Token | `sub` | 誰看得到這些資料夾 |
+|-------|-------|--------------------|
+| Personal access token | 使用者的 id | 該使用者的每一把 PAT 與每一次 OAuth 登入 |
+| OAuth access token(authorization code、refresh) | 同一個使用者 id | 同上 —— 每 15 分鐘換一把新的 access token,資料夾仍在 |
+| `client_credentials` token | 該 client 自己的 `client_id` | 只有那個 client(機器身分,不是使用者) |
+
+沒有 `sub` 的 token 不能擁有資料夾:REST 回 401,MCP 工具呼叫回 `unauthorized`,工具清單不顯示任何資料夾工具,主控台拒絕登入(`missing_sub`)。`auth.enabled: false`(開發模式)維持不變:主控台的資料夾擁有者是 `console`。
+
+在 MCP Gate 撤銷一把 token,停用的是那把 token,而不是資料夾:資料夾屬於那個人,用他的其他 token 仍然存取得到。要讓某人失去資料夾,請刪除資料夾,或在 MCP Gate 停用該使用者。
+
+**1.4.1 之前的資料夾**以建立它的 token 的 `jti` 為 key。它們不會被整批遷移 —— Folio 這邊沒有任何資料能說明某個 `jti` 屬於哪個人。改成:帶著這種 token 的第一個通過驗證的請求(REST、`/mcp` 工具清單或呼叫、主控台登入或 session)會把該 token 擁有的所有資料夾移到它的 `sub` 名下:資料列、儲存目錄與檔案記錄的路徑、`Folio_<folder>` 工具,在同一個交易內完成,而且只做一次。同一使用者的並行請求會被序列化(行程內鎖加上 PostgreSQL advisory lock,資料列以 `FOR UPDATE` 鎖定),所以不會重複搬移,也不會只搬一半。如果使用者已經有同名資料夾(他的兩把 PAT 各有一個 `docs`),被移過來的那個會改用下一個可用名稱 —— `docs-2`、`docs-3`…… —— 並在設定 **Audit Log** 記下這次改名;兩個資料夾絕不會合併。token 再也沒被使用的資料夾(已撤銷或過期)會留在原處;管理者可在 Overview 看到還剩多少(`GET /api/admin/overview` 的 `legacy_owned_folders`)。
+
 ### Token 撤銷
 
 Folio 以離線方式驗證 MCP Gate 的 token,因此預設情況下,在 MCP Gate 撤銷的 token 在這裡會一直有效到過期為止——而 PAT 最長可活一年。啟用 **revocation feed** 後,Folio 會在背景輪詢 MCP Gate 的 `POST /oauth/revoked`(每 `poll_interval_sec` 秒,帶 jitter 與錯誤退避),在記憶體保存「已撤銷但尚未過期」的 `jti`,並在所有路徑拒絕它們:`/mcp`(401 `invalid_token`)、REST API(401)、主控台登入,以及既有主控台 session 的每一個請求(session 以 401 `token_revoked` 結束)。撤銷約在一個輪詢間隔內生效。
@@ -323,10 +339,10 @@ profile 做了什麼:
 
 ### 主控台登入
 
-登入方式是貼上一把**由 MCP Gate 發給本服務的 access token**,通常是 personal access token(PAT)。伺服器會用跟 REST / MCP 呼叫完全相同的方式離線驗證一次(簽章、issuer、audience、到期時間;token 必須帶 `jti`),通過後設定一個 HttpOnly 的 session cookie。Token 本身不會被儲存,也不會回傳。
+登入方式是貼上一把**由 MCP Gate 發給本服務的 access token**,通常是 personal access token(PAT)。伺服器會用跟 REST / MCP 呼叫完全相同的方式離線驗證一次(簽章、issuer、audience、到期時間;token 必須帶 `sub` 與 `jti`),通過後設定一個 HttpOnly 的 session cookie。Token 本身不會被儲存,也不會回傳。
 
-- **Session 就是那把 token 的身分。** 你看到、能管理的,正好是這把 token 擁有的資料夾(資料夾以它的 `jti` 綁定)—— 也就是它透過 REST 與 MCP 能存取的那些。在主控台建立的資料夾同樣歸它所有。其他 token 的資料夾完全看不到;要管理它們,請用那把 token 登入。
-- **兩個層級。** 任何有效的 token 都能登入並管理自己的資料夾。修改執行期 **Settings**、測試任意端點、讀取設定 **Audit Log** 與全伺服器的儲存用量,需要 **`rag:admin`** scope。沒有它時,Settings 與 System Health 為唯讀(secret 一律遮蔽),Overview / Index Jobs / Query Analytics 一律只涵蓋自己的資料夾——`rag:admin` 只開放全域設定,永遠看不到其他 token 的資料夾、工作或查詢。
+- **Session 就是你本人。** 你看到、能管理的,正好是這把 token 所屬使用者擁有的資料夾(資料夾以它的 `sub` 綁定)—— 也就是該使用者每一把 token 透過 REST 與 MCP 能存取的那些。在主控台建立的資料夾同樣歸你所有。其他使用者的資料夾完全看不到。
+- **兩個層級。** 任何有效的 token 都能登入並管理自己的資料夾。修改執行期 **Settings**、測試任意端點、讀取設定 **Audit Log** 與全伺服器的儲存用量,需要 **`rag:admin`** scope。沒有它時,Settings 與 System Health 為唯讀(secret 一律遮蔽),Overview / Index Jobs / Query Analytics 一律只涵蓋自己的資料夾——`rag:admin` 只開放全域設定,永遠看不到其他使用者的資料夾、工作或查詢。管理者另外會在 Overview 看到還有多少資料夾仍屬於 1.5 之前的「單一 token」key(見[資料夾歸屬](#資料夾歸屬))。
 - **Session** 持續 `auth.console.session_hours`(8 小時)或到 token 到期為止,取較早者。啟用 [revocation feed](#token-撤銷) 後,在 MCP Gate 撤銷 token 也會在一個輪詢間隔內結束它的 session;未啟用時,進行中的 session 會持續到到期或按 *Sign out*(驗證是離線的)。
 
 **在 MCP Gate 發 token。** MCP Gate 不需要任何程式修改:
@@ -334,7 +350,7 @@ profile 做了什麼:
 1. *Services* → 打開 Folio 服務 → *Scopes declared by this server* → 新增 **`rag:admin`**。**不要**把它設成 default scope(default 會在每把新 token 上預先勾選)。如果該服務有限制 *Allowed scopes*,也要允許 `rag:admin`。
 2. *Issue Token* → *Target service* 選 Folio(audience = `auth.audience`)。給可以改設定的維運者勾選 `rag:admin`;只管理自己資料夾的人不要勾。填上 label 後複製 token —— 它只會顯示一次。
 
-把 token 貼到登入畫面即可。以前透過舊的 *Owner Token* 欄位建立的資料夾,屬於當時貼上的那把 token:用那把 token 登入就看得到。腳本可以不走 cookie,直接帶 `Authorization: Bearer <token>` 呼叫 `/api/admin/*` —— 規則相同,而且不需要 CSRF header。
+把 token 貼到登入畫面即可。1.5 之前建立的資料夾,在建立它的那把 token 再次被使用之前,仍屬於那把 token;一旦使用,就會移到你名下(見[資料夾歸屬](#資料夾歸屬))。腳本可以不走 cookie,直接帶 `Authorization: Bearer <token>` 呼叫 `/api/admin/*` —— 規則相同,而且不需要 CSRF header。
 
 **開發模式。** `auth.enabled: false` 時沒有登入:任何連得到這個 port 的人都能以完整管理權限使用主控台、看到所有資料夾(在這裡建立的資料夾擁有者為 `console`)。伺服器啟動時會記錄警告。只在可信任的機器上使用。
 
@@ -343,7 +359,7 @@ profile 做了什麼:
 | 頁面 | 功能 |
 |------|------|
 | **Overview** | 活的檢索管線、語料讀數、索引健康、模型服務狀態。 |
-| **Folders** | 建立資料夾(歸你的 token 所有);點進去可上傳檔案、看逐檔索引狀態、檢視 chunk(AI 脈絡說明與文件原文分開顯示)、重新索引、刪除。以舊版切塊流程索引的檔案會標示 **Re-index recommended**;資料夾列表會逐一統計(**N stale**),並可一鍵重建。 |
+| **Folders** | 建立資料夾(歸你所有);點進去可上傳檔案、看逐檔索引狀態、檢視 chunk(AI 脈絡說明與文件原文分開顯示)、重新索引、刪除。以舊版切塊流程索引的檔案會標示 **Re-index recommended**;資料夾列表會逐一統計(**N stale**),並可一鍵重建。 |
 | **Search Playground** | 對資料夾即時查詢,顯示**逐訊號檢索軌跡** —— Vector · BM25 · Hybrid · Rerank 各自名次並列 —— 並可加 RAG 答案。 |
 | **Index Jobs** | 索引任務即時串流與進度;可取消執行中的任務。 |
 | **Query Analytics** | 查詢量、延遲、零結果率、熱門查詢與知識缺口。 |

@@ -2,8 +2,8 @@
 """Control Center management API — CRUD and operations for folders / files / index.
 
 Every endpoint needs a console session (or a bearer PAT) and only reaches folders
-owned by that session's token (its jti) — the same folders a REST / MCP caller with
-the token can reach. Operations call the existing REST endpoint functions with that
+owned by the person the session's token belongs to (its sub) — the same folders any
+of their tokens can reach over REST / MCP. Operations call the existing REST endpoint functions with that
 owner key, so all security and cleanup logic stays single-source. A folder you do
 not own is reported as not found (404), exactly like on the REST API.
 """
@@ -77,7 +77,7 @@ async def admin_create_folder(
     body: CreateFolderRequest = Body(..., examples=[{"name": "docs", "description": ""}]),
     ident: ConsoleIdentity = _Session,
 ):
-    """Create a folder owned by the signed-in token (reachable via REST / MCP with that token).
+    """Create a folder owned by the signed-in person (reachable via REST / MCP with any of their tokens).
 
     Any owner field in the body is ignored: the owner is always the session.
     """
