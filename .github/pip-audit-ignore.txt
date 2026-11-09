@@ -1,0 +1,22 @@
+# Known vulnerabilities the dependency audit accepts, one advisory ID per line,
+# each with the reason it does not apply. Re-check when the pin that keeps the
+# package back is lifted, and remove the line then.
+#
+# transformers is pinned below 5 (pyproject.toml: 5.x needs separate
+# sentence-transformers / llama-index compatibility checks). Every advisory below
+# needs an attacker-controlled model repository or checkpoint, or the Trainer /
+# checkpoint-conversion / custom-generate code paths Folio does not use. Folio
+# loads the models its configuration names. Caveat: `rag.embedding.model` and
+# `rag.rerank.model` can be changed at runtime by a rag:admin token, so this
+# acceptance assumes rag:admin holders are trusted with the server.
+PYSEC-2025-217     # X-CLIP checkpoint conversion: unpickling an untrusted checkpoint
+PYSEC-2026-2288    # Trainer._load_rng_state torch.load: training only
+PYSEC-2026-2289    # malicious config.json in a model repository
+PYSEC-2026-2290    # LightGlue loading from an attacker-controlled repository
+PYSEC-2026-3929    # path traversal in save_pretrained(): Folio does not save tokenizers
+PYSEC-2026-4174    # load_custom_generate() fetching remote code: not used
+#
+# setuptools 81 is what the ROCm wheel index pins (uv.lock); it is a build-time
+# tool here, not something the service runs on requests.
+PYSEC-2026-3447    # MANIFEST.in exclude handling while building an sdist
+GHSA-xmj3-9gf7-h52w  # legacy wheel install on Windows

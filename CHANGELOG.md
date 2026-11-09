@@ -6,6 +6,9 @@ to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Added
+- **Dependency audit in CI** (`.github/workflows/audit.yml`): `pip-audit` on the locked runtime dependencies including the `local` extra, and `npm audit` (production, high and above) on the console. It runs when dependencies change and every Monday, since a new advisory against a locked version appears without any change here. Accepted advisories live in `.github/pip-audit-ignore.txt`, one per line with the reason: the transformers 4.x advisories (the package is pinned below 5) all need an attacker-controlled model repository or code paths Folio does not use, and the setuptools ones are build-time or Windows-only.
+
 ## [1.3.0] — 2026-11-05
 
 ### Added
