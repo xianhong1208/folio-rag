@@ -6,6 +6,13 @@ to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Fixed
+- **`/v1` media endpoints:**
+  - speech-to-text reported `model: whisper-turbo` and `/v1/models` listed Whisper while the configured provider (e.g. FireRedASR) did the work; both now name the provider in use;
+  - audio that cannot be decoded and PDFs or images that cannot be opened got a 500 (the audio one with ffmpeg's stderr in the body); they now get **422** with a plain message, checked before the models run;
+  - other failures no longer echo the exception text (it stays in the server log);
+  - an unknown `response_format` was ignored (json came back); it is now **400**.
+
 ## [1.4.0] — 2026-11-09
 
 ### Added
