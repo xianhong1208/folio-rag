@@ -21,13 +21,13 @@ from src.api.router.admin_settings import router
 
 @pytest.fixture()
 def client(as_identity, make_identity):
-    # Signed in as the owner of the folders the tests use ("owner-tok").
+    # Signed in as the owner of the folders the tests use ("sub:owner-tok").
     app = FastAPI()
     app.include_router(router)
-    return TestClient(as_identity(app, make_identity("owner-tok", admin=False)))
+    return TestClient(as_identity(app, make_identity("sub:owner-tok", admin=False)))
 
 
-def _folder(token="owner-tok"):
+def _folder(token="sub:owner-tok"):
     return SimpleNamespace(id=7, name="f", user_token=token)
 
 
@@ -42,7 +42,7 @@ class TestActAsOwner:
                    new=AsyncMock(return_value={"ok": True})) as ep:
             r = client.delete("/api/admin/manage/folders/7")
         assert r.status_code == 200
-        ep.assert_awaited_once_with(7, user_token="owner-tok")
+        ep.assert_awaited_once_with(7, user_token="sub:owner-tok")
 
     def test_missing_folder_404(self, client):
         with patch(_DB, return_value=None):
@@ -71,7 +71,7 @@ class TestActAsOwner:
             r = client.post("/api/admin/manage/folders",
                             json={"name": "docs", "owner_token": "tok-a"})
         assert r.status_code == 200
-        assert ep.await_args.kwargs["user_token"] == "owner-tok"
+        assert ep.await_args.kwargs["user_token"] == "sub:owner-tok"
         assert ep.await_args.args[0].name == "docs"
 
     def test_create_in_open_mode_uses_console_owner(self, as_identity):
@@ -93,7 +93,7 @@ class TestActAsOwner:
                             json={"skip_existing": True})
         assert r.status_code == 200
         kw = ep.await_args.kwargs
-        assert kw["skip_existing"] is True and kw["token"] == "owner-tok"
+        assert kw["skip_existing"] is True and kw["token"] == "sub:owner-tok"
         assert kw["folder"] is f
 
     def test_full_rebuild_uses_reindex_endpoint(self, client):
@@ -119,7 +119,7 @@ class TestActAsOwner:
                    new=AsyncMock(return_value={"data": {"cancelled": True}})) as ep:
             r = client.post("/api/admin/manage/folders/7/jobs/j1/cancel")
         assert r.status_code == 200
-        ep.assert_awaited_once_with(7, "j1", token="owner-tok", folder=f)
+        ep.assert_awaited_once_with(7, "j1", token="sub:owner-tok", folder=f)
 
     def test_delete_file_delegates(self, client):
         fid = "9e68c18e-3209-44d3-b7e9-2211b3660d66"
@@ -129,7 +129,7 @@ class TestActAsOwner:
             r = client.delete(f"/api/admin/manage/folders/7/files/{fid}")
         assert r.status_code == 200
         assert str(ep.await_args.args[1]) == fid
-        assert ep.await_args.kwargs["user_token"] == "owner-tok"
+        assert ep.await_args.kwargs["user_token"] == "sub:owner-tok"
 
 
 class TestRemainingDelegations:
@@ -145,7 +145,7 @@ class TestRemainingDelegations:
             r = client.patch("/api/admin/manage/folders/7",
                              json={"name": "new", "description": "d"})
         assert r.status_code == 200
-        assert ep.await_args.kwargs["user_token"] == "owner-tok"
+        assert ep.await_args.kwargs["user_token"] == "sub:owner-tok"
         assert ep.await_args.args[1].name == "new"
 
     def test_upload_delegates_with_owner_token(self, client):
@@ -157,7 +157,7 @@ class TestRemainingDelegations:
                             data={"auto_index": "true"})
         assert r.status_code == 200
         kw = ep.await_args.kwargs
-        assert kw["user_token"] == "owner-tok" and kw["auto_index"] is True
+        assert kw["user_token"] == "sub:owner-tok" and kw["auto_index"] is True
 
     def test_download_delegates(self, client):
         fid = "9e68c18e-3209-44d3-b7e9-2211b3660d66"
@@ -166,7 +166,7 @@ class TestRemainingDelegations:
                    new=AsyncMock(return_value={"ok": True})) as ep:
             r = client.get(f"/api/admin/manage/folders/7/files/{fid}/download")
         assert r.status_code == 200
-        assert ep.await_args.kwargs["user_token"] == "owner-tok"
+        assert ep.await_args.kwargs["user_token"] == "sub:owner-tok"
 
 
 class TestQueryPlayground:
@@ -177,7 +177,7 @@ class TestQueryPlayground:
                    new=AsyncMock(return_value={"data": {"results": [], "total_results": 0}})) as ep:
             r = client.post("/api/admin/manage/folders/7/query", json={"query": "hello world"})
         assert r.status_code == 200
-        assert ep.await_args.kwargs["token"] == "owner-tok"
+        assert ep.await_args.kwargs["token"] == "sub:owner-tok"
         assert ep.await_args.args[1].folder_name == "f"
 
     def test_query_too_short_422(self, client):
@@ -253,7 +253,7 @@ class TestQueryPlayground:
         assert d["total_results"] == 1
         assert d["results"][0] == {"text": "seg1", "score": 0.9,
             "metadata": {"file_name": "a.pdf", "page": 2, "headings": ["H"], "node_id": "n1"}}
-        assert adapter.query_trace.await_args.kwargs["token"] == "owner-tok"
+        assert adapter.query_trace.await_args.kwargs["token"] == "sub:owner-tok"
 
 
 class TestAnswerAndRetry:
@@ -292,7 +292,7 @@ class TestAnswerAndRetry:
         assert r.status_code == 202, r.text
         assert r.json()["data"]["job_id"] == "j1"
         kw = mgr.start_indexing_files.await_args.kwargs
-        assert kw["force"] is True and kw["token"] == "owner-tok" and kw["folder_id"] == 7
+        assert kw["force"] is True and kw["token"] == "sub:owner-tok" and kw["folder_id"] == 7
         assert kw["file_ids"] == ["9e68c18e-3209-4111-8111-000000000001"]
         assert mgr.start_indexing_files.await_args.args == ("ADAPTER",)
 
@@ -361,7 +361,7 @@ class TestAnswerAndRetry:
         mgr = MagicMock()
         mgr.start_maintenance_job = AsyncMock(return_value={"job_id": "j2", "kind": "rebuild_fts"})
         cfg = SimpleNamespace(rag=SimpleNamespace(retrieval=SimpleNamespace(text_search_config="simple")))
-        with patch(_DB, return_value=SimpleNamespace(id=7, name="f", user_token="owner-tok",
+        with patch(_DB, return_value=SimpleNamespace(id=7, name="f", user_token="sub:owner-tok",
                                                      vector_table_uuid="u")), \
              patch("src.config.config_manager.Config.get_config_model", return_value=cfg), \
              patch(_MGR, return_value=mgr):
@@ -375,7 +375,7 @@ class TestAnswerAndRetry:
         mgr = MagicMock()
         mgr.start_maintenance_job = AsyncMock(side_effect=ConflictError("busy"))
         cfg = SimpleNamespace(rag=SimpleNamespace(retrieval=SimpleNamespace(text_search_config="simple")))
-        with patch(_DB, return_value=SimpleNamespace(id=7, name="f", user_token="owner-tok",
+        with patch(_DB, return_value=SimpleNamespace(id=7, name="f", user_token="sub:owner-tok",
                                                      vector_table_uuid="u")), \
              patch("src.config.config_manager.Config.get_config_model", return_value=cfg), \
              patch(_MGR, return_value=mgr):

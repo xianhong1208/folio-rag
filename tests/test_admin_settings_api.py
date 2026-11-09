@@ -20,10 +20,10 @@ _SVC = "src.adapter.runtime_settings_service"
 
 @pytest.fixture()
 def client(as_identity, make_identity):
-    # Signed in as the owner of the folders the tests use ("owner-tok", with rag:admin).
+    # Signed in as the owner of the folders the tests use ("sub:owner-tok", with rag:admin).
     app = FastAPI()
     app.include_router(router)
-    return TestClient(as_identity(app, make_identity("owner-tok", admin=True)))
+    return TestClient(as_identity(app, make_identity("sub:owner-tok", admin=True)))
 
 
 class TestSettingsApi:
@@ -45,7 +45,7 @@ class TestSettingsApi:
         assert body["data"]["applied"] == {"rag.embedding.model": "m"}
         assert body["data"]["warnings"] == ["warning text"]
         # The audit field records the session's sub (never a token)
-        assert ap.call_args.kwargs.get("updated_by") == "alice"
+        assert ap.call_args.kwargs.get("updated_by") == "owner-tok"
 
     def test_put_with_bearer_never_records_the_token(self, client):
         with patch(f"{_SVC}.apply_settings", return_value=({}, [])) as ap:
@@ -53,7 +53,7 @@ class TestSettingsApi:
                        json={"settings": {"rag.rerank.enabled": True}},
                        headers={"Authorization": "Bearer secret-token-xyz-12345"})
         ub = str(ap.call_args.kwargs.get("updated_by"))
-        assert "secret-token" not in ub and ub == "alice"
+        assert "secret-token" not in ub and ub == "owner-tok"
 
     def test_put_empty_body_422(self, client):
         assert client.put("/api/admin/settings", json={}).status_code == 422
@@ -71,7 +71,7 @@ class TestSettingsApi:
         with patch(f"{_SVC}.reset_setting", return_value=True) as rs:
             r = client.delete("/api/admin/settings/rag.rerank.score_threshold")
         assert r.status_code == 200
-        assert rs.call_args.kwargs == {"updated_by": "alice"}
+        assert rs.call_args.kwargs == {"updated_by": "owner-tok"}
         assert r.json()["data"]["reset"] == "rag.rerank.score_threshold"
 
     def test_delete_no_override_404(self, client):

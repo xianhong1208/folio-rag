@@ -37,7 +37,7 @@ from src.domain.exceptions import (
     InvalidTokenError,
     UnauthorizedAccessError,
 )
-from src.fastmcp_tools.acl import extract_token
+from src.fastmcp_tools.acl import extract_owner_key
 from src.fastmcp_tools.dynamic_tool_manager import DynamicToolManager
 from src.log import get_mcptools_logger, mask_token
 from src.storage.file_storage import FileStorage
@@ -412,7 +412,7 @@ async def _query(
     error_msg: Optional[str] = None
 
     try:
-        token = extract_token()
+        token = await extract_owner_key()
         top_k, expand_context = resolve_search_defaults(top_k, expand_context)
         adapter = get_rag_adapter()
         response = await adapter.query(

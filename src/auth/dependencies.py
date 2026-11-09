@@ -72,6 +72,9 @@ async def authenticate_bearer_token(request: Request) -> dict:
         )
 
     logger.info(f"Token validation succeeded: {token[:8]}... (path: {request.url.path})")
+    # Marks this exact token as verified for the request, so the owner-key dependency
+    # may claim its legacy folders (src/api/dependencies/auth.py::extract_token).
+    request.state.verified_bearer = token
     return {
         "user_name": result.user_name,
         "scopes": result.scopes,

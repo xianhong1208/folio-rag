@@ -1,8 +1,9 @@
 """Folder scoping for the admin console.
 
-A console session *is* a token's identity: its owner key is the token's ``jti``,
-and every folder / file / index / eval / search operation is limited to folders
-bound to that key — exactly what a REST or MCP caller holding the token can see.
+A console session is the identity of the person its token belongs to: its owner key
+is ``"sub:<sub>"``, and every folder / file / index / eval / search operation is
+limited to folders bound to that key — exactly what any of that person's tokens can
+see over REST or MCP.
 Not owning a folder is reported exactly like it not existing (404), as on the
 REST API, so the console cannot be used to probe other owners' folder ids.
 

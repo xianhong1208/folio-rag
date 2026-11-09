@@ -22,7 +22,7 @@ from sqlalchemy.exc import ProgrammingError
 from src.api.router import admin_overview as ov
 from src.api.router.admin_settings import router
 
-_FOLDER = SimpleNamespace(id=7, name="docs", vector_table_uuid="abc", user_token="k")
+_FOLDER = SimpleNamespace(id=7, name="docs", vector_table_uuid="abc", user_token="sub:k")
 
 
 @pytest.fixture()
@@ -32,7 +32,7 @@ def client(as_identity, make_identity):
     app.include_router(router)
     with patch("db.cached_folderdb.CachedFolderDB.get_by_id",
                side_effect=lambda fid: _FOLDER if fid == 7 else None):
-        yield TestClient(as_identity(app, make_identity("k")))
+        yield TestClient(as_identity(app, make_identity("sub:k")))
 
 
 @pytest.fixture(autouse=True)

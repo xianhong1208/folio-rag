@@ -50,7 +50,7 @@ def overview(owner: Optional[str] = None) -> Dict[str, Any]:
     """Overview KPIs: folder/file/index/job statistics.
 
     ``owner`` limits every count to the folders bound to that owner key (a console
-    session's jti); None covers the whole server.
+    session's ``sub:<sub>``); None covers the whole server.
     """
     _ensure_bound()
     with Session() as s:

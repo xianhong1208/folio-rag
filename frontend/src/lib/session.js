@@ -39,6 +39,7 @@ const LOGIN_MESSAGES = {
   unknown_signing_key: 'The token was not signed by the trusted MCP Gate.',
   malformed_token: 'That does not look like an access token.',
   missing_jti: 'This token has no token ID (jti). Use an MCP Gate personal access token.',
+  missing_sub: 'This token belongs to no one (it has no subject). Use an MCP Gate personal access token issued to your account.',
   insufficient_scope: 'This token is missing a scope the server requires.',
   jwks_unavailable: 'Cannot reach MCP Gate to check the token. Try again shortly.',
   login_required: 'Paste an access token to sign in.',

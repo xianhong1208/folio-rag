@@ -1,7 +1,7 @@
 """Console authorization matrix, end to end through the real guards.
 
 Tokens are signed locally and verified by the real McpGateTokenVerifier (stub
-JWKS). Folder 1 belongs to token A's jti, folder 2 to token B's. Covers:
+JWKS). Folder 1 belongs to person A (``sub:owner-a``), folder 2 to person B. Covers:
 
 - every /api/admin route refuses an anonymous caller (401);
 - token B cannot see or touch token A's folder through any per-folder endpoint
@@ -27,11 +27,14 @@ from src.api.router.admin_settings import router
 ORIGIN = "http://testserver"
 CSRF = {"X-RAG-Console": "1", "Origin": ORIGIN}
 JTI_A, JTI_B, JTI_ADMIN = "jti-owner-a", "jti-owner-b", "jti-admin-c"
+# Each token belongs to its own person; folders are keyed on the person.
+SUBS = {JTI_A: "owner-a", JTI_B: "owner-b", JTI_ADMIN: "admin-c"}
+OWNER_A, OWNER_B, OWNER_ADMIN = "sub:owner-a", "sub:owner-b", "sub:admin-c"
 FID = "9e68c18e-3209-44d3-b7e9-2211b3660d66"
 
 FOLDERS = {
-    1: SimpleNamespace(id=1, name="docs", user_token=JTI_A, vector_table_uuid="u1"),
-    2: SimpleNamespace(id=2, name="docs", user_token=JTI_B, vector_table_uuid="u2"),
+    1: SimpleNamespace(id=1, name="docs", user_token=OWNER_A, vector_table_uuid="u1"),
+    2: SimpleNamespace(id=2, name="docs", user_token=OWNER_B, vector_table_uuid="u2"),
     3: SimpleNamespace(id=3, name="orphan", user_token=None, vector_table_uuid="u3"),
 }
 
@@ -52,7 +55,7 @@ def folder_db():
 
 def _client(console_auth, tokens, jti, scopes=("rag:read",)):
     c = TestClient(_app())
-    r = c.post("/api/console/session", json={"token": tokens.make(jti=jti, scopes=scopes)},
+    r = c.post("/api/console/session", json={"token": tokens.make(jti=jti, sub=SUBS[jti], scopes=scopes)},
                headers=CSRF)
     assert r.status_code == 200, r.text
     c.headers.update(CSRF)
@@ -170,18 +173,18 @@ def test_owner_reaches_own_folder(as_a, method, path, body, delegate):
         r = _send(as_a, method, path, body, 1)
     assert r.status_code == 200, r.text
     assert mock.called
-    # Operations act with the session's own owner key (jti A).
+    # Operations act with the session's own owner key (person A).
     kwargs = mock.call_args.kwargs
     token = kwargs.get("user_token") or kwargs.get("token")
     if token is not None:
-        assert token == JTI_A
+        assert token == OWNER_A
 
 
-def test_owner_query_uses_own_jti(as_a):
+def test_owner_query_uses_own_owner_key(as_a):
     with patch("src.api.router.rag_query.query_rag",
                new=AsyncMock(return_value={"data": {"results": []}})) as q:
         r = as_a.post("/api/admin/manage/folders/1/query", json={"query": "hello"})
-    assert r.status_code == 200 and q.await_args.kwargs["token"] == JTI_A
+    assert r.status_code == 200 and q.await_args.kwargs["token"] == OWNER_A
 
 
 def test_admin_scope_does_not_grant_other_owners_folders(as_admin):
@@ -193,8 +196,8 @@ def test_admin_scope_does_not_grant_other_owners_folders(as_admin):
 def test_created_folder_belongs_to_session(as_b):
     with patch("src.api.router.folder_api.create_folder",
                new=AsyncMock(return_value={"id": 5})) as ep:
-        r = as_b.post("/api/admin/manage/folders", json={"name": "n", "owner_token": JTI_A})
-    assert r.status_code == 200 and ep.await_args.kwargs["user_token"] == JTI_B
+        r = as_b.post("/api/admin/manage/folders", json={"name": "n", "owner_token": OWNER_A})
+    assert r.status_code == 200 and ep.await_args.kwargs["user_token"] == OWNER_B
 
 
 # -- aggregates -------------------------------------------------------------------------
@@ -205,7 +208,7 @@ class TestAggregates:
         with patch("db.admin_stats.folders_with_index_stats", return_value=[]) as m:
             as_b.get("/api/admin/folders")
             as_admin.get("/api/admin/folders")
-        assert [c.kwargs["owner"] for c in m.call_args_list] == [JTI_B, JTI_ADMIN]
+        assert [c.kwargs["owner"] for c in m.call_args_list] == [OWNER_B, OWNER_ADMIN]
 
     def _overview(self, client):
         base = {"folders": 0, "files": 0, "total_size_bytes": 0, "index": {}, "jobs": {}}
@@ -219,20 +222,20 @@ class TestAggregates:
 
     def test_overview_scoped_for_non_admin(self, as_b):
         r, owner, trend_owner = self._overview(as_b)
-        assert (owner, trend_owner) == (JTI_B, JTI_B) and r.json()["data"]["scope"] == "own"
+        assert (owner, trend_owner) == (OWNER_B, OWNER_B) and r.json()["data"]["scope"] == "own"
 
     def test_overview_own_only_even_for_admin(self, as_admin):
         # rag:admin unlocks global settings, never other owners' data
         r, owner, trend_owner = self._overview(as_admin)
-        assert (owner, trend_owner) == (JTI_ADMIN, JTI_ADMIN)
+        assert (owner, trend_owner) == (OWNER_ADMIN, OWNER_ADMIN)
         assert r.json()["data"]["scope"] == "own"
 
     def test_jobs(self, as_b, as_admin):
         with patch("db.admin_stats.recent_jobs", return_value=[]) as m:
             as_b.get("/api/admin/jobs")
             as_admin.get("/api/admin/jobs")
-        assert m.call_args_list[0].kwargs == {"owner": JTI_B, "viewer": JTI_B}
-        assert m.call_args_list[1].kwargs == {"owner": JTI_ADMIN, "viewer": JTI_ADMIN}
+        assert m.call_args_list[0].kwargs == {"owner": OWNER_B, "viewer": OWNER_B}
+        assert m.call_args_list[1].kwargs == {"owner": OWNER_ADMIN, "viewer": OWNER_ADMIN}
 
     def test_analytics_without_folder(self, as_b, as_admin):
         with patch("db.query_log_db.QueryLogDB.analytics", return_value={}) as m:
@@ -241,7 +244,7 @@ class TestAggregates:
         assert m.call_args_list[0].kwargs["folder_ids"] == {2}
         admin_ids = m.call_args_list[1].kwargs["folder_ids"]
         # only the admin token's own folders (none here) — never A's or B's
-        assert admin_ids == {f.id for f in FOLDERS.values() if f.user_token == JTI_ADMIN}
+        assert admin_ids == {f.id for f in FOLDERS.values() if f.user_token == OWNER_ADMIN}
 
     def test_active_stages_filtered(self, as_b):
         from src.domain.rag.index_job_manager import IndexingJobManager
@@ -257,7 +260,7 @@ class TestAggregates:
     def test_eval_status_hides_other_owners_run(self, as_a, as_b):
         from src.api.router import admin_overview as ov
         ov._EVAL.update(running=True, folder="1", done=3, total=10,
-                        result={"secret": "questions"}, error=None, started_at=1.0, owner=JTI_A)
+                        result={"secret": "questions"}, error=None, started_at=1.0, owner=OWNER_A)
         try:
             mine = as_a.get("/api/admin/eval/status").json()["data"]
             theirs = as_b.get("/api/admin/eval/status").json()["data"]
@@ -298,7 +301,7 @@ def test_admin_only_endpoints_allow_admin(as_admin, method, path, body, target, 
         r = as_admin.request(method, path, json=body)
     assert r.status_code == 200 and m.called
     if target.endswith(("apply_settings", "reset_setting")):
-        assert m.call_args.kwargs["updated_by"] == "alice"  # the token's sub
+        assert m.call_args.kwargs["updated_by"] == "admin-c"  # the token's sub
 
 
 def test_non_admin_can_read_settings_and_health(as_b):
@@ -330,17 +333,17 @@ def test_cookie_write_from_other_origin_is_403(as_a):
 
 def test_bearer_script_needs_no_csrf_and_is_scoped(console_auth, tokens):
     c = TestClient(_app())
-    auth = {"Authorization": f"Bearer {tokens.make(jti=JTI_B)}"}
+    auth = {"Authorization": f"Bearer {tokens.make(jti=JTI_B, sub=SUBS[JTI_B])}"}
     with patch("src.api.router.folder_api.delete_folder", new=AsyncMock(return_value={})) as ep:
         assert c.delete("/api/admin/manage/folders/1", headers=auth).status_code == 404
         assert c.delete("/api/admin/manage/folders/2", headers=auth).status_code == 200
-    assert ep.await_args.kwargs["user_token"] == JTI_B
+    assert ep.await_args.kwargs["user_token"] == OWNER_B
 
 
 def test_bearer_non_admin_cannot_change_settings(console_auth, tokens):
     c = TestClient(_app())
     r = c.put("/api/admin/settings", json={"settings": {"x": 1}},
-              headers={"Authorization": f"Bearer {tokens.make(jti=JTI_B)}"})
+              headers={"Authorization": f"Bearer {tokens.make(jti=JTI_B, sub=SUBS[JTI_B])}"})
     assert r.status_code == 403
 
 
@@ -354,7 +357,7 @@ def test_open_mode_allows_everything(open_console_auth):
     assert ap.call_args.kwargs["updated_by"] == "console (open mode)"
     with patch("src.api.router.folder_api.delete_folder", new=AsyncMock(return_value={})) as ep:
         assert c.delete("/api/admin/manage/folders/1").status_code == 200
-    assert ep.await_args.kwargs["user_token"] == JTI_A
+    assert ep.await_args.kwargs["user_token"] == OWNER_A
 
 
 def test_root_redirect_is_public(console_auth):

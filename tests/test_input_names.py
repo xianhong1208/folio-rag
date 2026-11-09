@@ -125,7 +125,7 @@ class TestFolderRequests:
         from src.api.router.admin_settings import router
         app = FastAPI()
         app.include_router(router)
-        return TestClient(as_identity(app, make_identity("owner-tok", admin=False)))
+        return TestClient(as_identity(app, make_identity("sub:owner-tok", admin=False)))
 
     def test_over_long_name_is_422_not_db_error(self, client):
         with patch("src.api.router.folder_api.create_folder", new=AsyncMock()) as ep:
@@ -145,6 +145,6 @@ class TestFolderRequests:
 
     def test_rename_too_long_is_422(self, client):
         with patch("db.cached_folderdb.CachedFolderDB.get_by_id",
-                   return_value=SimpleNamespace(id=7, name="f", user_token="owner-tok")):
+                   return_value=SimpleNamespace(id=7, name="f", user_token="sub:owner-tok")):
             r = client.patch("/api/admin/manage/folders/7", json={"name": "y" * 300})
         assert r.status_code == 422

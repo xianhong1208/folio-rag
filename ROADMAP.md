@@ -107,8 +107,8 @@ fragmented chunks and weak precision.
 - **Role tiers**: today the console is unauthenticated by product decision
   (internal-network deployment). A future option: an admin auth mode plus
   read-only vs. manage roles, without breaking the current single-tenant flow.
-- **Per-folder sharing**: allow more than one `jti` to own / access a folder, for
-  team-shared corpora, while keeping the default per-token scoping.
+- **Per-folder sharing**: let more than one person (`sub`) access a folder, for
+  team-shared corpora, while keeping the default per-person scoping.
 
 ## Known limitations
 
@@ -152,4 +152,5 @@ fragmented chunks and weak precision.
 - Admin console migrated from a single-file HTML app to a **React SPA** (Vite +
   React Router + Tailwind), "Retrieval Terminal" design.
 - Chinese full-text search via **CKIP** word segmentation (replaces pg_jieba).
-- Folder ownership keyed on the token's **`jti`** (per-token scoping).
+- Folder ownership keyed on the token's **`jti`** (per-token scoping) — replaced by
+  per-person (`sub`) ownership after 1.4.0.

@@ -139,7 +139,7 @@ export default function FoldersPage() {
       fields: [
         { id: 'name', label: 'Name', placeholder: 'e.g. product-docs', required: true },
       ],
-      note: 'The folder is owned by the token you signed in with — reach it over REST / MCP with that same token.',
+      note: 'The folder is yours — every token of your account reaches it over REST / MCP.',
     })
     if (!r) return
     try { await post('/api/admin/manage/folders', { name: r.name.trim() }); toast('Folder created', 'ok'); loadFolders() }

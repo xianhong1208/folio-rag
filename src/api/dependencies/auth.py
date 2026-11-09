@@ -7,7 +7,7 @@ from fastapi import Request, Depends
 from db.cached_folderdb import CachedFolderDB
 from db.filedb import FileDB
 from db.db import Folder, File
-from src.auth.owner_key import owner_key_from_bearer
+from src.auth.owner_key import owner_from_bearer
 from src.domain.exceptions import (
     InvalidTokenError,
     FolderNotFoundError,
@@ -19,9 +19,15 @@ from src.domain.exceptions import (
 
 
 async def extract_token(request: Request) -> str:
-    """Extract and validate the Bearer token from the Authorization header.
+    """Return the caller's folder owner key (``"sub:<sub>"``) from the Bearer token.
 
-    Raises InvalidTokenError if the token is missing or malformed.
+    The token's signature is verified by the router's ``authenticate_request``
+    dependency, which runs first. When that verification marked this very token, its
+    legacy per-token folders (owned by its ``jti``) are claimed for the person first
+    (src/adapter/folder_claim.py) — never on an unverified token.
+
+    Raises InvalidTokenError if the token is missing or malformed, and
+    MissingSubjectError (an InvalidTokenError, 401) if it has no ``sub``.
     """
     auth_header = request.headers.get('Authorization', '')
 
@@ -40,8 +46,12 @@ async def extract_token(request: Request) -> str:
     if not token:
         raise InvalidTokenError("Token is empty")
 
-    # Ownership key = this token's jti (per-token scope), not the raw token.
-    return owner_key_from_bearer(token)
+    # Ownership key = the person the token belongs to (its sub), not the token.
+    owner = owner_from_bearer(token)
+    if getattr(request.state, "verified_bearer", None) == token:
+        from src.adapter.folder_claim import claim_for
+        await claim_for(owner)
+    return owner.owner_key
 
 
 async def get_folder_by_id(

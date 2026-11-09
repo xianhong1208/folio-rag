@@ -103,7 +103,7 @@ class TestQueryBackend:
                     similarity_cutoff=None, expand_context=None)
         args.update(kw)
         with patch(_CFG, return_value=cfg), \
-             patch.object(at, "extract_token", return_value="tok"), \
+             patch.object(at, "extract_owner_key", new=AsyncMock(return_value="tok")), \
              patch.object(at, "get_rag_adapter", return_value=adapter):
             blocks = await at._query(**args)
         return blocks, adapter.query.await_args.kwargs
@@ -135,7 +135,7 @@ class TestQueryBackend:
         adapter.query = AsyncMock(side_effect=UnauthorizedAccessError(
             resource_type="folder", resource_id="docs", reason="no"))
         with patch(_CFG, return_value=_cfg()), \
-             patch.object(at, "extract_token", return_value="tok"), \
+             patch.object(at, "extract_owner_key", new=AsyncMock(return_value="tok")), \
              patch.object(at, "get_rag_adapter", return_value=adapter):
             blocks = await at._query(folder_name="docs", mode="search", query="q", file_id=None,
                                      top_k=None, similarity_cutoff=None, expand_context=None)
@@ -192,7 +192,7 @@ class TestWireFormat:
 
         f = at.RagFile(data=b"abc", format="txt", name="a", mime_type="text/plain")
         with patch(_CFG, return_value=_cfg(return_resource_files=return_resource_files)), \
-             patch.object(at, "extract_token", return_value="tok"), \
+             patch.object(at, "extract_owner_key", new=AsyncMock(return_value="tok")), \
              patch.object(at, "get_rag_adapter", return_value=adapter), \
              patch.object(at, "_build_resource_files", return_value=[f]):
             async with Client(mcp) as c:
@@ -234,7 +234,7 @@ class TestWireFormat:
                                    top_k=None, similarity_cutoff=None, expand_context=None)
 
         with patch(_CFG, return_value=_cfg()), \
-             patch.object(at, "extract_token", return_value="tok"), \
+             patch.object(at, "extract_owner_key", new=AsyncMock(return_value="tok")), \
              patch.object(at, "get_rag_adapter", return_value=adapter):
             async with Client(mcp) as c:
                 payload = json.loads((await c.call_tool("probe", {})).content[0].text)

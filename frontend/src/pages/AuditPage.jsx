@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react'
 import { ScrollText } from 'lucide-react'
 import { get } from '../services/api'
 import { fmtTime } from '../lib/format'
+import { auditEntry } from '../lib/audit'
 import EmptyState from '../components/ui/EmptyState'
 import { useSession } from '../contexts/SessionContext'
 
@@ -20,7 +21,7 @@ export default function AuditPage() {
       <div className="card">
         <div className="card-head">
           <div className="icon"><ScrollText size={16} /></div>
-          <div><h2>Audit Log</h2><div className="desc">Every runtime settings change — who, when, what</div></div>
+          <div><h2>Audit Log</h2><div className="desc">Every runtime settings change, and folders renamed while being claimed — who, when, what</div></div>
         </div>
         <div className="timeline">
           {!isAdmin ? <EmptyState t="Admins only" d="The settings audit log needs a token with the rag:admin scope." />
@@ -28,16 +29,16 @@ export default function AuditPage() {
             : rows == null ? <div className="sec" style={{ marginTop: 8 }}>loading…</div>
               : rows.length === 0 ? <EmptyState t="No changes yet" d="Runtime settings changes will appear here" />
                 : rows.map((e, i) => {
-                  const reset = e.action === 'reset'
+                  const a = auditEntry(e)
                   return (
-                    <div key={i} className={'tl-item ' + (reset ? 'reset' : 'set')}>
+                    <div key={i} className={'tl-item ' + a.cls}>
                       <span className="tl-dot" />
                       <div className="tl-time">{fmtTime(e.at)}</div>
                       <div className="tl-line">
-                        <span className={'tl-act ' + (reset ? 'reset' : 'set')}>{reset ? 'RESET' : 'SET'}</span>
-                        <span className="tl-key">{e.key}</span>
+                        <span className={'tl-act ' + a.cls}>{a.act}</span>
+                        <span className="tl-key">{a.key}</span>
                         <span className="tl-arrow">→</span>
-                        <span className="tl-val">{String(e.new ?? '—')}</span>
+                        <span className="tl-val">{a.value}</span>
                       </div>
                       <div className="tl-by">by {e.by || 'console'}</div>
                     </div>

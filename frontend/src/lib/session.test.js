@@ -38,6 +38,7 @@ describe('login messages', () => {
     expect(loginErrorMessage('wrong_audience')).toMatch(/different service/)
     expect(loginErrorMessage('token_expired')).toMatch(/expired/)
     expect(loginErrorMessage('missing_jti')).toMatch(/jti/)
+    expect(loginErrorMessage('missing_sub')).toMatch(/no subject/)
   })
   it('falls back to the server text', () => {
     expect(loginErrorMessage('weird', 'server said')).toBe('server said')

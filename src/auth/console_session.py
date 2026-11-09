@@ -2,9 +2,12 @@
 
 The console signs in with an MCP Gate access token (a personal access token issued
 for this service). The token is verified ONCE, with the same offline verifier the
-REST API uses (signature, issuer, audience, expiry), and must carry a ``jti``: that
-``jti`` is the per-token owner key every folder is bound to, so the console session
-sees exactly the folders a REST / MCP caller holding that token sees.
+REST API uses (signature, issuer, audience, expiry), and must carry a ``sub`` and a
+``jti``. Folders belong to the person: the owner key is ``"sub:<sub>"``
+(src/auth/owner_key.py), so the console session sees exactly the folders every
+token of that person sees over REST and MCP. The ``jti`` is kept to check the token
+against MCP Gate's revocation list, and to claim folders the token still owns under
+the pre-1.5.0 per-token key (src/adapter/folder_claim.py).
 
 The session itself is a short HS256-signed JWT in an HttpOnly cookie::
 
@@ -26,7 +29,8 @@ Guards:
 - ``require_console_admin`` — the above plus the admin scope (``rag:admin``).
 
 With ``auth.enabled: false`` the console runs in *open* (dev) mode: no login, every
-request is treated as an admin that can see every folder.
+request is treated as an admin that can see every folder; folders it creates are
+owned by ``console``.
 """
 
 from __future__ import annotations
@@ -46,6 +50,7 @@ from urllib.parse import urlsplit
 import jwt
 from fastapi import HTTPException, Request
 
+from src.auth.owner_key import TokenOwner, owner_key_for_sub
 from src.auth.revocation import UNAVAILABLE, check_revoked
 from src.log import get_auth_logger
 
@@ -76,8 +81,12 @@ _REJECTIONS: dict[str, str] = {
     "malformed_token": "That is not a valid access token.",
     "missing_claim": "The token is missing a required claim.",
     "missing_jti": (
-        "The token has no jti (token ID), which the console needs as the folder "
-        "owner key. Use an MCP Gate personal access token."
+        "The token has no jti (token ID), which the console needs to check it against "
+        "MCP Gate's revocation list. Use an MCP Gate personal access token."
+    ),
+    "missing_sub": (
+        "The token has no subject (sub), so it belongs to no one and cannot own folders. "
+        "Use an MCP Gate personal access token issued to your account."
     ),
     "insufficient_scope": "The token lacks a scope this server requires.",
     "jwks_unavailable": "Cannot reach MCP Gate to fetch its signing keys. Try again shortly.",
@@ -117,8 +126,17 @@ class ConsoleIdentity:
 
     @property
     def owner_key(self) -> Optional[str]:
-        """Folder owner key to scope queries by; None in open mode (every folder)."""
-        return None if self.is_open else self.jti
+        """Folder owner key to scope queries by (``"sub:<sub>"``); None in open mode
+        (every folder). Raises for a token identity without a sub — never None there,
+        which would mean "every folder"."""
+        return None if self.is_open else owner_key_for_sub(self.sub)
+
+    @property
+    def token_owner(self) -> Optional[TokenOwner]:
+        """Owner + jti for claiming legacy folders; None in open mode."""
+        if self.is_open:
+            return None
+        return TokenOwner(owner_key=owner_key_for_sub(self.sub), sub=str(self.sub), jti=self.jti)
 
     def owns(self, folder_owner: Optional[str]) -> bool:
         """True when this identity may operate on a folder bound to ``folder_owner``.
@@ -127,7 +145,9 @@ class ConsoleIdentity:
         """
         if self.is_open:
             return True
-        return bool(folder_owner) and folder_owner == self.jti
+        if not self.sub:
+            return False
+        return bool(folder_owner) and folder_owner == self.owner_key
 
     @property
     def jti_prefix(self) -> Optional[str]:
@@ -225,6 +245,9 @@ class ConsoleAuth:
         return ConsoleIdentity(mode="open", via="open", is_admin=True)
 
     def _identity(self, *, via: str, jti: str, sub: Optional[str], scopes, exp) -> ConsoleIdentity:
+        if not sub or not str(sub).strip():
+            # The owner key is the sub: an identity without one could own nothing.
+            raise _auth_error(401, "missing_sub")
         scopes = tuple(str(s) for s in (scopes or ()))
         return ConsoleIdentity(
             mode="token", via=via, jti=str(jti), sub=sub or None, scopes=scopes,
@@ -286,8 +309,10 @@ class ConsoleAuth:
             raise _auth_error(401, "session_expired", "Your console session has expired. Sign in again.")
         except jwt.PyJWTError:
             raise _auth_error(401, "invalid_session", "Your console session is not valid. Sign in again.")
-        # A session without an id predates sign-out tracking and could never be ended.
-        if claims.get("typ") != SESSION_TYP or not claims.get("jti") or not claims.get("sid"):
+        # A session without an id predates sign-out tracking and could never be ended;
+        # one without a sub has no owner key.
+        if (claims.get("typ") != SESSION_TYP or not claims.get("jti") or not claims.get("sid")
+                or not claims.get("sub")):
             raise _auth_error(401, "invalid_session", "Your console session is not valid. Sign in again.")
         if claims["sid"] in self.ended:
             raise _auth_error(401, "session_ended", "You signed out of this session. Sign in again.")
@@ -386,7 +411,9 @@ async def resolve_identity(request: Request, *, enforce_csrf: bool = True) -> Co
         return auth.open_identity()
     token = _bearer(request)
     if token is not None:
-        return await auth.verify_pat(token)
+        ident = await auth.verify_pat(token)
+        await claim_legacy(ident)
+        return ident
     value = request.cookies.get(COOKIE_NAME)
     if not value:
         raise _auth_error(401, "login_required", "Sign in to use the console.")
@@ -399,7 +426,21 @@ async def resolve_identity(request: Request, *, enforce_csrf: bool = True) -> Co
         raise _auth_error(503 if reason == UNAVAILABLE else 401, reason)
     if enforce_csrf and request.method.upper() not in _SAFE_METHODS:
         check_csrf(request)
+    await claim_legacy(ident)
     return ident
+
+
+async def claim_legacy(ident: ConsoleIdentity) -> None:
+    """Claim the folders ``ident``'s token still owns under its legacy per-token key.
+
+    The identity comes from a verified token (sign-in / bearer) or from our own signed
+    session cookie, which carries the verified token's jti and sub.
+    """
+    owner = ident.token_owner
+    if owner is None:
+        return
+    from src.adapter.folder_claim import claim_for
+    await claim_for(owner)
 
 
 async def require_console_session(request: Request) -> ConsoleIdentity:

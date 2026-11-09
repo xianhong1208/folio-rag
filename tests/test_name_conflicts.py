@@ -42,7 +42,7 @@ class TestFolderNames:
             return [_folder(2, "old")] if "id" in kw else [_folder(1, "docs")]
 
         with patch("src.adapter.folder.FolderDB") as db, \
-                patch.object(FolderAdapter, "_rename_storage") as move, \
+                patch.object(FolderAdapter, "_move_storage") as move, \
                 patch("src.adapter.folder.notify_folder_renamed") as notify:
             db.get.side_effect = get
             with pytest.raises(FolderNameConflictError):
@@ -56,7 +56,7 @@ class TestFolderNames:
             return [_folder(2, "old")] if "id" in kw else []
 
         with patch("src.adapter.folder.FolderDB") as db, \
-                patch.object(FolderAdapter, "_rename_storage") as move, \
+                patch.object(FolderAdapter, "_move_storage") as move, \
                 patch("src.adapter.folder.notify_folder_renamed"):
             db.get.side_effect = get
             db.update.return_value = _folder(2, "new")
@@ -66,7 +66,7 @@ class TestFolderNames:
 
     async def test_keeping_the_same_name_is_not_a_conflict(self):
         with patch("src.adapter.folder.FolderDB") as db, \
-                patch.object(FolderAdapter, "_rename_storage") as move, \
+                patch.object(FolderAdapter, "_move_storage") as move, \
                 patch("src.adapter.folder.notify_folder_renamed"):
             db.get.return_value = [_folder(2, "docs")]
             db.update.return_value = _folder(2, "docs")
@@ -84,7 +84,7 @@ class TestStorageMove:
         engine = MagicMock()
         with patch("src.adapter.folder.get_engine", return_value=engine):
             with pytest.raises(FolderStorageMoveError):
-                FolderAdapter._rename_storage(2, "tok", "tok", "old", "taken")
+                FolderAdapter._move_storage(2, "tok", "tok", "old", "taken")
         engine.connect.assert_not_called()
         assert (tmp_path / "tok" / "old").is_dir()
 
@@ -93,7 +93,7 @@ class TestStorageMove:
         monkeypatch.setattr(FileStorage, "STORAGE_ROOT", tmp_path)
         engine = MagicMock()
         with patch("src.adapter.folder.get_engine", return_value=engine):
-            FolderAdapter._rename_storage(2, "tok", "tok", "missing", "new")
+            FolderAdapter._move_storage(2, "tok", "tok", "missing", "new")
         engine.connect.assert_called_once()
 
     def test_a_successful_move_rewrites_paths(self, tmp_path, monkeypatch):
@@ -102,7 +102,7 @@ class TestStorageMove:
         (tmp_path / "tok" / "old").mkdir(parents=True)
         engine = MagicMock()
         with patch("src.adapter.folder.get_engine", return_value=engine):
-            FolderAdapter._rename_storage(2, "tok", "tok", "old", "new")
+            FolderAdapter._move_storage(2, "tok", "tok", "old", "new")
         assert (tmp_path / "tok" / "new").is_dir()
         engine.connect.assert_called_once()
 

@@ -18,6 +18,19 @@ AUDIENCE = "http://127.0.0.1:5039/mcp"
 KID = "test-key-1"
 
 
+@pytest.fixture(autouse=True)
+def _no_legacy_folders(monkeypatch):
+    """Claim on first use (src/adapter/folder_claim.py) runs on every authenticated
+    request; unit tests have no database, so by default no jti owns legacy folders.
+    Tests of the claim itself patch ``has_legacy`` / the claim steps explicitly."""
+    from db import folder_claim_db
+    from src.adapter import folder_claim
+    monkeypatch.setattr(folder_claim_db, "has_legacy", lambda jti: False)
+    folder_claim.reset_claim_state()
+    yield
+    folder_claim.reset_claim_state()
+
+
 @pytest.fixture(scope="session")
 def rsa_key():
     return rsa.generate_private_key(public_exponent=65537, key_size=2048)
@@ -110,12 +123,14 @@ def make_cfg():
     return _cfg
 
 
-def _identity(owner="owner-tok", *, admin=False, sub="alice"):
-    """A token-mode console identity owning folders bound to ``owner``."""
+def _identity(owner="sub:owner-tok", *, admin=False, jti=None):
+    """A token-mode console identity owning folders bound to ``owner`` (a ``sub:<sub>``
+    owner key: folders belong to the person a token is issued to)."""
     from src.auth.console_session import ConsoleIdentity
+    assert owner.startswith("sub:"), "console identities own folders by sub"
     scopes = ("rag:admin",) if admin else ()
-    return ConsoleIdentity(mode="token", via="cookie", jti=owner, sub=sub,
-                           scopes=scopes, is_admin=admin, expires_at=None)
+    return ConsoleIdentity(mode="token", via="cookie", jti=jti or f"jti-{owner[4:]}",
+                           sub=owner[4:], scopes=scopes, is_admin=admin, expires_at=None)
 
 
 @pytest.fixture()

@@ -31,7 +31,7 @@ from fastmcp.server.dependencies import get_http_request
 from db.folderdb import FolderDB
 from src.log import get_api_logger, mask_token
 from src.auth.dependencies import get_token_verifier
-from src.auth.owner_key import owner_key_from_bearer
+from src.auth.owner_key import MissingSubjectError, owner_from_bearer
 from src.fastmcp_tools.dynamic_tool_manager import DynamicToolManager, configured_tool_prefix
 
 if TYPE_CHECKING:
@@ -146,10 +146,20 @@ class AuthFilteredFastMCP(FastMCP):
                 api_logger.warning(f"list_tools invalid token: {mask_token(token)}")
                 return [t for t in all_tools if not self._is_dynamic_folder_tool(t.name)]
 
-            # Ownership is keyed on the token's owner key (jti), not the raw token —
-            # folders and the tool mapping are stored under that key (see acl.py /
-            # register_folder_tool), so the lookups below must use it too.
-            owner_key = owner_key_from_bearer(token)
+            # Ownership is keyed on the person (sub), not the raw token — folders and
+            # the tool mapping are stored under that key (see acl.py /
+            # register_folder_tool), so the lookups below must use it too. A token
+            # without a sub owns nothing.
+            try:
+                owner = owner_from_bearer(token)
+            except MissingSubjectError:
+                api_logger.warning("list_tools: token has no sub, hiding all per-folder tools")
+                return [t for t in all_tools if not self._is_dynamic_folder_tool(t.name)]
+            owner_key = owner.owner_key
+            # First sight of a token whose jti still owns legacy folders: move them to
+            # the person (and their tools with them) before listing.
+            from src.adapter.folder_claim import claim_for
+            await claim_for(owner)
 
             # Determine the per-folder tools this token can see
             try:

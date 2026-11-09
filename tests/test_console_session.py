@@ -312,8 +312,13 @@ class TestSessionUse:
 
     def test_get_session_with_bearer(self, client, tokens):
         r = client.get("/api/console/session",
+                       headers={"Authorization": f"Bearer {tokens.make(sub="bob")}"})
+        assert r.status_code == 200 and r.json()["data"]["sub"] == "bob"
+
+    def test_bearer_without_sub_is_refused(self, client, tokens):
+        r = client.get("/api/console/session",
                        headers={"Authorization": f"Bearer {tokens.make(drop=("sub",))}"})
-        assert r.status_code == 200 and r.json()["data"]["sub"] is None
+        assert r.status_code == 401 and r.json()["detail"]["error"] == "missing_sub"
 
 
 class TestCsrfMatrix:
@@ -409,10 +414,11 @@ class TestUninitialized:
 
 class TestIdentity:
     def test_owns_is_fail_closed(self):
-        ident = ConsoleIdentity(mode="token", via="cookie", jti="a")
-        assert ident.owns("a") and not ident.owns("b")
+        ident = ConsoleIdentity(mode="token", via="cookie", jti="a", sub="u")
+        assert ident.owns("sub:u") and not ident.owns("sub:b")
+        assert not ident.owns("a")  # the token's own jti is a legacy key, not the owner
         assert not ident.owns(None) and not ident.owns("")
-        assert ident.owner_key == "a"
+        assert ident.owner_key == "sub:u"
 
     def test_open_owns_everything(self):
         ident = ConsoleIdentity(mode="open", via="open", is_admin=True)
