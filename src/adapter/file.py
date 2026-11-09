@@ -8,7 +8,7 @@ with file validation and security checks.
 
 from typing import Dict, Any, Optional, List, Union
 from db.db import File, Session as DBSession
-from db.filedb import FileDB
+from db.filedb import FileDB, FileNameConflictError
 from db.folderdb import FolderDB
 from sqlalchemy.exc import NoResultFound
 from uuid import UUID, uuid4
@@ -55,6 +55,11 @@ class FileAdapter():
                     description: Optional[str], tags: Optional[List[str]]):
         """Validate, save and record one uploaded file (blocking). Returns (validation, record)."""
         validation_result = FileDB._validate_file_content(file_content, file_name)
+        if FileAdapter._name_taken(folder.id, file_name):
+            # Files are stored under their own uuid, so a second upload would not replace
+            # the first: it would sit next to it and every search would return both.
+            raise FileNameConflictError(
+                f"A file named '{file_name}' is already in this folder. Delete it first to replace it.")
 
         # Generate the UUID up front so the file is saved and the DB
         # record created against the same id in a single pass.
@@ -73,6 +78,12 @@ class FileAdapter():
             content_hash=validation_result.get('content_hash'),
         )
         return validation_result, file_record
+
+    @staticmethod
+    def _name_taken(folder_id: int, file_name: str) -> bool:
+        with DBSession() as session:
+            return session.query(File.id).filter(
+                File.folder_id == folder_id, File.file_name == file_name).first() is not None
 
     @staticmethod
     def _file_ids_in_folder(folder_id: int) -> list:
