@@ -133,6 +133,8 @@ fragmented chunks and weak precision.
 
 ## ✅ Recently shipped
 
+- **1.4.0**: ruff (correctness rules) with a lint job; a dependency-audit workflow (pip-audit + npm audit,
+  weekly); ROCm builds on torch 2.13 with ROCm 7.13 dropped, so setuptools moves 81 → 84.2.1 everywhere.
 - **1.3.0**: dependency security updates (pip-audit 168 → 12: pyjwt, pypdf, docling, pillow 13, …);
   new upload formats RTF, MHTML, GIF, `.markdown`, Excel templates; MHTML decoded with its declared charset.
 - **1.2.0**: renamed to Folio; retrieval golden set + eval harness (205 questions, public corpus);
