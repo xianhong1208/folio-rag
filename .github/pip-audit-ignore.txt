@@ -15,8 +15,3 @@ PYSEC-2026-2289    # malicious config.json in a model repository
 PYSEC-2026-2290    # LightGlue loading from an attacker-controlled repository
 PYSEC-2026-3929    # path traversal in save_pretrained(): Folio does not save tokenizers
 PYSEC-2026-4174    # load_custom_generate() fetching remote code: not used
-#
-# setuptools 81 is what the ROCm wheel index pins (uv.lock); it is a build-time
-# tool here, not something the service runs on requests.
-PYSEC-2026-3447    # MANIFEST.in exclude handling while building an sdist
-GHSA-xmj3-9gf7-h52w  # legacy wheel install on Windows

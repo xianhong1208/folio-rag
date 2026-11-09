@@ -4,7 +4,7 @@
 #                                             (rag.profile: cloud) — no torch, no transformers
 #   uv sync --extra local --group <gpu>       + in-process models (docling layout/OCR, Whisper,
 #                                             FireRedASR, CKIP, HuggingFace embeddings)
-# GPU builds select PyTorch via PEP 735 dependency groups: `--group {rocm-r713|rocm-r714|cuda|cpu}`.
+# GPU builds select PyTorch via PEP 735 dependency groups: `--group {rocm-r714|cuda|cpu}`.
 # Only torch/torchvision/torchaudio differ per group; the [tool.uv] sections below map each one to its index.
 
 [project]
@@ -109,6 +109,23 @@ local = [
 # needs nothing at all.
 jieba = ["jieba>=0.42.1"]
 
+[tool.ruff]
+line-length = 120
+target-version = "py312"
+extend-exclude = [".venv", ".claude", "vendor", "frontend", "static"]
+
+[tool.ruff.lint]
+# Correctness only (pyflakes + the E4/E7/E9 errors), the same baseline as MCP Gate,
+# AnyDoc and Packwright. Style rules can be added one at a time with their fixes.
+select = ["E4", "E7", "E9", "F"]
+
+[tool.ruff.lint.per-file-ignores]
+# These set up sys.path, the working directory or allocator variables before the
+# imports that depend on them.
+"main.py" = ["E402"]
+"db/migrate.py" = ["E402"]
+"db/migrate/alembic/env.py" = ["E402"]
+
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
 testpaths = ["tests"]
@@ -196,17 +213,15 @@ cpu = [
     "torchaudio>=2.8.0",
 ]
 
-# AMD ROCm 7.1.x multi-arch wheels: one torch[device-all] wheel covers all AMD archs
-# (gfx1151 / gfx90a / gfx1201). Groups differ only by ROCm version. [device-all] applies
-# to torch/torchvision only, not torchaudio (matches AMD's official command).
-rocm-r713 = [
-    "torch[device-all]==2.11.0+rocm7.13.0",
-    "torchvision[device-all]==0.26.0+rocm7.13.0",
-    "torchaudio==2.11.0+rocm7.13.0",
-]
+# AMD ROCm 7.14 multi-arch wheels: one torch[device-all] wheel covers all AMD archs
+# (gfx1151 / gfx90a / gfx1201). [device-all] applies to torch/torchvision only, not
+# torchaudio (matches AMD's official command; AMD ships no torchaudio newer than 2.11).
+# torch 2.13: AMD's 2.11 / 2.12 builds require setuptools<82, which kept the whole lock (every
+# group, CPU included) on setuptools 81 and its advisories. ROCm 7.13 was dropped for the same
+# reason: its newest torch is 2.11.
 rocm-r714 = [
-    "torch[device-all]==2.12.0+rocm7.14.0",
-    "torchvision[device-all]==0.27.0+rocm7.14.0",
+    "torch[device-all]==2.13.0+rocm7.14.0",
+    "torchvision[device-all]==0.28.0+rocm7.14.0",
     "torchaudio==2.11.0+rocm7.14.0",
 ]
 
@@ -215,6 +230,11 @@ rocm-r714 = [
 # Lower concurrency so first-time bootstrap (~3.5GB of torch/cuda wheels) doesn't starve
 # small downloads into the default 30s timeout. Consider UV_HTTP_TIMEOUT=300 in CI.
 concurrent-downloads = 8
+
+# setuptools is a torch dependency. Below 84.1 it carries PYSEC-2026-3447 and GHSA-xmj3-9gf7-h52w;
+# this makes a lock that would fall back to an older one (an older AMD torch caps it at <82) fail
+# instead of passing the dependency audit's back door.
+constraint-dependencies = ["setuptools>=84.1"]
 
 # Copy files into the venv instead of hard-linking them from the uv cache. NLTK >= 3.10.4 refuses
 # to open a data file with more than one hard link (CWE-59), and llama-index ships its stopwords
@@ -235,7 +255,6 @@ index-strategy = "unsafe-best-match"
 # indexes). This list is the only guard — add every new group (including new ROCm versions).
 conflicts = [
     [
-        { group = "rocm-r713" },
         { group = "rocm-r714" },
         { group = "cuda" },
         { group = "cpu" },
@@ -263,19 +282,16 @@ explicit = true
 # Vendored FireRedASR (no PyPI release) installed as a local path dependency.
 fireredasr = { path = "vendor/fireredasr_src" }
 torch = [
-    { index = "pytorch-rocm-multiarch", group = "rocm-r713" },
     { index = "pytorch-rocm-multiarch", group = "rocm-r714" },
     { index = "pytorch-cu126",          group = "cuda"      },
     { index = "pytorch-cpu",            group = "cpu"       },
 ]
 torchvision = [
-    { index = "pytorch-rocm-multiarch", group = "rocm-r713" },
     { index = "pytorch-rocm-multiarch", group = "rocm-r714" },
     { index = "pytorch-cu126",          group = "cuda"      },
     { index = "pytorch-cpu",            group = "cpu"       },
 ]
 torchaudio = [
-    { index = "pytorch-rocm-multiarch", group = "rocm-r713" },
     { index = "pytorch-rocm-multiarch", group = "rocm-r714" },
     { index = "pytorch-cu126",          group = "cuda"      },
     { index = "pytorch-cpu",            group = "cpu"       },

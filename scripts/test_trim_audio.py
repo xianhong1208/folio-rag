@@ -198,7 +198,7 @@ def main():
         seek_ts = trim_leading_silence(src, trimmed, threshold_db=args.threshold,
                                        duration_s=args.duration, detection=args.detection)
         if seek_ts == 0.0:
-            print(f"[trim] no leading silence detected (file starts with audio) -- no trim applied")
+            print("[trim] no leading silence detected (file starts with audio) -- no trim applied")
         else:
             print(f"[trim] leading silence ends at {fmt_seconds(seek_ts)} -- seeking past it")
 
@@ -213,14 +213,14 @@ def main():
         print("\n----- BEFORE trim -----")
         a_lang, a_top5, a_text = analyze(model, src, args.preview_seconds, args.device)
         print(f"  detected language: {a_lang}")
-        print(f"  top5: {', '.join(f'{l}={p:.1%}' for l, p in a_top5)}")
+        print(f"  top5: {', '.join(f'{label}={p:.1%}' for label, p in a_top5)}")
         print(f"  first {args.preview_seconds:.0f}s transcript:")
         print(f"  > {a_text[:300]}{'...' if len(a_text) > 300 else ''}")
 
         print("\n----- AFTER trim -----")
         b_lang, b_top5, b_text = analyze(model, trimmed, args.preview_seconds, args.device)
         print(f"  detected language: {b_lang}")
-        print(f"  top5: {', '.join(f'{l}={p:.1%}' for l, p in b_top5)}")
+        print(f"  top5: {', '.join(f'{label}={p:.1%}' for label, p in b_top5)}")
         print(f"  first {args.preview_seconds:.0f}s transcript:")
         print(f"  > {b_text[:300]}{'...' if len(b_text) > 300 else ''}")
 

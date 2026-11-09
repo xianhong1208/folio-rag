@@ -35,7 +35,7 @@ License: MIT&nbsp;·&nbsp;Python 3.12&nbsp;·&nbsp;PostgreSQL + pgvector&nbsp;·
 - **文件 + 音訊匯入。** [Docling](https://github.com/DS4SD/docling) 解析 PDF、Office（含舊版 `.doc` / `.xls` / `.ppt`、RTF 與 Excel 範本）、OpenDocument、HTML 與 MHTML 網頁封存檔、Markdown、EPUB、電子郵件與圖片（含 OCR）;舊版 Office 與 RTF 經 LibreOffice 轉換,需安裝 `soffice`。**FireRedASR** 在本地做繁體中文語音轉錄（或任何 OpenAI 相容的 `/v1/transcriptions`）。
 - **內建評測 harness。** 從你自己的 chunk 自動生成問題,對正式檢索管線(與 `/api/rag/query` 同一路徑)以及 `vector` / `bm25` / `rrf` / `rerank`(全部走正式檢索路徑)評 **Recall@k · MRR · nDCG@k**,讓你針對真實語料調校檢索。
 - **Retrieval Terminal 主控台。** `/admin` 的 React 單頁主控台:管線總覽、資料夾與檔案、會顯示**逐訊號檢索軌跡**的 Search Playground、即時索引任務串流、查詢分析、評測 harness、即時設定、健康狀態與稽核時間軸。
-- **跑在你的 GPU 上。** PyTorch 以 PEP 735 dependency group 依平台選擇（`rocm-r714` / `rocm-r713` / `cuda` / `cpu`）—— AMD ROCm、NVIDIA CUDA 或純 CPU。
+- **跑在你的 GPU 上。** PyTorch 以 PEP 735 dependency group 依平台選擇（`rocm-r714` / `cuda` / `cpu`）—— AMD ROCm、NVIDIA CUDA 或純 CPU。
 
 ## 安裝
 
@@ -52,7 +52,7 @@ cd folio-rag
 
 # 1. 安裝 —— 本地模型需要 `local` extra;torch 依平台走 PEP 735 dependency group,務必一起帶 --group。
 #    （全雲端部署:直接 `uv sync`,見下方「雲端 profile」。）
-uv sync --extra local --group rocm-r714    # AMD ROCm 7.1.4（multi-arch wheel） | rocm-r713 | cuda | cpu
+uv sync --extra local --group rocm-r714    # AMD ROCm 7.14（multi-arch wheel） | cuda | cpu
 
 # 2. 設定資料庫與模型端點
 cp .env.example .env         # 設定 DATABASE_URL（Postgres + pgvector）
@@ -189,7 +189,7 @@ Folio_product-docs  mode="search"  query="要怎麼輪替簽章金鑰?"
 | `rag.profile` | `local` | `local` · `hybrid` · `cloud` —— 見[雲端 profile](#雲端-profile)。 |
 | `rag.<role>.{timeout,max_retries}` | 各角色不同 | 每個模型角色的請求逾時與重試（429 / 5xx / 逾時,含退避）。 |
 
-GPU 選擇是 `uv sync --extra local --group {rocm-r714|rocm-r713|cuda|cpu}` 的取捨 —— 見 `pyproject.toml` 開頭,每個 group 對應到各自的 PyTorch index。
+GPU 選擇是 `uv sync --extra local --group {rocm-r714|cuda|cpu}` 的取捨 —— 見 `pyproject.toml` 開頭,每個 group 對應到各自的 PyTorch index。
 
 ### Token 撤銷
 
@@ -394,7 +394,7 @@ profile 做了什麼:
 
 ## 參與貢獻
 
-歡迎 issue 與 PR。程式註解一律英文。單元測試用 `uv run pytest`;`tests/integration` 下的 PostgreSQL 整合測試需明確開啟（`RAG_RUN_DB_ITESTS=1`),會自行建立並刪除測試資料庫。
+歡迎 issue 與 PR。程式註解一律英文。單元測試用 `uv run pytest`,lint 用 `uvx ruff check .`;`tests/integration` 下的 PostgreSQL 整合測試需明確開啟（`RAG_RUN_DB_ITESTS=1`),會自行建立並刪除測試資料庫。
 
 ## 授權
 

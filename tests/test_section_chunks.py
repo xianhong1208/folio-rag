@@ -36,9 +36,11 @@ def test_xlsx_sheet_name_is_part_of_the_heading_path(tmp_path, tok):
     wb = openpyxl.Workbook()
     ws = wb.active
     ws.title = "Aurora plan"
-    ws.append(["Tier", "Fee"]); ws.append(["Pro", "USD 35"])
+    ws.append(["Tier", "Fee"])
+    ws.append(["Pro", "USD 35"])
     ws2 = wb.create_sheet("Borealis plan")
-    ws2.append(["Tier", "Fee"]); ws2.append(["Pro", "USD 29"])
+    ws2.append(["Tier", "Fee"])
+    ws2.append(["Pro", "USD 29"])
     path = tmp_path / "plans.xlsx"
     wb.save(path)
     recs = _records(path, tok)

@@ -413,7 +413,8 @@ async def health_check():  # read-only status; any console session may view it
             checks.append({"name": name, "kind": icon, "status": "disabled",
                            "detail": "Disabled in settings", "latency_ms": None, "endpoint": url or ""})
             continue
-        status, detail, ms = results[ri]; ri += 1
+        status, detail, ms = results[ri]
+        ri += 1
         checks.append({"name": name, "kind": icon, "status": status,
                        "detail": detail, "latency_ms": ms, "endpoint": url or ""})
 
