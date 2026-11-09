@@ -48,7 +48,7 @@ class TestDeleteGhostRow:
         with patch(f"{_F}.FolderDB") as db, \
              patch(f"{_F}.FileDB") as filedb, \
              patch(f"{_F}.FileStorage") as storage, \
-             patch(f"{_F}.VectorStoreManager") as vsm, \
+             patch(f"{_F}.VectorStoreManager"), \
              patch(f"{_F}.notify_folder_deleted"):
             db.get.return_value = [folder]
             filedb.get.return_value = []

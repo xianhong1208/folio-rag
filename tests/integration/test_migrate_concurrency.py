@@ -28,8 +28,10 @@ def test_concurrent_upgrade_serialized_by_advisory_lock(itest_db):
 
     t1 = threading.Thread(target=_run, args=("a",))
     t2 = threading.Thread(target=_run, args=("b",))
-    t1.start(); t2.start()
-    t1.join(timeout=60); t2.join(timeout=60)
+    t1.start()
+    t2.start()
+    t1.join(timeout=60)
+    t2.join(timeout=60)
 
     assert results.get("a") is True and results.get("b") is True, f"one of the concurrent upgrades failed: {results}"
     assert m0._get_current_revision() == head, "the revision must converge on head"

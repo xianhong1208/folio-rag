@@ -50,7 +50,8 @@ class TestH1LeafFilterInRestQuery:
             n.node.metadata = {"file_id": "f", "file_name": "x", "folder_name": None,
                                **({"node_role": role} if role else {})}
             n.node.node_id = nid  # unique id per node (RRF dedupes by node_id)
-            n.node.text = text; n.score = 0.9
+            n.node.text = text
+            n.score = 0.9
             return n
 
         # Each aretrieve call returns a fresh set of hits (the RRF path retrieves dense+sparse separately)

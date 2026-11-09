@@ -6,6 +6,9 @@ to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Added
+- **Lint in CI.** `pyproject.toml` gains a `[tool.ruff]` section with the same correctness-only rules as MCP Gate, AnyDoc and Packwright (`E4`, `E7`, `E9`, `F`), and a *Lint (ruff)* job runs `ruff check` on every backend change. The 64 existing findings are fixed: statements joined with `;` or after `if …:` split onto their own lines (the AST of every such file is unchanged), an unused name and an unused mock binding removed, a duplicate `threading` import in `docling_loader.py`, an import placed after a skip marker in a test, f-strings without placeholders, an ambiguous `l`, and a malformed `# noqa` in `asr_provider.py` that ruff could not read. `main.py`, `db/migrate.py` and the Alembic `env.py` keep their late imports on purpose (they set up `sys.path`, the working directory or allocator variables first).
+
 ## [1.3.0] — 2026-11-05
 
 ### Added

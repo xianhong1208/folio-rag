@@ -86,9 +86,8 @@ DOCLING_INFER_LOCK = threading.Lock()
 # so we observe pages as they complete and report ("loading", done, total).
 # thread-local, since convert runs synchronously in one worker thread; media.py's
 # OCR path leaves it unset for zero behavior change.
-import threading as _threading
 
-_page_progress_tls = _threading.local()
+_page_progress_tls = threading.local()
 _page_patch_installed = False
 
 

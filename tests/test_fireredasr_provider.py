@@ -19,18 +19,19 @@ from unittest.mock import patch
 
 import pytest
 
-# These exercise the real OpenCC / FireRedASR / torch packages, which only the `local`
-# extra installs (`uv sync --extra local`); a core (cloud) install skips them.
-_needs_local = pytest.mark.skipif(
-    any(importlib.util.find_spec(m) is None for m in ("opencc", "fireredasr", "torch")),
-    reason="local extra not installed")
-
 from src.domain.rag.fireredasr_provider import (
     MAX_SEGMENT_SECONDS,
     FireRedAsrProvider,
     parse_silences,
     plan_segments,
 )
+
+# These exercise the real OpenCC / FireRedASR / torch packages, which only the `local`
+# extra installs (`uv sync --extra local`); a core (cloud) install skips them.
+_needs_local = pytest.mark.skipif(
+    any(importlib.util.find_spec(m) is None for m in ("opencc", "fireredasr", "torch")),
+    reason="local extra not installed")
+
 
 # These two run the real ffmpeg binary (CI installs it); skip on a dev machine without it.
 _needs_ffmpeg = pytest.mark.skipif(shutil.which("ffmpeg") is None, reason="needs the ffmpeg binary")
