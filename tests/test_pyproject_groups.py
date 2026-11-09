@@ -1,7 +1,7 @@
 
 """Guard tests — consistency of the three PyTorch dependency-group lists (PEP 735 + uv).
 
-torch picks its GPU build via a dependency group (cuda / cpu / rocm-r713 /
+torch picks its GPU build via a dependency group (cuda / cpu /
 rocm-r714). For a group to work correctly it must appear in all three places at
 once:
   (1) [dependency-groups]   — declares the torch trio's versions
@@ -31,7 +31,7 @@ def _load_pyproject() -> dict:
 
 
 def _dep_name(spec: str) -> str:
-    """Extract the package name from a dep string: 'torch[device-all]==2.11.0+rocm7.13.0' → 'torch'."""
+    """Extract the package name from a dep string: 'torch[device-all]==2.13.0+rocm7.14.0' → 'torch'."""
     m = re.match(r"^\s*([A-Za-z0-9._-]+)", spec)
     return m.group(1).lower() if m else ""
 

@@ -9,6 +9,15 @@ to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 ### Added
 - **Lint in CI.** `pyproject.toml` gains a `[tool.ruff]` section with the same correctness-only rules as MCP Gate, AnyDoc and Packwright (`E4`, `E7`, `E9`, `F`), and a *Lint (ruff)* job runs `ruff check` on every backend change. The 64 existing findings are fixed: statements joined with `;` or after `if …:` split onto their own lines (the AST of every such file is unchanged), an unused name and an unused mock binding removed, a duplicate `threading` import in `docling_loader.py`, an import placed after a skip marker in a test, f-strings without placeholders, an ambiguous `l`, and a malformed `# noqa` in `asr_provider.py` that ruff could not read. `main.py`, `db/migrate.py` and the Alembic `env.py` keep their late imports on purpose (they set up `sys.path`, the working directory or allocator variables first).
 
+### Changed
+- **ROCm builds use torch 2.13** (`rocm-r714`: `torch[device-all]==2.13.0+rocm7.14.0`, torchvision 0.28.0; torchaudio stays 2.11.0, the newest AMD ships). AMD's 2.11 and 2.12 builds require `setuptools<82`, and because one lock serves every GPU group, that cap held CPU and CUDA installs on setuptools 81 too.
+
+### Removed
+- **The `rocm-r713` group (ROCm 7.13).** Its newest torch is 2.11, which has the same setuptools cap. Use `rocm-r714`.
+
+### Security
+- **setuptools 81 → 84.2.1** in every group (PYSEC-2026-3447, GHSA-xmj3-9gf7-h52w), kept there by `constraint-dependencies = ["setuptools>=84.1"]` in `[tool.uv]`. setuptools 84 no longer ships `pkg_resources`; the only runtime dependency importing it, jieba, falls back to reading its dictionary directly.
+
 ## [1.3.0] — 2026-11-05
 
 ### Added
