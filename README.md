@@ -35,7 +35,7 @@ License: MIT&nbsp;·&nbsp;Python 3.12&nbsp;·&nbsp;PostgreSQL + pgvector&nbsp;·
 - **Document + audio ingestion.** [Docling](https://github.com/DS4SD/docling) parses PDF, Office (including legacy `.doc` / `.xls` / `.ppt`, RTF and Excel templates), OpenDocument, HTML and MHTML web archives, Markdown, EPUB, email and images (with OCR); legacy Office and RTF go through LibreOffice, so `soffice` must be installed. **FireRedASR** transcribes audio locally in Traditional Chinese (or any OpenAI-compatible `/v1/transcriptions` endpoint).
 - **Built-in evaluation harness.** Auto-generates questions from your own chunks and scores the production pipeline (the same call as `/api/rag/query`) against `vector` / `bm25` / `rrf` / `rerank` — all through the production search path — on **Recall@k · MRR · nDCG@k**, so you can tune retrieval against your real corpus.
 - **Retrieval Terminal console.** A React single-page console at `/admin`: pipeline overview, folders & files, a **Search Playground** that shows the per-signal retrieval trace, live index-job stream, query analytics, the evaluation harness, live settings, health and an audit timeline.
-- **Runs on your GPU.** PyTorch is selected per platform with PEP 735 dependency groups (`rocm-r714` / `rocm-r713` / `cuda` / `cpu`) — AMD ROCm, NVIDIA CUDA or pure CPU.
+- **Runs on your GPU.** PyTorch is selected per platform with PEP 735 dependency groups (`rocm-r714` / `cuda` / `cpu`) — AMD ROCm, NVIDIA CUDA or pure CPU.
 
 ## Install
 
@@ -53,7 +53,7 @@ cd folio-rag
 # 1. Install — local models need the `local` extra; torch follows a PEP 735 dependency group
 #    per platform, so ALWAYS pass --group with it. (All-cloud deployments: plain `uv sync`,
 #    see "Cloud profile" below.)
-uv sync --extra local --group rocm-r714    # AMD ROCm 7.1.4 (multi-arch wheel) | rocm-r713 | cuda | cpu
+uv sync --extra local --group rocm-r714    # AMD ROCm 7.14 (multi-arch wheel) | cuda | cpu
 
 # 2. Configure the database and model endpoints
 cp .env.example .env         # set DATABASE_URL (Postgres + pgvector)
@@ -190,7 +190,7 @@ Settings live in `config/config.yaml`; secrets come from environment variables (
 | `rag.profile` | `local` | `local` · `hybrid` · `cloud` — see [Cloud profile](#cloud-profile). |
 | `rag.<role>.{timeout,max_retries}` | per role | Request timeout and retries (429 / 5xx / timeouts, with backoff) for each model role. |
 
-GPU selection is a `uv sync --extra local --group {rocm-r714|rocm-r713|cuda|cpu}` choice — see the top of `pyproject.toml`, where each group is mapped to its PyTorch index.
+GPU selection is a `uv sync --extra local --group {rocm-r714|cuda|cpu}` choice — see the top of `pyproject.toml`, where each group is mapped to its PyTorch index.
 
 ### Token revocation
 
