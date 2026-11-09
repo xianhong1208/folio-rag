@@ -42,7 +42,7 @@ async def create_session(
     # Login CSRF: only this console may create a session in the browser.
     check_csrf(request)
     ident = await auth.verify_pat(str(body.get("token") or ""))
-    # Folders this token still owns under its pre-1.5.0 per-token key move to the person now.
+    # Folders this token still owns under its pre-1.4.1 per-token key move to the person now.
     await claim_legacy(ident)
     value, exp = auth.issue(ident)
     auth.set_cookie(response, request, value, exp)

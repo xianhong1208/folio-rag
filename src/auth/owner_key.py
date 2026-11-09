@@ -7,7 +7,7 @@ that user's id as ``sub``, so they all see the same folders, and an OAuth client
 keeps its folders across the 15-minute access-token rotation.
 
 The ``sub:`` prefix keeps the new keys apart from the legacy per-token keys
-(the token's ``jti``, used before 1.5.0) still stored on folders nobody has
+(the token's ``jti``, used before 1.4.1) still stored on folders nobody has
 claimed yet; see :mod:`src.adapter.folder_claim` for how those move over.
 
 A token without a ``sub`` cannot own folders and is refused for folder operations.

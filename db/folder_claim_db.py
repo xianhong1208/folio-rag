@@ -10,7 +10,7 @@ from typing import Optional
 from sqlalchemy import text
 
 # Owner keys that are not legacy per-token keys: a person (``sub:…``) and the
-# open-mode owner. Everything else non-empty is a jti from before 1.5.0.
+# open-mode owner. Everything else non-empty is a jti from before 1.4.1.
 _LEGACY_FILTER = (
     "user_token IS NOT NULL AND user_token <> '' "
     "AND user_token NOT LIKE 'sub:%' AND user_token <> :open_owner"

@@ -7,7 +7,7 @@ REST API uses (signature, issuer, audience, expiry), and must carry a ``sub`` an
 (src/auth/owner_key.py), so the console session sees exactly the folders every
 token of that person sees over REST and MCP. The ``jti`` is kept to check the token
 against MCP Gate's revocation list, and to claim folders the token still owns under
-the pre-1.5.0 per-token key (src/adapter/folder_claim.py).
+the pre-1.4.1 per-token key (src/adapter/folder_claim.py).
 
 The session itself is a short HS256-signed JWT in an HttpOnly cookie::
 

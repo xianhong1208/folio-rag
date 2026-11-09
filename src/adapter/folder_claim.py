@@ -1,6 +1,6 @@
 """Claim on first use: move a person's legacy per-token folders to their person key.
 
-Before 1.5.0 a folder belonged to the token that created it (owner key = the token's
+Before 1.4.1 a folder belonged to the token that created it (owner key = the token's
 ``jti``). Now it belongs to the person (``"sub:<sub>"``, see src/auth/owner_key.py).
 Existing folders are not migrated in bulk — Folio cannot know which person a jti
 belonged to. Instead, the first verified request that carries a ``jti`` still owning

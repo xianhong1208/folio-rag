@@ -205,7 +205,7 @@ GPU 選擇是 `uv sync --extra local --group {rocm-r714|cuda|cpu}` 的取捨 —
 
 在 MCP Gate 撤銷一把 token,停用的是那把 token,而不是資料夾:資料夾屬於那個人,用他的其他 token 仍然存取得到。要讓某人失去資料夾,請刪除資料夾,或在 MCP Gate 停用該使用者。
 
-**1.5.0 之前的資料夾**以建立它的 token 的 `jti` 為 key。它們不會被整批遷移 —— Folio 這邊沒有任何資料能說明某個 `jti` 屬於哪個人。改成:帶著這種 token 的第一個通過驗證的請求(REST、`/mcp` 工具清單或呼叫、主控台登入或 session)會把該 token 擁有的所有資料夾移到它的 `sub` 名下:資料列、儲存目錄與檔案記錄的路徑、`Folio_<folder>` 工具,在同一個交易內完成,而且只做一次。同一使用者的並行請求會被序列化(行程內鎖加上 PostgreSQL advisory lock,資料列以 `FOR UPDATE` 鎖定),所以不會重複搬移,也不會只搬一半。如果使用者已經有同名資料夾(他的兩把 PAT 各有一個 `docs`),被移過來的那個會改用下一個可用名稱 —— `docs-2`、`docs-3`…… —— 並在設定 **Audit Log** 記下這次改名;兩個資料夾絕不會合併。token 再也沒被使用的資料夾(已撤銷或過期)會留在原處;管理者可在 Overview 看到還剩多少(`GET /api/admin/overview` 的 `legacy_owned_folders`)。
+**1.4.1 之前的資料夾**以建立它的 token 的 `jti` 為 key。它們不會被整批遷移 —— Folio 這邊沒有任何資料能說明某個 `jti` 屬於哪個人。改成:帶著這種 token 的第一個通過驗證的請求(REST、`/mcp` 工具清單或呼叫、主控台登入或 session)會把該 token 擁有的所有資料夾移到它的 `sub` 名下:資料列、儲存目錄與檔案記錄的路徑、`Folio_<folder>` 工具,在同一個交易內完成,而且只做一次。同一使用者的並行請求會被序列化(行程內鎖加上 PostgreSQL advisory lock,資料列以 `FOR UPDATE` 鎖定),所以不會重複搬移,也不會只搬一半。如果使用者已經有同名資料夾(他的兩把 PAT 各有一個 `docs`),被移過來的那個會改用下一個可用名稱 —— `docs-2`、`docs-3`…… —— 並在設定 **Audit Log** 記下這次改名;兩個資料夾絕不會合併。token 再也沒被使用的資料夾(已撤銷或過期)會留在原處;管理者可在 Overview 看到還剩多少(`GET /api/admin/overview` 的 `legacy_owned_folders`)。
 
 ### Token 撤銷
 

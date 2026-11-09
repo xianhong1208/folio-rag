@@ -183,7 +183,7 @@ async def get_overview(ident: ConsoleIdentity = Depends(require_console_session)
 
     KPIs cover your own folders (``scope: own``); ``all`` only in open mode.
     Admins also get ``legacy_owned_folders``: how many folders server-wide still belong
-    to a pre-1.5.0 per-token key, waiting for their token to be used again.
+    to a pre-1.4.1 per-token key, waiting for their token to be used again.
     """
     from db import admin_stats
     from src.config import runtime_overrides as ro
