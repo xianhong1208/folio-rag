@@ -40,7 +40,7 @@ export default function JobsPage() {
       <div className="card">
         <div className="card-head">
           <div className="icon"><Zap size={16} /></div>
-          <div><h2>Index Jobs</h2><div className="desc">Recent jobs on your folders (every folder for admins) · refreshes every 10s</div></div>
+          <div><h2>Index Jobs</h2><div className="desc">Recent jobs on your folders · refreshes every 10s</div></div>
         </div>
         <div className="jobstream">
           {jobs == null ? <div className="sec" style={{ marginTop: 8 }}>loading…</div>

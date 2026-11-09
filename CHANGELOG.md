@@ -6,6 +6,11 @@ to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Fixed
+- **Console pages scrolled sideways.** One unbreakable string widened its column and then the page: Analytics grew to ~15,000 px with a long knowledge-gap query, Jobs' message line and the Search box ran off a phone screen, and the folder's file table squeezed file names to two letters. Columns now shrink and long text wraps; on a phone the Search bar and the Analytics filters wrap, job messages wrap, the file table drops Chunks, Size and Indexed At, and hover tooltips are not drawn (a hidden one near the right edge widened the page; phones cannot hover).
+- The Overview's "Retrieval Shape" claimed a fixed `hybrid .75/.25` weighting; it now shows the fusion in use (`/api/admin/overview` gains `retrieval.fusion`). The Jobs page no longer says admins see every folder (they have not since 1.2.0).
+- `/admin` without the trailing slash, which the README links to, answered 404; it now redirects to `/admin/`.
+
 ## [1.4.0] — 2026-11-09
 
 ### Added

@@ -158,3 +158,10 @@ async def root_redirect():
     from hard-caching the redirect while the console front door is still settling.
     """
     return RedirectResponse("/admin/", status_code=302)
+
+
+@router.get("/admin", include_in_schema=False)
+async def console_redirect():
+    """``/admin`` without the slash: the console is mounted at ``/admin/`` and the bare
+    path, which the README links to, answered 404."""
+    return RedirectResponse("/admin/", status_code=302)
