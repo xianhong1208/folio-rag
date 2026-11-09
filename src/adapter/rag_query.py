@@ -302,12 +302,15 @@ class RAGQueryService:
                     similarity_cutoff=similarity_cutoff,
                     expand_context=expand_context,
                 )
-            _log_query_later(
-                query=query, folder_id=folder.id, token=token,
-                result_count=int(response.get("total_results", len(response.get("results") or []))),
-                latency_ms=int((time.perf_counter() - started) * 1000),
-                top_score=getattr(getattr(retriever, "last_outcome", None), "top_score", None),
-            )
+            # A rejected query (too long, invalid parameters) is not a search that found
+            # nothing: logging it put it in analytics as a zero-result query and a knowledge gap.
+            if not response.get("error"):
+                _log_query_later(
+                    query=query, folder_id=folder.id, token=token,
+                    result_count=int(response.get("total_results", len(response.get("results") or []))),
+                    latency_ms=int((time.perf_counter() - started) * 1000),
+                    top_score=getattr(getattr(retriever, "last_outcome", None), "top_score", None),
+                )
             return response
 
         return {"error": f"Unknown mode: {mode}. Use search / list / read."}

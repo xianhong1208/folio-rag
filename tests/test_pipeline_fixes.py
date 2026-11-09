@@ -90,7 +90,7 @@ class TestH4ForceBypass:
         _resp = {"file_id": "9e68c18e-3209-44d3-b7e9-2211b3660d66", "index_id": "i",
                  "num_chunks": 3, "status": "indexed", "indexed_at": "", "message": "ok"}
         adapter.index_document = AsyncMock(
-            return_value=SimpleNamespace(model_dump=lambda: dict(_resp), num_chunks=3))
+            return_value=SimpleNamespace(model_dump=lambda: dict(_resp), num_chunks=3, status="indexed"))
         with patch.object(ri, "get_rag_adapter", return_value=adapter):
             r = TestClient(app).post(
                 "/file/9e68c18e-3209-44d3-b7e9-2211b3660d66/index?force=true", json={})

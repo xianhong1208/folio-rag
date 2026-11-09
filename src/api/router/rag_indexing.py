@@ -184,10 +184,12 @@ async def index_single_file_endpoint(
             force=force,
         )
 
-        return {
-            "data": result.model_dump(),
-            "message": f"File indexed successfully with {result.num_chunks} chunks",
-        }
+        if result.status == "already_indexed_same_content":
+            message = (f"Not re-indexed: the content is unchanged since the last index "
+                       f"({result.num_chunks} chunks). Pass force=true to index it again.")
+        else:
+            message = f"File indexed successfully with {result.num_chunks} chunks"
+        return {"data": result.model_dump(), "message": message}
     except HTTPException:
         raise
     except Exception as e:
@@ -287,11 +289,15 @@ async def reindex_folder_endpoint(
     },
 )
 async def get_indexed_files(
-    folder_id: int,
     token: str = Depends(extract_token),
     folder: Folder = Depends(get_folder_by_id),
 ):
-    """List all indexed files in a specified folder."""
+    """List all indexed files in a specified folder.
+
+    ``folder_id`` comes from ``get_folder_by_id`` alone: declaring it here as well made a
+    validation error list it twice.
+    """
+    folder_id = folder.id
     try:
         logger.info(f"API: Getting indexed files for folder_id={folder_id}")
         result = await get_rag_adapter().get_indexed_files(folder_id=folder_id)
