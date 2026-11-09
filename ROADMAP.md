@@ -133,6 +133,11 @@ fragmented chunks and weak precision.
 
 ## ✅ Recently shipped
 
+- **1.4.1**: folders belong to the person (`sub`) instead of one token (`jti`), moved over on first use,
+  so OAuth clients keep them across refreshes; signing out ends the console session on the server;
+  answers in the question's language; a taken folder name on rename or file name on upload gets 409;
+  no sideways scrolling in the console; `/v1` media endpoints answer 422/400 instead of 500 and name the
+  real model.
 - **1.4.0**: ruff (correctness rules) with a lint job; a dependency-audit workflow (pip-audit + npm audit,
   weekly); ROCm builds on torch 2.13 with ROCm 7.13 dropped, so setuptools moves 81 → 84.2.1 everywhere.
 - **1.3.0**: dependency security updates (pip-audit 168 → 12: pyjwt, pypdf, docling, pillow 13, …);

@@ -6,6 +6,8 @@ to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [1.4.1] — 2026-11-09
+
 ### Changed
 - **Folders belong to the person, not to one token.** A folder's owner was the `jti` of the token that created it, so every token saw its own empty set: an OAuth-connected MCP client lost its folders when its 15-minute access token was refreshed (and saw no `Folio_<folder>` tools at all), and two PATs of the same user could not see each other's folders. The owner is now the token's `sub` — the MCP Gate user — stored as `sub:<sub>`, so all of a user's tokens, PATs and OAuth sign-ins alike, see the same folders over REST, `/mcp` and the console. A `client_credentials` token's `sub` is its client id, so such a client owns its own folders. A token without a `sub` is refused for folder operations (REST 401, MCP `unauthorized`, console `missing_sub`). New folders' files live under `storage/sub_<sub>/`. `rag:admin` still never grants other people's folders; open (`auth.enabled: false`) mode is unchanged.
 - **Revoking a token no longer hides its folders.** They belong to the person and stay reachable with their other tokens; delete the folders or disable the user in MCP Gate to take them away.
@@ -514,7 +516,8 @@ flags them.
   pgvector storage, per-token (`jti`) folder ownership, and the first React admin
   console.
 
-[Unreleased]: https://github.com/xianhong1208/folio-rag/compare/v1.4.0...dev
+[Unreleased]: https://github.com/xianhong1208/folio-rag/compare/v1.4.1...dev
+[1.4.1]: https://github.com/xianhong1208/folio-rag/releases/tag/v1.4.1
 [1.4.0]: https://github.com/xianhong1208/folio-rag/releases/tag/v1.4.0
 [1.3.0]: https://github.com/xianhong1208/folio-rag/releases/tag/v1.3.0
 [1.2.0]: https://github.com/xianhong1208/folio-rag/releases/tag/v1.2.0
