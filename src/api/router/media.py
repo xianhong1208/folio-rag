@@ -82,6 +82,56 @@ def _get_config_asr_provider():
     return create_asr_provider(asr_cfg), asr_cfg.provider
 
 
+_RESPONSE_FORMATS = ("json", "text")
+
+
+def _check_response_format(value: str) -> None:
+    """Only json and text exist; anything else used to be ignored silently (json came back)."""
+    if value not in _RESPONSE_FORMATS:
+        raise HTTPException(400, f"Unsupported response_format: {value!r}. Use one of {list(_RESPONSE_FORMATS)}.")
+
+
+def _asr_model_id() -> str:
+    """The model id STT reports: the configured provider, or Whisper for docling-whisper.
+
+    Every response said "whisper-turbo", also when FireRedASR or an OpenAI-compatible
+    endpoint did the work.
+    """
+    try:
+        from src.config.config_manager import Config as _Cfg
+        asr_cfg = getattr(getattr(_Cfg.get_config_model(), "rag", None), "asr", None)
+    except Exception:
+        asr_cfg = None
+    if asr_cfg is None or asr_cfg.provider == "docling-whisper":
+        return "whisper-turbo"
+    return str(asr_cfg.provider)
+
+
+def _decodable_audio(path: str) -> bool:
+    """Whether ffprobe finds an audio stream it can read. A missing ffprobe never blocks."""
+    try:
+        r = run_ffmpeg(["ffprobe", "-v", "error", "-select_streams", "a",
+                        "-show_entries", "stream=codec_type", "-of", "csv=p=0", path],
+                       capture_output=True, text=True, errors="replace", timeout=30)
+    except Exception:
+        return True
+    return r.returncode == 0 and "audio" in (r.stdout or "")
+
+
+def _readable_document(path: str, ext: str) -> bool:
+    """Whether a PDF or image opens at all, before the OCR pipeline gets it."""
+    try:
+        if ext == ".pdf":
+            from pypdf import PdfReader
+            return len(PdfReader(path).pages) > 0
+        from PIL import Image
+        with Image.open(path) as im:
+            im.verify()
+        return True
+    except Exception:
+        return False
+
+
 def _asr_disabled() -> bool:
     """config ``rag.asr.enabled`` is explicitly false (unreadable config = enabled)."""
     try:
@@ -286,6 +336,7 @@ async def transcribe(
         f"trim={trim_leading_silence} strip_hallucinations={strip_hallucinations} "
         f"response_format={response_format}"
     )
+    _check_response_format(response_format)
     if ext not in _AUDIO_EXTS:
         logger.warning(f"[transcribe] ✗ rejected unsupported ext={ext} for {file_name}")
         raise HTTPException(415, f"Unsupported audio format: {ext}. Allowed: {sorted(_AUDIO_EXTS)}")
@@ -305,6 +356,8 @@ async def transcribe(
     transcoded_path: Optional[str] = None
     effective_path = src_path
     try:
+        if not await run_in_threadpool(_decodable_audio, src_path):
+            raise HTTPException(422, f"{file_name} could not be decoded as audio.")
         # Transcode docling-unfriendly containers (e.g. browser .webm) to WAV first;
         # see _transcode_to_wav. Skip the safe extensions to keep the happy path overhead-free.
         if ext not in _DOCLING_AUDIO_SAFE_EXTS:
@@ -320,10 +373,8 @@ async def transcribe(
                 logger.error(
                     f"[transcribe] ✗ transcode failed for {file_name}: {e}"
                 )
-                raise HTTPException(
-                    status_code=502,
-                    detail=f"Audio transcode failed: {e}",
-                )
+                # ffmpeg's stderr stays in the log: it is noise to the caller
+                raise HTTPException(status_code=502, detail="Audio transcode failed; see the server log.")
 
         if trim_leading_silence and ext in _AUDIO_TRIM_EXTENSIONS:
             t_trim = time.time()
@@ -470,7 +521,7 @@ async def transcribe(
         return {
             "text": text,
             "metadata": {
-                "model": "whisper-turbo",
+                "model": _asr_model_id(),
                 "backend": backend,
                 "filename": file_name,
                 "file_size_bytes": bytes_written,
@@ -488,7 +539,7 @@ async def transcribe(
             f"[transcribe] ✗ failed | file={file_name} "
             f"size={_fmt_size(bytes_written)} error={e}"
         )
-        raise HTTPException(500, f"Transcription failed: {e}") from e
+        raise HTTPException(500, "Transcription failed; see the server log.") from e
     finally:
         _unlink_safe(trimmed_path)
         _unlink_safe(transcoded_path)
@@ -527,6 +578,7 @@ async def ocr(
         f"[ocr] ⮕ request received | file={file_name} ext={ext} "
         f"content_type={file.content_type} response_format={response_format}"
     )
+    _check_response_format(response_format)
     if ext not in _IMAGE_EXTS:
         logger.warning(f"[ocr] ✗ rejected unsupported ext={ext} for {file_name}")
         raise HTTPException(415, f"Unsupported format: {ext}. Allowed: {sorted(_IMAGE_EXTS)}")
@@ -549,6 +601,8 @@ async def ocr(
     )
 
     try:
+        if not await run_in_threadpool(_readable_document, src_path, ext):
+            raise HTTPException(422, f"{file_name} could not be opened as {'a PDF' if ext == '.pdf' else 'an image'}.")
         queued = _DOCLING_INFER_LOCK.locked()
         if queued:
             logger.info("[ocr] · docling pipeline queued (another request holds docling lock)")
@@ -612,7 +666,7 @@ async def ocr(
             f"[ocr] ✗ failed | file={file_name} "
             f"size={_fmt_size(bytes_written)} error={e}"
         )
-        raise HTTPException(500, f"OCR failed: {e}") from e
+        raise HTTPException(500, "OCR failed; see the server log.") from e
     finally:
         _unlink_safe(src_path)
 
@@ -638,7 +692,13 @@ async def list_models():
         }
 
         data = []
-        if InputFormat.AUDIO in fmt_opts:
+        stt = _asr_model_id()
+        if stt != "whisper-turbo":
+            # Speech goes to the configured provider, not to docling's Whisper
+            if not _asr_disabled():
+                data.append({"id": stt, "object": "model", "type": "transcription",
+                             "owned_by": "folio", "backend": f"asr-provider:{stt}", "warmed": None})
+        elif InputFormat.AUDIO in fmt_opts:
             data.append({
                 "id": "whisper-turbo",
                 "object": "model",
