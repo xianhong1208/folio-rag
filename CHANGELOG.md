@@ -6,6 +6,8 @@ to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [1.4.0] — 2026-11-09
+
 ### Added
 - **Lint in CI.** `pyproject.toml` gains a `[tool.ruff]` section with the same correctness-only rules as MCP Gate, AnyDoc and Packwright (`E4`, `E7`, `E9`, `F`), and a *Lint (ruff)* job runs `ruff check` on every backend change. The 64 existing findings are fixed: statements joined with `;` or after `if …:` split onto their own lines (the AST of every such file is unchanged), an unused name and an unused mock binding removed, a duplicate `threading` import in `docling_loader.py`, an import placed after a skip marker in a test, f-strings without placeholders, an ambiguous `l`, and a malformed `# noqa` in `asr_provider.py` that ruff could not read. `main.py`, `db/migrate.py` and the Alembic `env.py` keep their late imports on purpose (they set up `sys.path`, the working directory or allocator variables first).
 - **Dependency audit in CI** (`.github/workflows/audit.yml`): `pip-audit` on the locked runtime dependencies including the `local` extra, and `npm audit` (production, high and above) on the console. It runs when dependencies change and every Monday, since a new advisory against a locked version appears without any change here. Accepted advisories live in `.github/pip-audit-ignore.txt`, one per line with the reason: the transformers 4.x advisories (the package is pinned below 5) all need an attacker-controlled model repository or code paths Folio does not use,. The setuptools advisories are fixed, not accepted: setuptools is 84.2.1 since the ROCm change below.
@@ -481,7 +483,8 @@ flags them.
   pgvector storage, per-token (`jti`) folder ownership, and the first React admin
   console.
 
-[Unreleased]: https://github.com/xianhong1208/folio-rag/compare/v1.3.0...dev
+[Unreleased]: https://github.com/xianhong1208/folio-rag/compare/v1.4.0...dev
+[1.4.0]: https://github.com/xianhong1208/folio-rag/releases/tag/v1.4.0
 [1.3.0]: https://github.com/xianhong1208/folio-rag/releases/tag/v1.3.0
 [1.2.0]: https://github.com/xianhong1208/folio-rag/releases/tag/v1.2.0
 [1.1.0]: https://github.com/xianhong1208/folio-rag/releases/tag/v1.1.0

@@ -93,7 +93,7 @@ export default function Layout() {
           })}
         </nav>
         <div className="side-foot">
-          <div className="side-ver">folio v1.3.0</div>
+          <div className="side-ver">folio v1.4.0</div>
           <button className="theme-btn" onClick={toggleTheme}>
             {theme === 'dark' ? <Sun size={14} /> : <Moon size={14} />}
             {theme === 'dark' ? 'Light' : 'Dark'}
