@@ -6,6 +6,12 @@ to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Fixed
+- A query the MCP tool refused (e.g. too long) was recorded as a zero-result search and listed as a knowledge gap.
+- `mode=read` on a file without indexed content (failed or not yet indexed) returned empty text with the hint "Full content loaded."; the hint now says the file has no indexed content.
+- Re-indexing an unchanged file answered `status: already_indexed_same_content` with the message "File indexed successfully with N chunks"; the message now says it was not re-indexed and how to force it.
+- A bad `folder_id` on `GET /api/rag/indexed-files` listed the validation error twice.
+
 ## [1.4.0] — 2026-11-09
 
 ### Added

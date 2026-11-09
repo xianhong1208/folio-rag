@@ -146,6 +146,13 @@ class TestHandleRead:
         out, _ = await self._read(full)
         assert out["_hint"] == "Full content loaded." and out["total_chunks"] == 1
 
+    async def test_a_file_without_indexed_content_says_so(self):
+        # QA 2026-11-09: a file that failed to index read back empty with "Full content loaded."
+        full = {"text": "", "tokens_estimated": 0, "truncated": False, "chunk_count": 0,
+                "total_chunks": 0, "offset": 0, "next_offset": None}
+        out, _ = await self._read(full)
+        assert "no indexed content" in out["_hint"] and "Full content loaded" not in out["_hint"]
+
     async def test_bad_offset_missing_file_and_cross_folder(self):
         out = await ah.handle_read(file_id="f1", folder=FOLDER, vector_store=None, offset="x")
         assert "offset" in out["error"]
