@@ -1406,7 +1406,7 @@ source = { directory = "vendor/fireredasr_src" }
 
 [[package]]
 name = "folio-rag"
-version = "1.4.0"
+version = "1.4.1"
 source = { editable = "." }
 dependencies = [
     { name = "aiohttp" },
