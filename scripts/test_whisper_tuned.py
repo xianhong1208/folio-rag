@@ -116,7 +116,7 @@ def main():
         sys.exit(f"[error] file not found: {src}")
 
     try:
-        import whisper  # openai-whisper
+        import whisper  # noqa: F401  (openai-whisper; only checks it is installed)
     except ImportError:
         sys.exit("[error] openai-whisper not installed (should be via docling[asr])")
 

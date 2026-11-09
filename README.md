@@ -407,7 +407,7 @@ See [`ROADMAP.md`](ROADMAP.md) for what's under evaluation (Graph RAG, "LLM Wiki
 
 ## Contributing
 
-Issues and pull requests are welcome. Code comments are in English. Run the unit suite with `uv run pytest`; the PostgreSQL integration suite under `tests/integration` is opt-in (`RAG_RUN_DB_ITESTS=1`) and creates and drops its own database.
+Issues and pull requests are welcome. Code comments are in English. Run the unit suite with `uv run pytest` and the linter with `uvx ruff check .`; the PostgreSQL integration suite under `tests/integration` is opt-in (`RAG_RUN_DB_ITESTS=1`) and creates and drops its own database.
 
 ## License
 

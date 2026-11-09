@@ -70,7 +70,7 @@ async def list_folders(
         return result
     except NoResultFound as e:
         traceback.print_exc()
-        logger.info(f"No folders found")
+        logger.info("No folders found")
         raise HTTPException(status_code=404, detail=str(e))
     except ValueError as e:
         traceback.print_exc()

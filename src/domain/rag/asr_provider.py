@@ -33,7 +33,7 @@ from typing import Callable, List, Optional, Tuple, TYPE_CHECKING
 import httpx
 
 from src.log import get_api_logger
-from src.domain.rag.asr_base import AsrProvider, AsrResult  # noqa: F401(re-export)
+from src.domain.rag.asr_base import AsrProvider, AsrResult  # noqa: F401  (re-export)
 from src.domain.rag.docling_loader import docling_convert_once
 from src.utils.http_retry import RetryPolicy, join_endpoint, request_with_retry
 

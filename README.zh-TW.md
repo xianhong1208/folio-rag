@@ -394,7 +394,7 @@ profile 做了什麼:
 
 ## 參與貢獻
 
-歡迎 issue 與 PR。程式註解一律英文。單元測試用 `uv run pytest`;`tests/integration` 下的 PostgreSQL 整合測試需明確開啟（`RAG_RUN_DB_ITESTS=1`),會自行建立並刪除測試資料庫。
+歡迎 issue 與 PR。程式註解一律英文。單元測試用 `uv run pytest`,lint 用 `uvx ruff check .`;`tests/integration` 下的 PostgreSQL 整合測試需明確開啟（`RAG_RUN_DB_ITESTS=1`),會自行建立並刪除測試資料庫。
 
 ## 授權
 

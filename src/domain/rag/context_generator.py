@@ -91,17 +91,28 @@ def _detect_scripts(text: str) -> set:
         if not ch.isalpha():
             continue
         cp = ord(ch)
-        if cp < 0x0080:                              scripts.add("Latin")
-        elif 0x00C0 <= cp < 0x0250:                  scripts.add("Latin")    # Latin Extended
-        elif 0x0400 <= cp < 0x0500:                  scripts.add("Cyrillic")
-        elif 0x0590 <= cp < 0x0600:                  scripts.add("Hebrew")
-        elif 0x0600 <= cp < 0x0700:                  scripts.add("Arabic")
-        elif 0x0900 <= cp < 0x0980:                  scripts.add("Devanagari")
-        elif 0x0E00 <= cp < 0x0E80:                  scripts.add("Thai")
-        elif 0x3040 <= cp < 0x30A0:                  scripts.add("Hiragana")
-        elif 0x30A0 <= cp < 0x3100:                  scripts.add("Katakana")
-        elif 0xAC00 <= cp < 0xD7B0:                  scripts.add("Hangul")
-        elif 0x4E00 <= cp < 0xA000:                  scripts.add("CJK")
+        if cp < 0x0080:
+            scripts.add("Latin")
+        elif 0x00C0 <= cp < 0x0250:
+            scripts.add("Latin")  # Latin Extended
+        elif 0x0400 <= cp < 0x0500:
+            scripts.add("Cyrillic")
+        elif 0x0590 <= cp < 0x0600:
+            scripts.add("Hebrew")
+        elif 0x0600 <= cp < 0x0700:
+            scripts.add("Arabic")
+        elif 0x0900 <= cp < 0x0980:
+            scripts.add("Devanagari")
+        elif 0x0E00 <= cp < 0x0E80:
+            scripts.add("Thai")
+        elif 0x3040 <= cp < 0x30A0:
+            scripts.add("Hiragana")
+        elif 0x30A0 <= cp < 0x3100:
+            scripts.add("Katakana")
+        elif 0xAC00 <= cp < 0xD7B0:
+            scripts.add("Hangul")
+        elif 0x4E00 <= cp < 0xA000:
+            scripts.add("CJK")
     return scripts
 
 

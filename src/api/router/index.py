@@ -135,7 +135,8 @@ def markdown_to_html(md: str) -> str:
         stripped = line.strip()
 
         if stripped.startswith("```"):
-            flush_para(); close_list()
+            flush_para()
+            close_list()
             i += 1
             buf = []
             while i < len(lines) and not lines[i].strip().startswith("```"):
@@ -146,27 +147,31 @@ def markdown_to_html(md: str) -> str:
             continue
 
         if not stripped:
-            flush_para(); close_list()
+            flush_para()
+            close_list()
             i += 1
             continue
 
         # Table (must come before the horizontal-rule / paragraph fallback; `|---|---|` can also look like an hr separator)
         table_html, consumed = _try_consume_table(lines, i)
         if table_html is not None:
-            flush_para(); close_list()
+            flush_para()
+            close_list()
             out.append(table_html)
             i += consumed
             continue
 
         if re.match(r"^(-{3,}|\*{3,})$", stripped):
-            flush_para(); close_list()
+            flush_para()
+            close_list()
             out.append("<hr>")
             i += 1
             continue
 
         m = re.match(r"^(#{1,6})\s+(.*)$", stripped)
         if m:
-            flush_para(); close_list()
+            flush_para()
+            close_list()
             level = len(m.group(1))
             out.append(f"<h{level}>{_render_inline_markdown(html.escape(m.group(2)))}</h{level}>")
             i += 1
@@ -176,7 +181,9 @@ def markdown_to_html(md: str) -> str:
         if m:
             flush_para()
             if list_type != "ul":
-                close_list(); out.append("<ul>"); list_type = "ul"
+                close_list()
+                out.append("<ul>")
+                list_type = "ul"
             out.append(f"<li>{_render_inline_markdown(html.escape(m.group(1)))}</li>")
             i += 1
             continue
@@ -185,7 +192,9 @@ def markdown_to_html(md: str) -> str:
         if m:
             flush_para()
             if list_type != "ol":
-                close_list(); out.append("<ol>"); list_type = "ol"
+                close_list()
+                out.append("<ol>")
+                list_type = "ol"
             out.append(f"<li>{_render_inline_markdown(html.escape(m.group(1)))}</li>")
             i += 1
             continue
@@ -193,7 +202,8 @@ def markdown_to_html(md: str) -> str:
         para.append(html.escape(stripped))
         i += 1
 
-    flush_para(); close_list()
+    flush_para()
+    close_list()
     return "\n".join(out)
 
 

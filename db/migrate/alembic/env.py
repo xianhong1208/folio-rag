@@ -126,7 +126,7 @@ def process_revision_directives(context, revision, directives):
                         except Exception as e:
                             print(f"    ⚠️ Error processing FK: {e}")
             else:
-                print(f"    ⚠️ Skipping column without name/type attributes")
+                print("    ⚠️ Skipping column without name/type attributes")
 
         # Preserve non-foreign-key constraints (primary key, unique).
         constraints = getattr(op, 'kw', {}).get('constraints', [])

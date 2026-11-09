@@ -162,7 +162,8 @@ def test_stage_models_record_oom_from_worker_threads():
             errors.append(e)
 
     t = threading.Thread(target=worker)
-    t.start(); t.join()
+    t.start()
+    t.join()
     assert errors and ooms == errors          # recorded although the TLS is gone there
     assert stage.model(None, [7]) == [7]      # non-failing calls pass through
 

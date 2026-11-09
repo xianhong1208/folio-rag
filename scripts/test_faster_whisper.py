@@ -122,7 +122,7 @@ def main():
 
     print(f"[input]  {src}")
     print(f"[model]  {args.model} on {device}:{device_index} ({compute_type})")
-    print(f"[note]   first run downloads CT2 weights from HuggingFace (~1.5GB) -- be patient")
+    print("[note]   first run downloads CT2 weights from HuggingFace (~1.5GB) -- be patient")
 
     t0 = time.time()
     model = WhisperModel(
