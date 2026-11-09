@@ -545,7 +545,7 @@ async def _stream_answer_events(query: str, results: list):
         await task
     if failed:
         return
-    yield _sse({"type": "done", **crag.finish_stream("".join(full), contexts, grading)})
+    yield _sse({"type": "done", **crag.finish_stream("".join(full), contexts, grading, query)})
 
 
 @router.post("/api/admin/manage/folders/{folder_id}/query/stream")
