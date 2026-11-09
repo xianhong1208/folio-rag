@@ -1,0 +1,50 @@
+name: Dependency audit
+
+# Runs when dependencies change, and weekly: a new advisory against a locked
+# version appears without any change here.
+on:
+  push:
+    branches: [dev, main]
+    paths: ['pyproject.toml', 'uv.lock', 'frontend/package.json', 'frontend/package-lock.json',
+            '.github/pip-audit-ignore.txt', '.github/workflows/audit.yml']
+  pull_request:
+    branches: [dev, main]
+    paths: ['pyproject.toml', 'uv.lock', 'frontend/package.json', 'frontend/package-lock.json',
+            '.github/pip-audit-ignore.txt', '.github/workflows/audit.yml']
+  schedule:
+    - cron: '17 3 * * 1'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  UV_VERSION: '0.9.24'
+
+jobs:
+  audit:
+    name: Dependency audit
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: astral-sh/setup-uv@v6
+        with:
+          version: ${{ env.UV_VERSION }}
+      - name: Python (pip-audit on the locked runtime dependencies, local extra included)
+        run: |
+          # Local builds (vendored path dependencies, torch/triton from the CPU / ROCm /
+          # CUDA indexes) are not on PyPI and cannot be audited, so they are left out.
+          uv export --locked --no-dev --extra local --no-hashes --no-emit-project --format requirements-txt \
+            | grep -vE '^\./|^-e |\+(git|rocm|cpu|cu[0-9])|^(torch|torchvision|torchaudio|triton|pytorch-triton)==' \
+            > requirements-audit.txt
+          ignores=$(grep -oE '^[A-Z]+-[0-9A-Za-z-]+' .github/pip-audit-ignore.txt | sed 's/^/--ignore-vuln /')
+          uvx pip-audit -r requirements-audit.txt --no-deps --disable-pip --strict $ignores
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: npm (console production dependencies, high and above)
+        working-directory: frontend
+        run: npm audit --omit=dev --audit-level=high
