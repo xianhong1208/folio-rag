@@ -19,6 +19,8 @@ permissions:
   contents: read
 
 env:
+  UV_PYTHON_DOWNLOADS: never
+  PYTHON_VERSION: '3.12'
   UV_VERSION: '0.9.24'
 
 jobs:
@@ -30,9 +32,12 @@ jobs:
       - uses: actions/checkout@v4
         with:
           persist-credentials: false
-      - uses: astral-sh/setup-uv@v6
+      # Python and uv without GitHub release downloads, which returned 504 under
+      # load for anonymous runners: Python from the runner's tool cache, uv from PyPI.
+      - uses: actions/setup-python@v5
         with:
-          version: ${{ env.UV_VERSION }}
+          python-version: ${{ env.PYTHON_VERSION }}
+      - run: pip install "uv==${{ env.UV_VERSION }}"
       - name: Python (pip-audit on the locked runtime dependencies, local extra included)
         run: |
           # Local builds (vendored path dependencies, torch/triton from the CPU / ROCm /
