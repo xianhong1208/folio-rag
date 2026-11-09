@@ -591,4 +591,7 @@ def _read_hint(full: dict, offset: int) -> str:
                 "for specific sections.")
     if offset and not full.get("chunk_count"):
         return "No content at this offset (past the end of the file)."
+    if not full.get("chunk_count"):
+        return ("This file has no indexed content: it failed to index or has not been indexed "
+                "yet. Its status is in the console; re-index it there.")
     return "End of file." if offset else "Full content loaded."

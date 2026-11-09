@@ -82,54 +82,73 @@ def _language_rule(language: Optional[str]) -> str:
     return rule
 
 
+# A logographic or syllabic character carries about a word; an alphabetic letter
+# about a quarter of one. Weighing letters this way tells which script a mixed chunk
+# is mostly written in.
+_WORD_SCRIPTS = {"CJK", "Hiragana", "Katakana", "Hangul"}
+
+
+def _script_weights(text: str) -> Dict[str, float]:
+    """How much of ``text`` each major script carries, in rough words."""
+    weights: Dict[str, float] = {}
+    for script in _scripts_of(text):
+        weights[script] = weights.get(script, 0.0) + (1.0 if script in _WORD_SCRIPTS else 0.25)
+    return weights
+
+
 def _detect_scripts(text: str) -> set:
     """Detect the set of major Unicode scripts present in text, deciding directly
     from the Unicode block (no hardcoded language). Returns e.g. {"Latin", "CJK"}.
     """
-    scripts: set = set()
+    return set(_scripts_of(text))
+
+
+def _scripts_of(text: str):
+    """The script of each letter in ``text`` (one item per letter)."""
+    scripts = []
     for ch in text:
         if not ch.isalpha():
             continue
         cp = ord(ch)
         if cp < 0x0080:
-            scripts.add("Latin")
+            scripts.append("Latin")
         elif 0x00C0 <= cp < 0x0250:
-            scripts.add("Latin")  # Latin Extended
+            scripts.append("Latin")  # Latin Extended
         elif 0x0400 <= cp < 0x0500:
-            scripts.add("Cyrillic")
+            scripts.append("Cyrillic")
         elif 0x0590 <= cp < 0x0600:
-            scripts.add("Hebrew")
+            scripts.append("Hebrew")
         elif 0x0600 <= cp < 0x0700:
-            scripts.add("Arabic")
+            scripts.append("Arabic")
         elif 0x0900 <= cp < 0x0980:
-            scripts.add("Devanagari")
+            scripts.append("Devanagari")
         elif 0x0E00 <= cp < 0x0E80:
-            scripts.add("Thai")
+            scripts.append("Thai")
         elif 0x3040 <= cp < 0x30A0:
-            scripts.add("Hiragana")
+            scripts.append("Hiragana")
         elif 0x30A0 <= cp < 0x3100:
-            scripts.add("Katakana")
+            scripts.append("Katakana")
         elif 0xAC00 <= cp < 0xD7B0:
-            scripts.add("Hangul")
+            scripts.append("Hangul")
         elif 0x4E00 <= cp < 0xA000:
-            scripts.add("CJK")
+            scripts.append("CJK")
     return scripts
 
 
 def _is_script_mismatch(chunk_text: str, candidate_prefix: str) -> bool:
     """Return True if the prefix's main script mismatches the chunk's (avoids vector drift).
 
-    A non-Latin chunk (CJK / Hangul / Arabic / Cyrillic …) with an all-Latin prefix is
-    a mismatch; the Latin tolerance allows incidental alphanumerics in any language.
+    A chunk mostly written in a non-Latin script (CJK / Hangul / Arabic / Cyrillic …)
+    with an all-Latin prefix is a mismatch. "Mostly" matters: a mainly English chunk
+    with one Chinese line used to count as Chinese, and its correct English prefix was
+    thrown away. Incidental Latin alphanumerics never make a mismatch.
     """
-    chunk_scripts = _detect_scripts(chunk_text)
-    prefix_scripts = _detect_scripts(candidate_prefix)
-
-    # Exclude Latin: a pure-Latin chunk is fine with a Latin prefix
-    chunk_main = chunk_scripts - {"Latin"}
-    prefix_main = prefix_scripts - {"Latin"}
-
-    return bool(chunk_main) and not prefix_main
+    weights = _script_weights(chunk_text)
+    if not weights:
+        return False
+    chunk_main = max(weights, key=weights.get)
+    prefix_main = _detect_scripts(candidate_prefix) - {"Latin"}
+    return chunk_main != "Latin" and not prefix_main
 
 
 def estimate_llm_tokens(text: str) -> int:

@@ -131,7 +131,7 @@ export default function OverviewPage() {
             <span><i style={{ background: 'var(--ink-subtle)' }} />Not indexed {fmtNum(ix.unindexed_files)}</span>
           </div>
 
-          <div className="sec" style={{ marginTop: 24 }}>Retrieval Shape <span className="r">auto-merge · hybrid .75/.25</span></div>
+          <div className="sec" style={{ marginTop: 24 }}>Retrieval Shape <span className="r">auto-merge · hybrid{d.retrieval && d.retrieval.fusion ? ` · ${d.retrieval.fusion === 'rrf' ? 'reciprocal-rank fusion' : 'score concat'}` : ''}</span></div>
           <div className="term-tree">
             <div className="n"><span className="p hit">parent · passage</span><small>auto-merged on hit</small></div>
             <div className="n l"><span className="p hit">leaf</span><small>matched</small></div>

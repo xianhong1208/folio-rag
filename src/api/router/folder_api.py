@@ -7,6 +7,8 @@ Provides REST API endpoints for folder creation, querying, updating, and deletio
 from fastapi import APIRouter, HTTPException, Depends, Query
 import traceback
 from sqlalchemy.exc import IntegrityError, NoResultFound
+
+from src.adapter.folder import FolderNameConflictError, FolderStorageMoveError
 from pydantic import ValidationError
 from typing import Optional
 from typing import List
@@ -122,6 +124,8 @@ async def create_folder(
     except IntegrityError as e:
         traceback.print_exc()
         logger.error(f"Data integrity error while creating folder: {str(e)}")
+        raise HTTPException(status_code=409, detail=str(e))
+    except FolderNameConflictError as e:
         raise HTTPException(status_code=409, detail=str(e))
     except ValueError as e:
         traceback.print_exc()
@@ -253,6 +257,8 @@ async def update_folder_api(
     except IntegrityError as e:
         traceback.print_exc()
         logger.error(f"Data integrity error updating folder {folder_id}: {str(e)}")
+        raise HTTPException(status_code=409, detail=str(e))
+    except (FolderNameConflictError, FolderStorageMoveError) as e:
         raise HTTPException(status_code=409, detail=str(e))
     except ValueError as e:
         traceback.print_exc()
