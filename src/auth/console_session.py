@@ -33,8 +33,10 @@ from __future__ import annotations
 
 import hashlib
 import hmac
+import json
 import os
 import secrets
+import threading
 import time
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -53,6 +55,7 @@ COOKIE_NAME = "rag_console_session"
 SESSION_TYP = "rag-console-session"
 CSRF_HEADER = "X-RAG-Console"
 SECRET_FILE_NAME = ".console_session_secret"
+ENDED_FILE_NAME = ".console_ended_sessions"
 _SAFE_METHODS = frozenset({"GET", "HEAD", "OPTIONS"})
 # A pasted token larger than this is not an MCP Gate access token.
 MAX_TOKEN_CHARS = 16384
@@ -149,6 +152,56 @@ class ConsoleIdentity:
         }
 
 
+class EndedSessions:
+    """Sessions signed out before they expired, remembered until they would have expired.
+
+    A session is a stateless signed cookie, so signing out only cleared it from the
+    browser: a copied cookie kept working for up to ``session_hours``. Each session now
+    carries an id (``sid``); signing out records it here. The list is kept next to the
+    session secret, so a restart does not bring signed-out sessions back.
+    """
+
+    def __init__(self, path: Optional[Path] = None, clock=time.time):
+        self.path = path
+        self.clock = clock
+        self._lock = threading.Lock()
+        self._ended: dict[str, int] = self._load()
+
+    def _load(self) -> dict[str, int]:
+        if self.path is None:
+            return {}
+        try:
+            data = json.loads(self.path.read_text(encoding="utf-8"))
+            return {str(k): int(v) for k, v in data.items()} if isinstance(data, dict) else {}
+        except FileNotFoundError:
+            return {}
+        except Exception as e:  # unreadable file: start empty rather than refuse to boot
+            logger.warning(f"Ignoring unreadable {self.path}: {e}")
+            return {}
+
+    def _save(self) -> None:
+        if self.path is None:
+            return
+        self.path.parent.mkdir(parents=True, exist_ok=True)
+        tmp = self.path.with_name(self.path.name + ".tmp")
+        fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+        with os.fdopen(fd, "w", encoding="utf-8") as fh:
+            json.dump(self._ended, fh)
+        os.replace(tmp, self.path)
+
+    def end(self, sid: str, exp: int) -> None:
+        now = int(self.clock())
+        with self._lock:
+            self._ended = {k: v for k, v in self._ended.items() if v > now}
+            if int(exp) > now:
+                self._ended[sid] = int(exp)
+            self._save()
+
+    def __contains__(self, sid: object) -> bool:
+        exp = self._ended.get(sid) if isinstance(sid, str) else None
+        return exp is not None and exp > int(self.clock())
+
+
 @dataclass
 class ConsoleAuth:
     """Console authentication state for one server instance."""
@@ -160,6 +213,11 @@ class ConsoleAuth:
     secure_cookie: Any = "auto"  # True | False | "auto"
     admin_scope: str = "rag:admin"
     clock: Any = field(default=time.time, repr=False)
+    ended: Any = field(default=None, repr=False)  # EndedSessions
+
+    def __post_init__(self):
+        if self.ended is None:
+            self.ended = EndedSessions(clock=self.clock)
 
     # -- identity ---------------------------------------------------------------
 
@@ -206,6 +264,7 @@ class ConsoleAuth:
         payload = {
             "typ": SESSION_TYP,
             "jti": ident.jti,
+            "sid": secrets.token_urlsafe(16),  # this session's own id, so signing out can end it
             "sub": ident.sub,
             "scopes": list(ident.scopes),
             "iat": now,
@@ -227,10 +286,23 @@ class ConsoleAuth:
             raise _auth_error(401, "session_expired", "Your console session has expired. Sign in again.")
         except jwt.PyJWTError:
             raise _auth_error(401, "invalid_session", "Your console session is not valid. Sign in again.")
-        if claims.get("typ") != SESSION_TYP or not claims.get("jti"):
+        # A session without an id predates sign-out tracking and could never be ended.
+        if claims.get("typ") != SESSION_TYP or not claims.get("jti") or not claims.get("sid"):
             raise _auth_error(401, "invalid_session", "Your console session is not valid. Sign in again.")
+        if claims["sid"] in self.ended:
+            raise _auth_error(401, "session_ended", "You signed out of this session. Sign in again.")
         return self._identity(via="cookie", jti=claims["jti"], sub=claims.get("sub"),
                               scopes=claims.get("scopes") or (), exp=claims["exp"])
+
+    def end_session(self, value: str) -> None:
+        """Sign a session out for good: later requests with this cookie get 401."""
+        try:
+            claims = jwt.decode(value, self.secret, algorithms=["HS256"],
+                                options={"verify_exp": False, "verify_iat": False})
+        except jwt.PyJWTError:
+            return  # not one of ours: nothing to end
+        if claims.get("typ") == SESSION_TYP and claims.get("sid") and claims.get("exp"):
+            self.ended.end(str(claims["sid"]), int(claims["exp"]))
 
     def cookie_secure(self, request: Request) -> bool:
         if isinstance(self.secure_cookie, bool):
@@ -393,6 +465,7 @@ def build_console_auth(config, verifier=None, secret_path: Optional[Path] = None
     configured = (getattr(console, "session_secret", None) or "").strip()
     raw = configured.encode() if configured else load_or_create_secret(
         secret_path or default_secret_path())
+    ended = EndedSessions((secret_path or default_secret_path()).with_name(ENDED_FILE_NAME))
     return ConsoleAuth(enabled=True, verifier=verifier, secret=_derive_key(raw),
                        session_hours=session_hours, secure_cookie=secure_cookie,
-                       admin_scope=admin_scope)
+                       admin_scope=admin_scope, ended=ended)

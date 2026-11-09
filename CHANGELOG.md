@@ -28,6 +28,9 @@ to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   - other failures no longer echo the exception text (it stays in the server log);
   - an unknown `response_format` was ignored (json came back); it is now **400**.
 
+### Security
+- **Signing out ends the console session on the server.** Sessions are stateless signed cookies, so signing out only removed the cookie from the browser and a copy kept working for up to `auth.console.session_hours`. Each session now carries its own id, and signing out records it (in `storage/.console_ended_sessions`, mode 0600, until the session would have expired) so a copied cookie gets 401 `session_ended`, also after a restart. Other sessions of the same token stay signed in. **Sessions issued by earlier versions cannot be ended this way and are no longer accepted: everyone signs in again once after upgrading.**
+
 ## [1.4.0] — 2026-11-09
 
 ### Added

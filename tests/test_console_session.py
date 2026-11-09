@@ -136,7 +136,7 @@ class TestSignIn:
         value = client.cookies.get(COOKIE_NAME)
         assert value and tok not in value and tok not in _set_cookie(r)
         claims = jwt.decode(value, console_auth.secret, algorithms=["HS256"])
-        assert set(claims) == {"typ", "jti", "sub", "scopes", "iat", "exp"}
+        assert set(claims) == {"typ", "jti", "sid", "sub", "scopes", "iat", "exp"}
         assert claims["typ"] == "rag-console-session" and claims["jti"] == "j-xyz"
         assert claims["scopes"] == ["rag:admin", "rag:read"]
 
@@ -198,6 +198,58 @@ class TestSignIn:
 
 
 # -- using the session -------------------------------------------------------------
+
+
+class TestSignOut:
+    """QA 2026-11-09: signing out only cleared the browser's cookie; a copy of it kept
+    working for up to session_hours."""
+
+    def test_a_copied_cookie_stops_working_after_sign_out(self, client, tokens):
+        _login(client, tokens.make())
+        copied = client.cookies.get(COOKIE_NAME)
+        assert client.get("/probe").status_code == 200
+        assert client.delete("/api/console/session").status_code == 200
+        client.cookies.set(COOKIE_NAME, copied)
+        r = client.get("/probe")
+        assert r.status_code == 401 and r.json()["detail"]["error"] == "session_ended"
+
+    def test_other_sessions_of_the_same_token_stay_signed_in(self, client, tokens):
+        tok = tokens.make()
+        _login(client, tok)
+        first = client.cookies.get(COOKIE_NAME)
+        client.cookies.clear()
+        _login(client, tok)
+        second = client.cookies.get(COOKIE_NAME)
+        client.cookies.clear()
+        client.cookies.set(COOKIE_NAME, first)
+        client.delete("/api/console/session")
+        client.cookies.clear()
+        client.cookies.set(COOKIE_NAME, second)
+        r = client.get("/probe")
+        assert r.status_code == 200, r.json()
+
+    def test_a_session_without_an_id_is_refused(self, client, console_auth):
+        now = int(time.time())
+        old = jwt.encode({"typ": cs.SESSION_TYP, "jti": "j", "sub": "s", "scopes": [],
+                          "iat": now, "exp": now + 600}, console_auth.secret, algorithm="HS256")
+        client.cookies.set(COOKIE_NAME, old)
+        assert client.get("/probe").json()["detail"]["error"] == "invalid_session"
+
+    def test_ended_sessions_survive_a_restart_and_expire(self, tmp_path):
+        now = [1000.0]
+        path = tmp_path / cs.ENDED_FILE_NAME
+        ended = cs.EndedSessions(path, clock=lambda: now[0])
+        ended.end("s1", 2000)
+        ended.end("gone", 900)  # already expired: not kept
+        again = cs.EndedSessions(path, clock=lambda: now[0])
+        assert "s1" in again and "gone" not in again
+        assert stat.S_IMODE(os.stat(path).st_mode) == 0o600
+        now[0] = 2001
+        assert "s1" not in again
+
+    def test_signing_out_a_foreign_cookie_is_harmless(self, client):
+        client.cookies.set(COOKIE_NAME, "not-a-jwt")
+        assert client.delete("/api/console/session").status_code == 200
 
 
 class TestSessionUse:
