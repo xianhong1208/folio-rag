@@ -1075,3 +1075,34 @@ body:has(.savebar) .toast-wrap { bottom: auto; top: 76px; }
   .set-notes { grid-template-columns: 1fr; gap: 2px; }
   .set-notes dd + dt { margin-top: 8px; }
 }
+
+/* ---- Overflow guards (QA 2026-11-09: pages scrolled sideways) ----
+   Grid and flex items default to min-width: auto, so one unbreakable string (a
+   long query, a job message) widened its column and then the whole page. */
+.an-tables { grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); }
+/* th, td default to nowrap: these cells must be allowed to wrap. */
+.an-tables .cell-main { white-space: normal; overflow-wrap: anywhere; }
+.js-main { min-width: 0; }
+.js-top { flex-wrap: wrap; row-gap: 6px; }
+.ff-grid .file-cell { min-width: 140px; white-space: normal; overflow-wrap: anywhere; }
+@media (max-width: 860px) {
+  .an-tables { grid-template-columns: minmax(0, 1fr); }
+}
+@media (max-width: 600px) {
+  .js-row { grid-template-columns: minmax(0, 1fr); gap: 8px; }
+  .js-msg { white-space: normal; overflow-wrap: anywhere; }
+  .sp-bar { flex-wrap: wrap; }
+  .sp-folder { flex: 1 1 100%; min-width: 0; }
+  .sp-query { min-width: 0; }
+  /* Chunks, Size and Indexed At give way to the file name on a phone; Status sizes to its pill. */
+  .ff-grid th:nth-child(4), .ff-grid td:nth-child(4),
+  .ff-grid th:nth-child(5), .ff-grid td:nth-child(5),
+  .ff-grid th:nth-child(6), .ff-grid td:nth-child(6) { display: none; }
+  .ff-grid th.statuscol, .ff-grid td.statuscol { width: auto; min-width: 0; }
+  #view-analytics .card-head { flex-wrap: wrap; row-gap: 10px; }
+}
+/* A hover tooltip is invisible until hovered but still takes up room: near the right
+   edge of a phone screen it widened the page. Phones cannot hover, so drop them there. */
+@media (max-width: 600px), (hover: none) {
+  .tip[data-tip]::after { content: none; }
+}

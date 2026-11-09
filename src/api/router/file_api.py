@@ -28,7 +28,7 @@ from src.adapter.folder import FolderAdapter
 from src.adapter.rag import get_rag_adapter
 from src.log import get_api_logger
 from src.utils.names import content_disposition, sanitize_filename
-from db.filedb import FileTooLargeError, UnsupportedFileTypeError
+from db.filedb import FileNameConflictError, FileTooLargeError, UnsupportedFileTypeError
 from db.file_with_index_db import FileWithIndexDB
 
 logger = get_api_logger()
@@ -141,6 +141,9 @@ async def upload_file(
         raise HTTPException(status_code=409, detail="file already exists")
     except HTTPException:
         raise
+    except FileNameConflictError as e:
+        logger.info(f"Upload rejected (duplicate name): {file.filename!r} → folder {folder_id}")
+        raise HTTPException(status_code=409, detail=str(e))
     except UnsupportedFileTypeError as e:
         logger.info(f"Upload rejected (type): {file.filename!r} → folder {folder_id}: {e}")
         raise HTTPException(status_code=415, detail=str(e))

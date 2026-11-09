@@ -7,6 +7,16 @@ to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 ## [Unreleased]
 
 ### Fixed
+- **A folder could be renamed to a name its owner already used** (creating one was refused). The MCP tool registry, the storage directory and name-based queries are keyed on (owner, name), so renaming either twin away removed the other's `Folio_<name>` tool, and the refused directory move still rewrote the files' stored paths into the other folder's directory. Renames to a taken name now get **409**, as creating one does (create returned 400; the API documented 409). A rename whose directory cannot be moved now changes nothing and gets 409 instead of half-applying.
+- **Uploading a file whose name is already in the folder returned 200 and kept both** — files are stored under their own uuid, so every search returned the passage twice. It now gets **409** ("already in this folder; delete it first to replace it"), checked before anything is written; a batch upload reports it per file and keeps going.
+
+- **Answers came back in the context's language instead of the question's.** An English question over Chinese documents got a Chinese answer — in Simplified characters. The answer prompt now names the language from the question's own script (English and other Latin-alphabet questions are told not to answer in Chinese, Japanese or Korean; a Chinese question too short to show its script follows the documents'), and Simplified characters that slip into a Traditional Chinese answer are converted, for the console's streamed answers too.
+- **Context prefixes were thrown away for mainly English chunks with one Chinese line.** The script check counted any non-Latin character as the chunk's script, so the correct English prefix was rejected as a mismatch and the chunk was indexed without context (5 of 18 files in the QA run). The check now uses the script a chunk is mostly written in.
+
+- **Console pages scrolled sideways.** One unbreakable string widened its column and then the page: Analytics grew to ~15,000 px with a long knowledge-gap query, Jobs' message line and the Search box ran off a phone screen, and the folder's file table squeezed file names to two letters. Columns now shrink and long text wraps; on a phone the Search bar and the Analytics filters wrap, job messages wrap, the file table drops Chunks, Size and Indexed At, and hover tooltips are not drawn (a hidden one near the right edge widened the page; phones cannot hover).
+- The Overview's "Retrieval Shape" claimed a fixed `hybrid .75/.25` weighting; it now shows the fusion in use (`/api/admin/overview` gains `retrieval.fusion`). The Jobs page no longer says admins see every folder (they have not since 1.2.0).
+- `/admin` without the trailing slash, which the README links to, answered 404; it now redirects to `/admin/`.
+
 - A query the MCP tool refused (e.g. too long) was recorded as a zero-result search and listed as a knowledge gap.
 - `mode=read` on a file without indexed content (failed or not yet indexed) returned empty text with the hint "Full content loaded."; the hint now says the file has no indexed content.
 - Re-indexing an unchanged file answered `status: already_indexed_same_content` with the message "File indexed successfully with N chunks"; the message now says it was not re-indexed and how to force it.

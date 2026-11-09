@@ -64,6 +64,20 @@ class TestOverviewApi:
                                             "base_url": "http://e"}
         assert d["models"]["asr"]["provider"] == "fireredasr"
 
+    @pytest.mark.parametrize("fusion", ["rrf", "concat"])
+    def test_overview_reports_the_fusion_in_use(self, client, fusion):
+        # The overview claimed a fixed ".75/.25" hybrid weighting that retrieval does not use
+        base = {"folders": 0, "files": 0, "total_size_bytes": 0,
+                "index": {"indexed_files": 0, "failed_files": 0, "unindexed_files": 0, "total_chunks": 0},
+                "jobs": {"by_status": {}, "active": []}}
+        with patch(f"{_STATS}.overview", return_value=dict(base)), \
+             patch("src.config.runtime_overrides.get_effective", return_value={}), \
+             patch("src.config.config_manager.Config.get_config_model", return_value=SimpleNamespace()), \
+             patch("src.domain.rag.hybrid_search.SearchSettings.from_config",
+                   return_value=SimpleNamespace(fusion=fusion)):
+            r = client.get("/api/admin/overview")
+        assert r.json()["data"]["retrieval"] == {"fusion": fusion}
+
     def test_folders_passthrough(self, client):
         rows = [{"id": 1, "name": "f", "chunks": 10}]
         with patch(f"{_STATS}.folders_with_index_stats", return_value=rows):

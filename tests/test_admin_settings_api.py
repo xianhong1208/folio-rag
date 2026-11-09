@@ -128,6 +128,11 @@ class TestAdminPage:
         r = client.get("/", follow_redirects=False)
         assert r.status_code == 302 and r.headers["location"] == "/admin/"
 
+    def test_admin_without_slash_redirects_to_console(self, client):
+        # The README links /admin; the console is mounted at /admin/ and the bare path 404ed
+        r = client.get("/admin", follow_redirects=False)
+        assert r.status_code == 302 and r.headers["location"] == "/admin/"
+
     def test_legacy_console_removed(self, client):
         # The single-file console at /admin-classic has been deleted
         assert client.get("/admin-classic").status_code == 404
