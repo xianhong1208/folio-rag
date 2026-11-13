@@ -40,7 +40,7 @@ function Field({ path, f, value, entry, onChange, disabled, pending }) {
         ) : f.type === 'textarea' ? (
           <textarea id={path} value={value ?? ''} disabled={disabled} onChange={(e) => setV(e.target.value)} />
         ) : f.type === 'secret' ? (
-          <input id={path} type="password" autoComplete="off" placeholder={'Type ${ENV_VAR} (recommended) or a new key'} value={value === '•••' ? '' : (value ?? '')} disabled={disabled} onChange={(e) => setV(e.target.value)} />
+          <input id={path} type="password" autoComplete="off" placeholder={'A ${ENV_VAR} from config.yaml, or type the key'} value={value === '•••' ? '' : (value ?? '')} disabled={disabled} onChange={(e) => setV(e.target.value)} />
         ) : f.range ? (
           <div className="slider-wrap">
             <input id={path} type="range" min={f.range[0]} max={f.range[1]} step={f.step || 0.05} disabled={disabled}
@@ -160,7 +160,9 @@ export default function SettingsPage() {
       setReview(false)
       await loadSettings()
       const warns = (r.data && r.data.warnings) || []
-      toast(warns.length ? 'Applied — note: ' + warns[0] : `Applied ${changes.length} change(s)`, warns.length ? 'warn' : 'ok')
+      // A cleared key matters more than any other note: show it first.
+      const note = warns.find((w) => w.includes(' was cleared')) || warns[0]
+      toast(warns.length ? 'Applied — note: ' + note : `Applied ${changes.length} change(s)`, warns.length ? 'warn' : 'ok')
     } catch (e) { toast('Apply failed: ' + e.message, 'bad') }
     setApplying(false)
   }
@@ -245,7 +247,7 @@ export default function SettingsPage() {
           <dt>override</dt>
           <dd><span className="ovr">Overridden</span> marks a value that differs from <code>config.yaml</code>.</dd>
           <dt>keys</dt>
-          <dd>Give API keys as <code>{'${ENV_VAR}'}</code>: the server stores the reference, never the key. Required under the cloud profile.</dd>
+          <dd>Give a key as <code>{'${ENV_VAR}'}</code> to keep it out of the database (required under the cloud profile): only a variable that <code>config.yaml</code> uses as a model key, for the same server it uses it with. Otherwise type the key. Moving a model to another server (another scheme, host or port in its base URL) clears its key: enter the key for the new server in the same change.</dd>
         </dl>
       )}
       {tabKey === 'models' && <RolesPanel view={view} readOnly={readOnly} probes={roleProbe} onProbe={runProbe} />}

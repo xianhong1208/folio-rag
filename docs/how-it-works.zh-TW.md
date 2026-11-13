@@ -55,6 +55,8 @@
 
 **說出「找不到相關內容」。** 每次 MCP 搜尋都會回報資料夾的匹配程度:`top_relevance`（reranker 在所有候選上的最高分,在 `score_threshold` 之前)、`min_relevance`(設定的門檻)與 `low_relevance` —— 沒有結果、或 `top_relevance` 低於 `rag.retrieval.min_relevance` 時為 `true`,此時 `_hint` 會告訴 agent 這個資料夾多半無法回答這個問題。每筆經過重排的結果都帶 `relevance`,低於門檻的結果標上 `low_relevance: true`。結果**只標記、不刪除**(刪除是 `rag.rerank.score_threshold` 的工作):在 golden set 上,這個門檻能擋下所有跟語料無關的問題,但「差一點」的問題(問對了法條、問的細節卻不在文中)分數跟可回答的問題一樣高,所以最後的判斷留給 agent。預設的 `0.9` 是針對 `mxbai-rerank-v2` 校準的(掃描結果見 `evals/baselines/rag-2026-11-03-min-relevance.md`);設 `0` 關閉,沒有 reranker 時只有空結果會被標記。
 
+**還沒有索引的資料夾。** 資料夾的向量表在第一次索引時才建立。在那之前搜尋它會得到空結果,而不是錯誤:MCP 回傳一般的空結果(`results: []`、`low_relevance: true`),`_hint` 說明這個資料夾還沒有任何已索引的內容;`POST /api/rag/query` 回 200,`results: []` 且 `not_indexed: true`。這類搜尋不會記入查詢分析(不算知識缺口),也不會被快取。
+
 **知識缺口。** 每次 REST、主控台與 MCP 搜尋都會記錄（token 只存遮罩後的前綴）結果數與 reranker 的最高分。*Query Analytics* 把某資料夾中**最近一次**搜尋沒有結果、或最高分低於 `rag.rerank.gap_threshold`（預設 `0.5`）的問題列為知識缺口 —— 補上能回答它的文件、再問一次後,缺口就會消失。
 
 **回答（主控台）。** 勾選 *generate answer* 時,先用一次 LLM 呼叫評估各 chunk 是否相關,丟掉不相關的（都不相關就不回答）,再用剩下的以**問題所用的語言**生成回答。每個 chunk 保留它在結果卡片中的編號,`[3]` 一定是第 3 張卡（主控台中引用可點擊）;引用了沒提供給模型的 chunk 會被移除,`【n†…】` 會轉成 `[n]`,Markdown 粗體標記會去掉 —— 串流路徑也一樣,最後的 `done` frame 帶有整理過的完整回答。評估結果無法解析時,回答會標成 **unverified**,而不是 `high`。

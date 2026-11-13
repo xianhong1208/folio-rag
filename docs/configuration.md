@@ -136,8 +136,18 @@ What the profile does:
 model and endpoint, whether a key is set and which environment variable it comes from (keys are
 never returned), and a **Test** button that sends one minimal real request with the saved settings
 (an embedding — dimension checked —, a 16-token chat, an 8×8 image for the vision model, one rerank
-pair, half a second of silence for speech-to-text). Key fields accept `${ENV_VAR}`; the server
-stores the reference, never the key. Changes need the `rag:admin` scope.
+pair, half a second of silence for speech-to-text). Changes need the `rag:admin` scope.
+
+**Keys set at runtime.** A key field takes the key itself, or a `${VAR}` reference; the server
+stores the reference, never the key. A reference is accepted only for a variable that config.yaml
+already uses as a model `api_key`, and only while the role points at a server (scheme, host and
+port of its `base_url`) that config.yaml uses that variable with. Any other reference gets the same
+"not allowed" error, whether the variable exists or not. When a role's `base_url` moves to another
+server, its key is cleared unless the same change gives it a new one (the answer says so); an LLM
+role that inherits `rag.llm`'s key must get its own key in that change. Resetting a key restores
+config.yaml's reference. At startup, stored key settings that break these rules are skipped, and a
+key reference that would reach a server it is not paired with is cleared, with a warning in the
+log.
 
 Daily caps are kept in memory and reset at UTC midnight or on restart — they are a runaway guard,
 not billing.

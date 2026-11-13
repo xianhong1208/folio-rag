@@ -187,11 +187,12 @@ class RAGQueryService:
                 results=search_results,
                 total_results=len(search_results),
                 top_score=outcome.top_score,
+                not_indexed=outcome.not_indexed is True,
             )
 
             # A degraded result (reranker down) must not be served from cache once
-            # the reranker is back.
-            if use_cache and cache_key and not outcome.rerank_failed:
+            # the reranker is back; nor an empty one from a folder not indexed yet.
+            if use_cache and cache_key and not outcome.rerank_failed and not result.not_indexed:
                 cache.set(cache_key, result, ttl=CacheTTL.QUERY_RESULT)
                 logger.debug(f"Cached query result: {cache_key}")
 
@@ -304,7 +305,9 @@ class RAGQueryService:
                 )
             # A rejected query (too long, invalid parameters) is not a search that found
             # nothing: logging it put it in analytics as a zero-result query and a knowledge gap.
-            if not response.get("error"):
+            # Nor is a search of a folder that has nothing indexed yet (no knowledge gap).
+            not_indexed = getattr(getattr(retriever, "last_outcome", None), "not_indexed", False) is True
+            if not response.get("error") and not not_indexed:
                 _log_query_later(
                     query=query, folder_id=folder.id, token=token,
                     result_count=int(response.get("total_results", len(response.get("results") or []))),

@@ -12,6 +12,8 @@
 | **Media (no auth, deprecated)** | `POST /v1/transcriptions/general` (audio → text, follows `rag.asr.provider`) · `POST /v1/ocr/general` (image / PDF → text, Docling OCR) · `GET /v1/models`. Unauthenticated by design; keep them on a trusted network. **Removed in 1.5** (see below). |
 | **Operational** | `GET /health` (liveness) · `GET /health/detailed` (database, pgvector, connection pool, cache, revocation feed) · `GET /health/cache/stats` · `POST /health/cache/clear` · `GET /health/database/stats` |
 
+**Upload size.** A file may be at most 100 MB. Uploads are copied to disk in 1 MiB pieces and never held in memory whole. The single-file upload routes (`POST /api/folders/{id}/file` and the console's) refuse a larger request from its `Content-Length` before reading it, or as soon as a streamed body crosses the limit, with **413** `File size exceeds limit (100.0MB)`; the batch route (`POST /api/folders/{id}/files`) reports an oversized file in `failed_uploads` and keeps the others.
+
 ## Removed in 1.5: built-in OCR, speech-to-text and the /v1 media endpoints
 
 Folio 1.5 drops three things that need heavy in-process models. 1.4.x keeps all of them working; it only announces the change:

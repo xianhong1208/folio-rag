@@ -23,6 +23,11 @@ class FileTooLargeError(ValueError):
     """Upload exceeds MAX_FILE_SIZE (HTTP 413)."""
 
 
+def file_too_large_message(max_bytes: int) -> str:
+    """The one message every size refusal uses (REST, console and the streaming guard)."""
+    return f"File size exceeds limit ({max_bytes / (1024 * 1024):.1f}MB)"
+
+
 class FileNameConflictError(ValueError):
     """The folder already holds a file with this name (409)."""
 
@@ -143,6 +148,18 @@ class FileDB(BaseDB):
             raise
     
     @classmethod
+    def check_file_name(cls, file_name: str):
+        """Extension check that needs no content. Returns ``(extension, mime type)``.
+
+        Raises UnsupportedFileTypeError for an extension outside ALLOWED_EXTENSIONS.
+        """
+        ext = Path(file_name).suffix.lower().lstrip('.')
+        if ext not in cls.ALLOWED_EXTENSIONS:
+            raise UnsupportedFileTypeError(
+                f"Unsupported file type: .{ext}" if ext else "Unsupported file type: no extension")
+        return ext, mimetypes.guess_type(file_name)[0]
+
+    @classmethod
     def _validate_file_content(cls, file_content: bytes, file_name: str) -> Dict[str, Any]:
         """Validate file content.
 
@@ -158,15 +175,9 @@ class FileDB(BaseDB):
         """
         file_size = len(file_content)
         if file_size > cls.MAX_FILE_SIZE:
-            max_size_mb = cls.MAX_FILE_SIZE / (1024 * 1024)
-            raise FileTooLargeError(f"File size exceeds limit ({max_size_mb:.1f}MB)")
+            raise FileTooLargeError(file_too_large_message(cls.MAX_FILE_SIZE))
 
-        ext = Path(file_name).suffix.lower().lstrip('.')
-        if ext not in cls.ALLOWED_EXTENSIONS:
-            raise UnsupportedFileTypeError(
-                f"Unsupported file type: .{ext}" if ext else "Unsupported file type: no extension")
-
-        mime_type = mimetypes.guess_type(file_name)[0]
+        ext, mime_type = cls.check_file_name(file_name)
 
         # sha256 content hash for idempotent re-indexing. Computed once
         # at upload so re-index can skip when File.content_hash == FileIndex.content_hash.
