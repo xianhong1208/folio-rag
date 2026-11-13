@@ -4,17 +4,17 @@ Folio stores everything relational, plus one pgvector table per folder
 (`data_<folder_id>_<uuid>`), in PostgreSQL 15 with the `vector` extension.
 Uploaded files live on disk under `storage/`, not in the database.
 
-## Current local setup
+## Reference setup
 
-The development server is the `db` service in `docker-compose.yml`:
+Any PostgreSQL 15 or newer with the pgvector extension works. The setup Folio is
+developed and measured against:
 
 | Item | Value |
 |---|---|
-| Container / port | `pg`, `127.0.0.1:5444` |
-| Data | bind mount `/srv/pgdata` |
-| Image | `pg15-pgvector:0.8.7`, built from `docker/pgvector/Dockerfile`: official `pgvector/pgvector:0.8.7-pg15-bookworm` plus pg_jieba 1.1.1 compiled from source (two legacy databases still use `jiebacfg` generated columns; Folio itself does not need it) |
-| Server | PostgreSQL 15.19, `max_connections=200`, `shm_size: 4gb` |
-| Extension | `folio` database: `vector` 0.8.7. Other databases on the server may still carry the 0.5.1 extension SQL, which works with the 0.8.7 library. |
+| Image | `pgvector/pgvector:0.8.7-pg15-bookworm` (official), run with Docker Compose |
+| Data | a volume or bind mount for `PGDATA` |
+| Server | PostgreSQL 15, `max_connections=200`, `shm_size: 4gb` |
+| Extension | `vector` 0.8.7 in Folio's database. Other databases on a shared server may still carry older extension SQL, which keeps working with the newer library. |
 
 Folio does not depend on pgvector 0.8 features. Anything that would (halfvec,
 `hnsw.iterative_scan`) has to check `SELECT extversion FROM pg_extension WHERE
@@ -47,10 +47,10 @@ container (`docker compose up -d db`).
 
 ## Upgrading pgvector
 
-1. Bump `PGVECTOR_TAG` in the Dockerfile (e.g. `0.8.8-pg15-bookworm`; keep the
-   `pg15` major) and `image:` in the compose file, then `docker compose build db`.
+1. Change `image:` in the compose file to the new tag (e.g. `0.8.8-pg15-bookworm`;
+   keep the `pg15` major), then `docker compose pull db`.
 2. Stop the services that use the database, then `docker compose stop db`.
-3. Back up `/srv/pgdata` (copy of the stopped directory, or a
+3. Back up the data directory (a copy of the stopped `PGDATA` volume, or a
    snapshot). This is the only rollback path once step 5 has run.
 4. `docker compose up -d db`. The data directory is reused unchanged.
 5. In each database that should get the new SQL-level features:
@@ -61,7 +61,7 @@ container (`docker compose up -d db`).
 
 Rollback: before step 5, switching `image:` back and recreating the container is
 enough. After step 5 the extension SQL references C functions an older
-library does not have, so restore the step-3 copy of `pgdata` with the old image.
+library does not have, so restore the step-3 copy of the data directory with the old image.
 
 ## Backups
 
