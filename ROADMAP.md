@@ -99,14 +99,6 @@ Kept here so they are not lost; none of them is planned.
   query trace in the Search Playground.
 - Keep a table's original Markdown in the chunk metadata, so tables display without loss.
 
-## Verification still to do
-
-- **Before 1.5 removes the built-in OCR and speech-to-text:** run the PDFs and images of the
-  golden set through the vision-model path, and the recordings in `evals/asr` through Forgeyard's
-  transcription, and compare with today's Docling OCR and FireRedASR results.
-- **The server aborts at shutdown** (see below): the cause needs the launcher's stderr and a native
-  backtrace (gdb).
-
 ## Known limitations
 
 - **PostgreSQL with pgvector is required.** There is no SQLite fallback: hybrid retrieval and the

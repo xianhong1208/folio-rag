@@ -87,12 +87,6 @@ contextual retrieval),涵蓋了 RAG 的兩個典型弱點:chunk 破碎與精準�
 - 每次查詢在整條管線(向量 → BM25 → 融合 → 重排)上的追蹤,超出 Search Playground 現有的單次查詢軌跡。
 - 在 chunk 中繼資料保留表格原本的 Markdown,讓表格顯示不失真。
 
-## 尚待驗證
-
-- **1.5 移除內建 OCR 與語音轉文字之前:** 用視覺模型流程處理黃金測試集的 PDF 與圖片,用 Forgeyard
-  轉錄 `evals/asr` 的錄音,並和目前 Docling OCR 與 FireRedASR 的結果比較。
-- **伺服器關閉時會 abort**(見下方):找出原因需要啟動程式的 stderr 與原生 backtrace(gdb)。
-
 ## 已知限制
 
 - **需要 PostgreSQL 與 pgvector。** 沒有 SQLite 的退路:混合檢索與每個資料夾的資料表都依賴它。
