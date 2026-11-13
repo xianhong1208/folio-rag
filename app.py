@@ -303,7 +303,10 @@ def create_app(config: BaseModel, transport: str) -> FastAPI:
     # WellKnownCORSMiddleware adds permissive CORS to /.well-known/* responses so browser
     # -based MCP hosts can read the public discovery documents. It sits inside auth so its
     # OPTIONS short-circuit / header injection is never gated by the bearer check.
-    cors_wrapped = WellKnownCORSMiddleware(fastapi_app)
+    # UploadSizeLimit refuses an oversized single-file upload from its Content-Length, or
+    # as soon as the streamed body crosses the limit, before it is spooled to the end.
+    from src.middleware.upload_limit import UploadSizeLimit
+    cors_wrapped = WellKnownCORSMiddleware(UploadSizeLimit(fastapi_app))
     # /mcp auth is unified on FastMCP's RemoteAuthProvider (see build_auth_provider).
     # The legacy SelectiveAuthMiddleware was removed: it re-buffered the request body and
     # interfered with FastMCP's streamable-HTTP bearer auth, rejecting otherwise-valid tokens.

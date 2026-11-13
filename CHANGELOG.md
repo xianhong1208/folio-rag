@@ -6,6 +6,9 @@ to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Fixed
+- **Large uploads no longer sit in memory.** The upload endpoints read the whole file into memory before the 100 MB check, so a 120 MB upload raised the server's memory by ~120 MB and was read to the end before it was refused. Uploads are now copied from the request's spooled part to storage in 1 MiB pieces, with the size counted (and the SHA-256 computed) on the way; the copy stops and the partial file is deleted once it crosses the limit. The single-file upload routes (REST `POST /api/folders/{id}/file` and the console's) refuse a request whose `Content-Length` is already over the limit without reading it, and cut off a streamed (chunked) body as soon as it crosses the limit. The answer is the same as before: **413** `File size exceeds limit (100.0MB)`; the batch route still reports an oversized file in `failed_uploads`. A file whose record cannot be written is now removed from disk instead of being left behind.
+
 ### Docs
 - **Roadmap and README rewritten.** `ROADMAP.md` and the new `ROADMAP.zh-TW.md` list what each released version brought, the agreed plan from 1.4.2 to 1.10 (each item has an issue in its GitHub milestone), what comes later and the known limitations; the Graph RAG decision gate is kept. The READMEs are shorter, with badges, a console screenshot, a quick start and deployment options. The reference material moved, in English and Traditional Chinese, to `docs/how-it-works.md`, `docs/configuration.md`, `docs/auth.md`, `docs/console.md`, `docs/api.md` and `docs/development.md`. Corrected on the way: the API docs at `/docs` are always on (there is no `ENABLE_API_DOCS`), and folders still keyed per token are those from before 1.4.1, not 1.5.
 
