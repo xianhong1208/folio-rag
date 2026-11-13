@@ -6,6 +6,9 @@ to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Docs
+- **Roadmap and README rewritten.** `ROADMAP.md` and the new `ROADMAP.zh-TW.md` list what each released version brought, the agreed plan from 1.4.2 to 1.10 (each item has an issue in its GitHub milestone), what comes later and the known limitations; the Graph RAG decision gate is kept. The READMEs are shorter, with badges, a console screenshot, a quick start and deployment options. The reference material moved, in English and Traditional Chinese, to `docs/how-it-works.md`, `docs/configuration.md`, `docs/auth.md`, `docs/console.md`, `docs/api.md` and `docs/development.md`. Corrected on the way: the API docs at `/docs` are always on (there is no `ENABLE_API_DOCS`), and folders still keyed per token are those from before 1.4.1, not 1.5.
+
 ### Security
 - **Dependency advisories fixed.** The dependency audit no longer accepts any advisory (`.github/pip-audit-ignore.txt` is empty).
   - transformers 4.57.6 → 5.22.2 (`--extra local`; with huggingface-hub 0.36.2 → 1.33.0 and tokenizers 0.22.2 → 0.23.3). It drops the six accepted transformers advisories (PYSEC-2025-217, PYSEC-2026-2288, -2289, -2290, -3929, -4174). No code change was needed: CKIP word segmentation, HuggingFace embeddings, docling layout/table/OCR conversion and chunk token counts give the same output as on 4.57.6.

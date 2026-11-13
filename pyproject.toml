@@ -118,7 +118,7 @@ extend-exclude = [".venv", ".claude", "vendor", "frontend", "static"]
 
 [tool.ruff.lint]
 # Correctness only (pyflakes + the E4/E7/E9 errors), the same baseline as MCP Gate,
-# AnyDoc and Packwright. Style rules can be added one at a time with their fixes.
+# Morphyard and Packwright. Style rules can be added one at a time with their fixes.
 select = ["E4", "E7", "E9", "F"]
 
 [tool.ruff.lint.per-file-ignores]
