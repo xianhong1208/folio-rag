@@ -156,3 +156,13 @@ def as_identity():
         app.dependency_overrides[require_console_admin] = _admin
         return app
     return _apply
+
+
+@pytest.fixture(autouse=True)
+def _fresh_key_reference_pairs():
+    """Key-reference pairs are captured from the first config a process validates
+    (src/config/runtime_overrides.py); each test starts without one."""
+    from src.config import runtime_overrides as ro
+    ro._reset_startup_for_tests()
+    yield
+    ro._reset_startup_for_tests()

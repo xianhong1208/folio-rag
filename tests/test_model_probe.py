@@ -161,15 +161,25 @@ class TestSecretsThroughTheConsole:
     def test_env_reference_is_resolved_and_persisted_as_reference(self, monkeypatch):
         monkeypatch.setenv("NEW_KEY", "sk-live-123")
         cfg = _config()
+        ro.capture_startup(cfg, refs={"rag.rerank.api_key": "NEW_KEY"})  # config.yaml's variable
         applied, _ = ro.validate_and_apply(cfg, {"rag.rerank.api_key": "${NEW_KEY}"})
         assert cfg.rag.rerank.api_key == "sk-live-123"
         assert applied == {"rag.rerank.api_key": "${NEW_KEY}"}  # what the DB stores
         assert ro.secret_ref("rag.rerank.api_key") == "NEW_KEY"
 
-    def test_unset_env_reference_is_rejected(self, monkeypatch):
+    def test_unset_and_unknown_references_get_the_same_generic_error(self, monkeypatch):
+        """The answer must not tell whether a variable exists in the environment."""
         monkeypatch.delenv("MISSING_KEY", raising=False)
-        with pytest.raises(ValueError, match="MISSING_KEY"):
-            ro.validate_and_apply(_config(), {"rag.llm.api_key": "${MISSING_KEY}"})
+        monkeypatch.setenv("SOME_SECRET", "s3cret")
+        cfg = _config()
+        ro.capture_startup(cfg, refs={"rag.llm.api_key": "MISSING_KEY"})
+        messages = []
+        for ref in ("${MISSING_KEY}", "${SOME_SECRET}", "${NOT_SET_ANYWHERE}"):
+            with pytest.raises(ValueError) as exc:
+                ro.validate_and_apply(cfg, {"rag.llm.api_key": ref})
+            messages.append(str(exc.value))
+        assert len(set(messages)) == 1 and "not allowed" in messages[0]
+        assert "MISSING_KEY" not in messages[0] and "SOME_SECRET" not in messages[0]
 
     def test_mask_placeholder_is_rejected(self):
         with pytest.raises(ValueError, match="masked placeholder"):
@@ -182,8 +192,8 @@ class TestSecretsThroughTheConsole:
         with pytest.raises(ValueError, match="literal value"):
             ro.validate_and_apply(cfg, {"rag.rerank.api_key": "sk-pasted"})
         assert cfg.rag.rerank.api_key == "k"  # nothing written
-        monkeypatch.setenv("RR", "x")
-        ro.validate_and_apply(cfg, {"rag.rerank.api_key": "${RR}"})
+        monkeypatch.setenv("K", "x")
+        ro.validate_and_apply(cfg, {"rag.rerank.api_key": "${K}"})
         assert cfg.rag.rerank.api_key == "x"
 
     def test_cloud_rejects_in_process_provider_change(self, monkeypatch):
@@ -198,6 +208,7 @@ class TestSecretsThroughTheConsole:
     def test_literal_clears_previous_reference(self, monkeypatch):
         monkeypatch.setenv("A", "1")
         cfg = _config()
+        ro.capture_startup(cfg, refs={"rag.llm.api_key": "A"})
         ro.validate_and_apply(cfg, {"rag.llm.api_key": "${A}"})
         ro.validate_and_apply(cfg, {"rag.llm.api_key": "plain"})
         assert ro.secret_ref("rag.llm.api_key") is None
@@ -237,7 +248,9 @@ class TestSettingsView:
     def test_audit_value_never_contains_a_key(self, monkeypatch):
         from src.adapter import runtime_settings_service as svc
         monkeypatch.setenv("Z", "secret-z")
-        ro.validate_and_apply(_config(), {"rag.asr.api_key": "${Z}"})
+        cfg = _config()
+        ro.capture_startup(cfg, refs={"rag.asr.api_key": "Z"})
+        ro.validate_and_apply(cfg, {"rag.asr.api_key": "${Z}"})
         assert svc._audit_value("rag.asr.api_key", "secret-z") == "${Z}"
         assert svc._audit_value("rag.rerank.api_key", "lit") == "•••"
         assert svc._audit_value("rag.rerank.model", "m") == "m"

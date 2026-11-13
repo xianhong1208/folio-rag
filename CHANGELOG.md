@@ -6,6 +6,9 @@ to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Security
+- **Model key settings are tied to config.yaml.** A runtime settings change (the console's Settings page or `PUT /api/admin/settings`, `rag:admin` only) could make a model key read more of the server's environment than intended. A `${VAR}` key reference set at runtime is now accepted only for a variable that config.yaml uses as a model key, for the server config.yaml uses it with; a role moved to another server loses its key unless the same change gives a new one; refused references all get one generic error. Stored settings that break the rule are skipped at startup with a warning. Resetting a key now restores config.yaml's reference (under `profile: cloud` the reset used to fail with 422). See `docs/configuration.md`.
+
 ### Docs
 - **Roadmap and README rewritten.** `ROADMAP.md` and the new `ROADMAP.zh-TW.md` list what each released version brought, the agreed plan from 1.4.2 to 1.10 (each item has an issue in its GitHub milestone), what comes later and the known limitations; the Graph RAG decision gate is kept. The READMEs are shorter, with badges, a console screenshot, a quick start and deployment options. The reference material moved, in English and Traditional Chinese, to `docs/how-it-works.md`, `docs/configuration.md`, `docs/auth.md`, `docs/console.md`, `docs/api.md` and `docs/development.md`. Corrected on the way: the API docs at `/docs` are always on (there is no `ENABLE_API_DOCS`), and folders still keyed per token are those from before 1.4.1, not 1.5.
 
