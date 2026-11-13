@@ -26,6 +26,13 @@ server; answers come in the question's language. See the [CHANGELOG](CHANGELOG.m
 [ROADMAP](ROADMAP.md) for what comes next (1.5: a Docker image, backups, and OCR and speech through
 an OpenAI-compatible API).
 
+> **Removed in 1.5:** the built-in OCR, the built-in speech-to-text (FireRedASR, docling-whisper)
+> and the `/v1` media endpoints. 1.4.x keeps them working and warns in the log; `/v1` responses
+> carry a `Deprecation` header. Move to an OpenAI-compatible vision model for scanned PDFs and
+> images and an OpenAI-compatible transcription endpoint for audio, for example both served by
+> [Forgeyard](https://github.com/xianhong1208/forgeyard). See
+> [what replaces them](docs/api.md#removed-in-15-built-in-ocr-speech-to-text-and-the-v1-media-endpoints).
+
 ## Key features
 
 - **Hierarchical chunks that merge back.** Small leaves for precise matching, large parents for

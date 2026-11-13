@@ -258,6 +258,12 @@ def create_app(config: BaseModel, transport: str) -> FastAPI:
     except Exception as e:
         api_logger.warning(f"Error handler registration skipped: {e}")
 
+    # Advance notice: the built-in OCR / speech-to-text and the /v1 media endpoints go in
+    # 1.5. A startup line for what this configuration uses, and Deprecation headers on /v1.
+    from src.utils.deprecation import MediaDeprecationMiddleware, log_startup_notice
+    log_startup_notice(config)
+    fastapi_app.add_middleware(MediaDeprecationMiddleware)
+
     # Serve the built React console SPA at /admin (index.html + hashed assets), with a
     # client-route fallback so deep links like /admin/folders return index.html. Must be
     # registered before the catch-all FastMCP mount below. When the SPA has not been
