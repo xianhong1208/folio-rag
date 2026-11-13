@@ -148,6 +148,10 @@ class Config:
     # Dotted path -> env-var name for values written as ${VAR} in the files (pre-expansion).
     # Lets the profile check tell an env-sourced API key from a literal one.
     _env_refs: Dict[str, str] = {}
+    # (level, message) of the notices set_config logged while loading. They are logged
+    # before main.py sets up the log files from this very config, so they reach only the
+    # terminal; main.py logs them again once the files exist (log_startup_notices).
+    _startup_notices: List[Tuple[str, str]] = []
 
     @classmethod
     def _validate_config_dir(cls, config_dir: str) -> Path:
@@ -170,12 +174,13 @@ class Config:
         error leaves the model unset (logged), and main.py refuses to start.
         """
         path = cls._validate_config_dir(config_dir)
+        cls._startup_notices = []
         warning = legacy_config_warning(path)
         if warning:
-            logger.error(warning)
+            cls._notice("error", warning)
         raw, _origins = load_config_dir(path)
         for w in removed_section_warnings(raw):
-            logger.warning(w)
+            cls._notice("warning", w)
         from src.config.profile import env_refs
         cls._env_refs = env_refs(raw)
         cls._config = expand_env_vars(raw)
@@ -186,6 +191,24 @@ class Config:
         except Exception:
             logger.exception("Config model validation failed — no config model loaded")
             cls._config_model = None
+
+    @classmethod
+    def _notice(cls, level: str, message: str) -> None:
+        """Log a load-time notice now (the terminal) and keep it for log_startup_notices."""
+        getattr(logger, level)(message)
+        cls._startup_notices.append((level, message))
+
+    @classmethod
+    def log_startup_notices(cls, log) -> List[str]:
+        """Log the notices of the last set_config again through ``log``, once.
+
+        Call it right after the log files are set up: set_config ran before, so its own
+        copy of each notice reached only the terminal. Returns the messages logged.
+        """
+        notices, cls._startup_notices = cls._startup_notices, []
+        for level, message in notices:
+            getattr(log, level)(message)
+        return [message for _level, message in notices]
 
     @classmethod
     def factory_raw(cls) -> Dict[str, Any]:
@@ -205,7 +228,7 @@ class Config:
         from src.config.profile import check_profile
         report = check_profile(rag, refs=cls._env_refs)
         for w in report.warnings:
-            logger.warning(f"[PROFILE] {w}")
+            cls._notice("warning", f"[PROFILE] {w}")
         if report.errors:
             raise ValueError(
                 f"rag.profile '{rag.profile}' validation failed:\n  - "

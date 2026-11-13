@@ -33,6 +33,7 @@ def _reset_config_state():
     Config._config_model = None
     Config._config_dir = None
     Config._env_refs = {}
+    Config._startup_notices = []
 
 
 @pytest.fixture()
@@ -522,3 +523,89 @@ class TestSplitConfigScript:
         rc = main(["--old", str(tmp_path / "c.yaml"), "--out-dir", str(tmp_path / "o"),
                    "--env-out", str(tmp_path / "e"), "--env-file", ""])
         assert rc == 1 and "rag.llm.model" in capsys.readouterr().out
+
+
+# -- upgrade notices reach the log files ------------------------------------------------
+
+def _config_with_upgrade_leftovers(root: Path) -> None:
+    """The committed config plus both upgrade leftovers: an old config.yaml and a removed
+    section (rag.answer_llm in models.yaml)."""
+    import shutil
+    shutil.copytree(REPO / "config", root / "config")
+    models = root / "config" / "models.yaml"
+    tree = yaml.safe_load(models.read_text(encoding="utf-8"))
+    tree["rag"]["answer_llm"] = {"model": "big"}
+    models.write_text(yaml.safe_dump(tree, sort_keys=False), encoding="utf-8")
+    (root / "config" / "config.yaml").write_text(LEGACY.read_text(encoding="utf-8"),
+                                                 encoding="utf-8")
+
+
+def _server_log(root: Path) -> str:
+    return "".join(f.read_text(encoding="utf-8")
+                   for f in sorted((root / "logs" / "server").glob("*.log")))
+
+
+@pytest.fixture()
+def _restore_loguru():
+    from loguru import logger
+    yield
+    logger.remove()
+    logger.add(sys.stderr, level="WARNING")
+
+
+class TestStartupNotices:
+    """set_config logs its upgrade notices before main.py sets up the log files from that
+    config, so they used to reach the terminal only. They are logged again afterwards."""
+
+    def test_notices_are_kept_and_logged_again_once(self, tmp_path, clean_env, monkeypatch, _restore_loguru):
+        from src.log import get_server_logger, setup_logger
+        monkeypatch.chdir(tmp_path)
+        _config_with_upgrade_leftovers(tmp_path)
+        Config.set_config("config")
+        setup_logger(console_level="CRITICAL", log_base_dir=str(tmp_path / "logs"))
+        logged = Config.log_startup_notices(get_server_logger())
+        assert len(logged) == 2
+        assert "IGNORED" in logged[0] and logged[1].startswith("rag.answer_llm ")
+        assert Config.log_startup_notices(get_server_logger()) == []  # once only
+        text = _server_log(tmp_path)
+        for message in logged:
+            assert text.count(message) == 1
+        error_log = "".join(f.read_text(encoding="utf-8")
+                            for f in (tmp_path / "logs" / "server").glob("error_*.log"))
+        assert "IGNORED" in error_log and "| ERROR " in error_log  # the level is kept
+
+    def test_a_new_load_starts_a_new_list(self, tmp_path, clean_env, monkeypatch):
+        monkeypatch.chdir(tmp_path)
+        _config_with_upgrade_leftovers(tmp_path)
+        Config.set_config("config")
+        assert Config._startup_notices
+        (tmp_path / "config" / "config.yaml").unlink()
+        Config.set_config("config")
+        assert [m.split(" ")[0] for _l, m in Config._startup_notices] == ["rag.answer_llm"]
+        (tmp_path / "config" / "models.yaml").write_text(
+            (REPO / "config" / "models.yaml").read_text(encoding="utf-8"), encoding="utf-8")
+        Config.set_config("config")
+        calls = []
+
+        class _Log:
+            def __getattr__(self, level):
+                return lambda message: calls.append((level, message))
+
+        assert Config.log_startup_notices(_Log()) == []
+        assert calls == []  # earlier loads' notices are not carried over
+
+    def test_main_writes_the_notices_to_the_server_log(self, tmp_path, clean_env, monkeypatch,
+                                                       _restore_loguru):
+        """The real startup path: main.py sets up the files, then logs the notices."""
+        import main
+        monkeypatch.chdir(tmp_path)
+        _config_with_upgrade_leftovers(tmp_path)
+        monkeypatch.setattr(main, "run_migration_command", lambda *a, **k: True)
+        monkeypatch.setattr(sys, "argv", ["main.py", "--config-dir", "config",
+                                          "--migrate-only", "status", "--log-level", "critical"])
+        with pytest.raises(SystemExit) as exit_info:
+            main.main()
+        assert exit_info.value.code == 0
+        text = _server_log(tmp_path)
+        assert text.count("config/config.yaml is no longer read") == 1
+        assert text.count("rag.answer_llm was removed in Folio 1.5") == 1

@@ -154,6 +154,10 @@ def main():
                      rotation=getattr(log_conf, "max_size", None) or "5 MB",
                      retention=getattr(log_conf, "backup_count", None))
         logger = get_server_logger()
+        # The notices from loading the config (an old config.yaml left behind, removed
+        # sections, profile warnings) were logged before the log files existed: log them again
+        # so they are in logs/ too.
+        Config.log_startup_notices(logger)
 
         # Migration-only mode: run the action and exit without starting the server.
         if args.migrate_only:

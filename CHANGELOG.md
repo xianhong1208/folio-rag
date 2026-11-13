@@ -12,6 +12,9 @@ to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - **Breaking: two LLM roles instead of four.** `rag.answer_llm` and `rag.eval_llm` are removed: answers (Search Playground) and evaluation use `rag.llm`. `rag.contextual_llm` stays as the optional model for contextual prefixes; its help text in the console and in `models.yaml` says it only writes one short sentence of context per chunk, so a small, fast model is enough. Settings stored for the removed roles are deleted at startup with a warning; `GET /api/admin/settings` and the Model roles panel no longer list them (the panel now shows the LLM itself). Old `/settings/answer-llm` and `/settings/eval-llm` links open the Models tab.
 - An empty `${VAR:-}` for a model endpoint, key or model name, or for `database.port`, now means "not set".
 
+### Fixed
+- **Upgrade notices now reach the log files.** The error about an old `config/config.yaml` left behind, the warnings about removed sections (`rag.answer_llm`, `rag.eval_llm`) and the `[PROFILE]` warnings were logged while the configuration was loading, before the log files were set up from it, so they appeared only in the terminal. They still do, and are now logged again, once, in `logs/server/` as soon as logging is set up.
+
 ## [1.4.2] — 2026-11-13
 
 ### Security
