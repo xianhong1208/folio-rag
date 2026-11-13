@@ -6,6 +6,12 @@ to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Changed
+- **Breaking: the configuration is six files, and secrets live in `.env` only.** `config/config.yaml` (about 300 lines) is replaced by `config/database.yaml`, `auth.yaml`, `models.yaml`, `mcp.yaml`, `retrieval.yaml` and `system.yaml`, merged into one configuration at startup (same settings, same shape). Every secret and per-machine value — database URL, MCP Gate issuer and audience, revocation client, model endpoints and keys, GPU devices — is a `${VAR:-default}` reference read from the environment or `.env` (`.env.example` lists all of them), so every file under `config/` is safe to commit. A setting written in two files stops startup with both file names; a missing file stops it too. `main.py --config <file>` became `--config-dir <dir>`, as did the eval scripts'. **The old `config/config.yaml` is not read**: if it is still there, startup logs an error saying it is ignored. `scripts/split_config.py` converts it into the six files plus `.env` lines (written with mode 600, never printed) and checks field by field that the result loads to the same configuration. See [Upgrading from 1.4](docs/configuration.md#upgrading-from-14).
+- **Breaking: module wiring moved into code.** Which router or MCP tool registration each module loads is now `src/config/modules.py`; `config/mcp.yaml` only lists `modules.enabled`. A wiring block or an unknown module name there is refused at startup.
+- **Breaking: two LLM roles instead of four.** `rag.answer_llm` and `rag.eval_llm` are removed: answers (Search Playground) and evaluation use `rag.llm`. `rag.contextual_llm` stays as the optional model for contextual prefixes; its help text in the console and in `models.yaml` says it only writes one short sentence of context per chunk, so a small, fast model is enough. Settings stored for the removed roles are deleted at startup with a warning; `GET /api/admin/settings` and the Model roles panel no longer list them (the panel now shows the LLM itself). Old `/settings/answer-llm` and `/settings/eval-llm` links open the Models tab.
+- An empty `${VAR:-}` for a model endpoint, key or model name, or for `database.port`, now means "not set".
+
 ## [1.4.2] — 2026-11-13
 
 ### Security

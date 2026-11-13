@@ -45,4 +45,4 @@
 
 ## 更換 embedding 模型後重新索引
 
-每個檔案也會記錄索引時用的 embedding 模型與維度(`embedding_model`、`embedding_dimension`)。在 config.yaml 或設定頁改了 `rag.embedding.model` 或 `rag.embedding.dimension` 之後,所有用舊模型索引的檔案會立刻以同樣方式標示 **Re-index recommended**,並計入資料夾的 **N stale** 標籤:它們的向量來自另一個模型,跟新的查詢對不上。標籤的提示文字與 API 的 `reindex_reason` 會說明是哪一種情況(`embedding` 或 `pipeline`)。改回原本的模型,標示就會消失。1.4.2 之前索引的檔案,伺服器啟動時會從資料夾的向量表補上維度;從未記錄模型或維度的檔案,不會因此被標示。
+每個檔案也會記錄索引時用的 embedding 模型與維度(`embedding_model`、`embedding_dimension`)。在 `config/models.yaml` 或設定頁改了 `rag.embedding.model` 或 `rag.embedding.dimension` 之後,所有用舊模型索引的檔案會立刻以同樣方式標示 **Re-index recommended**,並計入資料夾的 **N stale** 標籤:它們的向量來自另一個模型,跟新的查詢對不上。標籤的提示文字與 API 的 `reindex_reason` 會說明是哪一種情況(`embedding` 或 `pipeline`)。改回原本的模型,標示就會消失。1.4.2 之前索引的檔案,伺服器啟動時會從資料夾的向量表補上維度;從未記錄模型或維度的檔案,不會因此被標示。

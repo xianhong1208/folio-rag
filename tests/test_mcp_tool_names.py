@@ -118,7 +118,7 @@ def test_configured_prefix_is_used():
 
 
 def test_pre_rename_config_prefix_becomes_folio():
-    """A config.yaml from before the rename (tool_prefix: Agentic) loads as Folio."""
+    """A config from before the rename (tool_prefix: Agentic) loads as Folio."""
     from src.config.model import AppConfig
     app = AppConfig.model_validate({"name": "Agentic RAG", "tool_prefix": "Agentic"})
     assert (app.name, app.tool_prefix) == ("Folio", "Folio")

@@ -27,9 +27,10 @@ storage/
 reports/
 logs/
 data/
-config/_itest_config.yaml
+config/_itest/
+config/config.yaml
+.env.split
 
-# config/config.yaml is NOT excluded: the committed template is what the image
-# starts from. A working-tree copy can hold a real password, so build images
-# from a clean checkout (or CI) and supply real values at runtime through
-# DATABASE_URL / *_API_KEY or a mounted config file.
+# config/*.yaml is NOT excluded: the committed files hold no secrets (every secret and
+# per-machine value is a ${VAR} reference), and the image starts from them. Supply the
+# real values at runtime through environment variables (see .env.example).

@@ -26,8 +26,10 @@ def main() -> int:
         problems.append("torch cannot see the GPU -> docling pipeline falls back to CPU entirely (container --gpus? / driver?)")
 
     # Same converter the service uses -> actual device of the RapidOCR torch session.
+    from src.config.dotenv import load_dotenv
+    load_dotenv()
     from src.config.config_manager import get_config
-    get_config("config/config.yaml")
+    get_config("config")
     from src.domain.rag.docling_loader import get_converter
     from docling.datamodel.base_models import InputFormat
 

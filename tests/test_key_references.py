@@ -1,15 +1,16 @@
-"""Model key references at runtime: only config.yaml's key variables, only for their servers.
+"""Model key references at runtime: only the config files' key variables, only for their servers.
 
 Before 1.4.2 a settings change could reference any environment variable as a model
 key (``${VAR}``) and point the role's base_url at any server, so the server would send
 that variable's value there. Now a runtime ``${VAR}`` is accepted only for a variable
-config.yaml uses as a model key, while the role points at a server (origin) config.yaml
+config/models.yaml uses as a model key, while the role points at a server (origin) that file
 pairs it with; a key never follows its role to another server; and every refused
 reference gets the same generic error.
 """
 
 from unittest.mock import patch
 
+from tests.config_helpers import config_dir_from_file
 import pytest
 
 from src.config import runtime_overrides as ro
@@ -57,7 +58,8 @@ class TestOrigins:
 
     def test_llm_roles_inherit_server_and_key(self):
         rk = role_keys(_config().rag)
-        assert rk["answer_llm"].origin == origin_of(HOME + "/v1") and rk["answer_llm"].key_path == "rag.llm.api_key"
+        assert rk["contextual_llm"].origin == origin_of(HOME + "/v1")
+        assert rk["contextual_llm"].key_path == "rag.llm.api_key"
 
     def test_pairs_come_from_the_startup_config(self):
         pairs = paired_origins(_config().rag, REFS)
@@ -137,10 +139,10 @@ class TestKeyNeverFollowsToAnotherServer:
     def test_an_inherited_key_makes_the_change_fail(self):
         cfg = _cfg()
         with pytest.raises(ValueError, match="inherits from rag.llm.api_key"):
-            ro.validate_and_apply(cfg, {"rag.answer_llm.base_url": EVIL})
-        assert cfg.rag.answer_llm is None or cfg.rag.answer_llm.base_url is None
-        ro.validate_and_apply(cfg, {"rag.answer_llm.base_url": EVIL, "rag.answer_llm.api_key": "own"})
-        assert cfg.rag.answer_llm.api_key == "own" and cfg.rag.llm.api_key == "k"
+            ro.validate_and_apply(cfg, {"rag.contextual_llm.base_url": EVIL})
+        assert cfg.rag.contextual_llm is None or cfg.rag.contextual_llm.base_url is None
+        ro.validate_and_apply(cfg, {"rag.contextual_llm.base_url": EVIL, "rag.contextual_llm.api_key": "own"})
+        assert cfg.rag.contextual_llm.api_key == "own" and cfg.rag.llm.api_key == "k"
 
     def test_moving_rag_llm_clears_its_key_for_the_roles_that_inherit_it(self):
         cfg = _cfg()
@@ -184,13 +186,13 @@ class TestStartup:
         assert not any("sk-llm" in w for w in warnings)
 
     def test_a_config_reference_carried_to_another_server_is_cleared(self):
-        cfg = _config()  # rerank's key comes from ${RR_KEY} in config.yaml
+        cfg = _config()  # rerank's key comes from ${RR_KEY} in config/models.yaml
         n, warnings = self._load(cfg, {"rag.rerank.base_url": EVIL})
         assert n == 1 and cfg.rag.rerank.api_key is None
         assert any("rag.rerank.api_key cleared" in w for w in warnings)
 
     def test_a_stored_reference_is_checked_against_the_stored_server(self, monkeypatch):
-        """config.yaml pairs EMB_KEY with a second server only; rerank was moved there and
+        """config/models.yaml pairs EMB_KEY with a second server only; rerank was moved there and
         given ${EMB_KEY}. Whatever the row order, the key row is checked after the
         base_url row it was set with."""
         monkeypatch.setenv("EMB_KEY", "sk-emb")
@@ -268,7 +270,7 @@ class TestResetKey:
         ro.validate_and_apply(cfg, {"rag.rerank.api_key": "${RR_KEY}"})
         cfg.rag.rerank.api_key = "changed"
         with patch(f"{_SVC}.Config.get_config_model", return_value=cfg), \
-                patch.object(Config, "_config_path", str(yaml_file)), \
+                patch.object(Config, "_config_dir", config_dir_from_file(yaml_file)), \
                 patch(f"{_SVC}.RuntimeSettingsDB") as db, patch(f"{_SVC}._rebind"), patch(f"{_SVC}._audit"):
             db.delete.return_value = True
             assert svc.reset_setting("rag.rerank.api_key") is True
@@ -282,6 +284,6 @@ class TestResetKey:
                              encoding="utf-8")
         monkeypatch.setattr("src.config.config_manager.Config.get_env_refs", classmethod(
             lambda cls: {"rag.rerank.api_key": "RR_KEY", "rag.rerank.model": "M"}))
-        with patch.object(Config, "_config_path", str(yaml_file)):
+        with patch.object(Config, "_config_dir", config_dir_from_file(yaml_file)):
             assert svc._yaml_reference("rag.rerank.api_key") is None
             assert svc._yaml_reference("rag.rerank.model") is None  # not a key

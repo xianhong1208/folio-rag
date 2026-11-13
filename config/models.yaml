@@ -1,0 +1,75 @@
+# Model services — where every model role runs. Endpoints and keys are per machine:
+# set them in .env (see .env.example). An empty variable means "not set".
+rag:
+  # Deployment profile: local (default) | hybrid | cloud. cloud = every role is an HTTP
+  # endpoint, no local model is loaded, and keys must be ${ENV_VAR} references.
+  profile: local
+
+  # Embedding — turns documents and queries into vectors.
+  # ⚠️ Changing the model requires a full re-index (incompatible vector spaces).
+  embedding:
+    provider: "vllm"                            # openai / openai-compatible / azure / vllm / ollama / huggingface
+    model: "intfloat/multilingual-e5-large"
+    dimension: 1024
+    base_url: "${EMBEDDING_BASE_URL:-http://localhost:7075/v1}"
+    api_key: "${EMBEDDING_API_KEY:-not-needed}"   # self-hosted vLLM ignores the key
+    # e5 requires these prefixes; remove them for the bge family
+    query_prefix: "query: "
+    passage_prefix: "passage: "
+    embed_batch_size: 64                        # texts per embedding request
+    max_input_tokens: 512                       # model input window; breadcrumb / prefix are shortened to fit (never the chunk)
+
+  # LLM — answers (console Search Playground), evaluation, and the contextual prefixes
+  # written at index time unless contextual_llm below overrides it.
+  llm:
+    provider: "vllm"
+    model: "openai/gpt-oss-120b"
+    base_url: "${LLM_BASE_URL:-http://localhost:5052/v1}"
+    api_key: "${LLM_API_KEY:-not-needed}"
+
+  # Optional: a separate model for contextual prefixes. It writes only one short sentence
+  # of context per chunk, so a small, fast model is enough — and because it runs once per
+  # chunk, that saves a lot of indexing time and cost. Unset fields inherit from llm.
+  # contextual_llm:
+  #   model: "Qwen/Qwen3-4B"
+  #   base_url: "${CONTEXTUAL_LLM_BASE_URL:-}"
+  #   api_key: "${CONTEXTUAL_LLM_API_KEY:-}"
+
+  # Reranker — cross-encoder that reorders retrieval results.
+  # ⚠️ model must match the served name, or /v1/score returns 404 → silent fallback to the original order
+  rerank:
+    enabled: true
+    model: "mixedbread-ai/mxbai-rerank-base-v2"
+    base_url: "${RERANK_BASE_URL:-http://localhost:8787}"
+    api_key: "${RERANK_API_KEY:-not-needed}"
+    top_n: null                                 # null = determined by top_k
+    score_threshold: 0.25                       # rerank score floor: results often all filtered out → lower it; too much noise → raise it
+    # mxbai's official template ({text} placeholder); without it, scores all cluster high and the threshold becomes ineffective
+    query_template: "query: {text}"
+    document_template: "document: {text}\nYou are a search relevance expert who evaluates how well documents match search queries. For each query-document pair, carefully analyze the semantic relationship between them, then provide your binary relevance judgment (0 for not relevant, 1 for relevant).\nRelevance:"
+
+  # Speech-to-text for audio files and /v1/audio/transcriptions.
+  asr:
+    enabled: true                               # false = do not transcribe audio (even if the model is present)
+    provider: "fireredasr"                      # docling-whisper | openai-compatible | fireredasr
+    # openai-compatible only (OpenAI / Groq / self-hosted vLLM whisper):
+    base_url: "${ASR_BASE_URL:-}"               # e.g. http://localhost:8000/v1
+    api_key: "${ASR_API_KEY:-}"
+    model: null                                 # cloud model name, e.g. whisper-1
+
+  # Docling — structured PDF/DOCX parsing with local models.
+  docling:
+    device: "${DOCLING_DEVICE:-cuda}"           # cpu / cuda / cuda:0 / cuda:4
+    ocr_enabled: true
+    ocr_model_scale: "medium"                   # PP-OCRv6 tiny/small/medium; medium has the best accuracy
+    hf_offline: true                            # offline deployment: force use of the models under assets/
+    compile_models: false
+
+  # Optional: parse PDFs and images with a cloud vision model instead of docling.
+  # parsing:
+  #   pdf: cloud                                # local | cloud; unset = follow the profile
+  #   images: cloud
+  #   vision:
+  #     model: "gpt-4o-mini"
+  #     base_url: "${VISION_BASE_URL:-}"
+  #     api_key: "${VISION_API_KEY:-}"

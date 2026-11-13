@@ -1,15 +1,14 @@
 
 """Configuration management module.
 
-Reads and parses the YAML config file and provides config-driven application startup.
-Uses Pydantic models for type-safe configuration access.
+Reads the six files under config/ (see src/config/layout.py), merges them into one
+tree, expands ${VAR} references and validates the result with Pydantic.
 """
 
 import os
 import re
-import traceback
 from pathlib import Path
-from typing import Any, Dict, Optional, List
+from typing import Any, Dict, List, Optional, Tuple, Union
 import yaml
 from loguru import logger  # route errors to the log sink instead of only print_exc to stderr
 
@@ -23,11 +22,14 @@ from .model import (
     ModulesConfig,
     ConfigModel,
 )
+from .layout import CONFIG_FILES, LEGACY_CONFIG_FILE, REMOVED_SECTIONS
+
+DEFAULT_CONFIG_DIR = "config"
 
 
 # Environment-variable expansion for config values, matching MCP Gate's convention:
 # `${VAR}` / `${VAR:-default}`. Lets the DB URL (and any other value) come from the
-# environment while config.yaml keeps a safe default.
+# environment while the config files keep a safe default.
 ENV_VAR_PATTERN = re.compile(r"\$\{([^}:]+)(?::-([^}]*))?\}")
 
 
@@ -53,116 +55,146 @@ def expand_env_vars(value: Any) -> Any:
         return [expand_env_vars(item) for item in value]
     return value
 
-# Allowed config-file directories (whitelist)
-ALLOWED_CONFIG_DIRS: List[str] = [
-    "config",
-    ".",
-]
+class ConfigFileError(ValueError):
+    """The config/ directory cannot be read: a file is missing or unreadable, or one
+    setting is written in two files."""
+
+
+def _merge_into(merged: Dict[str, Any], data: Dict[str, Any], name: str,
+                origins: Dict[str, str], prefix: str = "") -> None:
+    """Deep-merge ``data`` (from file ``name``) into ``merged``.
+
+    Mappings merge key by key, so ``rag:`` may appear in several files; any other value
+    may be written once only. A setting in two files is an error naming both files."""
+    for key, value in data.items():
+        path = f"{prefix}.{key}" if prefix else str(key)
+        if key in merged:
+            if isinstance(merged[key], dict) and isinstance(value, dict):
+                _merge_into(merged[key], value, name, origins, path)
+                continue
+            raise ConfigFileError(
+                f"'{path}' is set in both config/{origins.get(path, '?')} and config/{name}; "
+                "a setting may be written in one file only")
+        merged[key] = value
+        origins[path] = name
+        if isinstance(value, dict):
+            for sub in _sub_paths(value, path):
+                origins[sub] = name
+
+
+def _sub_paths(value: Dict[str, Any], prefix: str):
+    """Every dotted path under a mapping (for duplicate reports)."""
+    for k, v in value.items():
+        p = f"{prefix}.{k}"
+        yield p
+        if isinstance(v, dict):
+            yield from _sub_paths(v, p)
+
+
+def load_config_dir(config_dir: Union[str, Path]) -> Tuple[Dict[str, Any], Dict[str, str]]:
+    """Read and merge the six files of ``config_dir`` (no ${VAR} expansion).
+
+    Returns (merged raw tree, dotted path -> file it came from).
+    Raises ConfigFileError for a missing file, invalid YAML, a file that is not a
+    mapping, or a setting written in two files."""
+    config_dir = Path(config_dir)
+    missing = [n for n in CONFIG_FILES if not (config_dir / n).is_file()]
+    if missing:
+        hint = ""
+        if (config_dir / LEGACY_CONFIG_FILE).is_file():
+            hint = (f" config/{LEGACY_CONFIG_FILE} is no longer read: convert it with "
+                    "`uv run python scripts/split_config.py` (docs/configuration.md, Upgrading).")
+        raise ConfigFileError(
+            f"Missing config file(s) in {config_dir}: {', '.join(missing)}.{hint}")
+    merged: Dict[str, Any] = {}
+    origins: Dict[str, str] = {}
+    for name in CONFIG_FILES:
+        try:
+            data = yaml.safe_load((config_dir / name).read_text(encoding="utf-8"))
+        except yaml.YAMLError as e:
+            raise ConfigFileError(f"config/{name} is not valid YAML: {e}") from None
+        if data is None:
+            continue
+        if not isinstance(data, dict):
+            raise ConfigFileError(f"config/{name} must be a mapping of settings")
+        _merge_into(merged, data, name, origins)
+    return merged, origins
+
+
+def legacy_config_warning(config_dir: Union[str, Path]) -> Optional[str]:
+    """The warning for an old single config.yaml left in ``config_dir``, if there is one."""
+    if not (Path(config_dir) / LEGACY_CONFIG_FILE).is_file():
+        return None
+    return (f"config/{LEGACY_CONFIG_FILE} is no longer read: since Folio 1.5 the configuration "
+            f"is {', '.join(CONFIG_FILES)} plus .env. Its values are IGNORED. Convert it with "
+            "`uv run python scripts/split_config.py`, then move it away "
+            "(docs/configuration.md, Upgrading from 1.4).")
+
+
+def removed_section_warnings(raw: Dict[str, Any]) -> List[str]:
+    out = []
+    rag = raw.get("rag") if isinstance(raw.get("rag"), dict) else {}
+    for sec in REMOVED_SECTIONS:
+        if sec.split(".", 1)[1] in rag:
+            out.append(f"{sec} was removed in Folio 1.5 and is ignored: answers and "
+                       "evaluation use rag.llm")
+    return out
 
 
 class Config:
     _config: Dict[str, Any] = {}
     _config_model: Optional[ConfigModel] = None
-    _module_configs: Dict[str, ModuleConfig] = {}  # Safe module-config storage (dict avoids setattr injection)
-    _config_path: Optional[str] = None  # Original yaml path (used by runtime settings reset to read factory values)
-    # Dotted path -> env-var name for values written as ${VAR} in the yaml (pre-expansion).
+    _config_dir: Optional[str] = None  # config/ directory (runtime settings reset re-reads factory values)
+    # Dotted path -> env-var name for values written as ${VAR} in the files (pre-expansion).
     # Lets the profile check tell an env-sourced API key from a literal one.
     _env_refs: Dict[str, str] = {}
-    
+
     @classmethod
-    def _validate_config_path(cls, config_path: str) -> Path:
-        """Validate the config-file path to prevent path-traversal attacks.
-
-        Args:
-            config_path: The user-specified config-file path.
-
-        Returns:
-            A validated, safe Path object.
-
-        Raises:
-            ValueError: If the path is unsafe or not within an allowed directory.
-        """
+    def _validate_config_dir(cls, config_dir: str) -> Path:
+        """The config directory, which must be inside the working directory
+        (guards against path traversal)."""
         base_dir = os.path.realpath(os.getcwd())
-        if not os.path.isabs(config_path):
-            full_path = os.path.realpath(os.path.join(base_dir, config_path))
-        else:
-            full_path = os.path.realpath(config_path)
-
+        full_path = os.path.realpath(os.path.join(base_dir, config_dir))
         if not full_path.startswith(base_dir + os.sep) and full_path != base_dir:
             raise ValueError(
-                f"Security Error: config_path '{config_path}' resolves to '{full_path}' "
-                f"which is outside the allowed base directory '{base_dir}'"
-            )
-        
-        rel_path = os.path.relpath(full_path, base_dir)
-        path_parts = Path(rel_path).parts
-        if path_parts:
-            first_dir = path_parts[0]
-            is_allowed = (
-                first_dir in ALLOWED_CONFIG_DIRS or
-                len(path_parts) == 1 or
-                "." in ALLOWED_CONFIG_DIRS
-            )
-            if not is_allowed:
-                raise ValueError(
-                    f"Security Error: config file must be in allowed directories: {ALLOWED_CONFIG_DIRS}"
-                )
-        
-        config_file = Path(full_path)
-        if config_file.suffix.lower() not in ['.yaml', '.yml']:
-            raise ValueError(
-                f"Security Error: config file must have .yaml or .yml extension, got '{config_file.suffix}'"
-            )
-        
-        return config_file
-    
+                f"Security Error: config dir '{config_dir}' resolves to '{full_path}' "
+                f"which is outside the allowed base directory '{base_dir}'")
+        return Path(full_path)
+
     @classmethod
-    def set_config(cls, config_path: str):
-        """Load and set the global config.
+    def set_config(cls, config_dir: str = DEFAULT_CONFIG_DIR):
+        """Load and set the global config from the six files in ``config_dir``.
 
-        Three steps: read YAML -> parse and validate with Pydantic -> store the detailed config of
-        each enabled module into the safe dict.
-
-        Args:
-            config_path: Absolute path to config.yaml.
+        Read and merge the files -> expand ${VAR} -> validate with Pydantic. File-level
+        problems (missing file, duplicate setting) raise ConfigFileError; a validation
+        error leaves the model unset (logged), and main.py refuses to start.
         """
-        cls._load_config(config_path)
-        cls._config_path = config_path
+        path = cls._validate_config_dir(config_dir)
+        warning = legacy_config_warning(path)
+        if warning:
+            logger.error(warning)
+        raw, _origins = load_config_dir(path)
+        for w in removed_section_warnings(raw):
+            logger.warning(w)
+        from src.config.profile import env_refs
+        cls._env_refs = env_refs(raw)
+        cls._config = expand_env_vars(raw)
+        cls._config_dir = str(path)
         try:
-            config_data = dict(cls._config)
-            modules_data = config_data.get('modules', {}) or {}
-            enabled_modules = modules_data.get('enabled', [])
-
-            # Simplify modules for Pydantic validation
-            config_data['modules'] = {'enabled': enabled_modules}
-
-            cls._config_model = ConfigModel(**config_data)
+            cls._config_model = ConfigModel(**cls._config)
             cls._check_profile(cls._config_model)
-
-            # Store module configs in a safe dict instead of using setattr;
-            # dict access doesn't touch object internals and is therefore safe.
-            cls._module_configs: Dict[str, ModuleConfig] = {}
-
-            for module_name in enabled_modules:
-                if module_name in modules_data and module_name != 'enabled':
-                    try:
-                        module_config = ModuleConfig(**modules_data[module_name])
-                        # Store in a dict rather than via setattr to block unsafe data flow
-                        cls._module_configs[module_name] = module_config
-                    except Exception:
-                        # Don't silently drop the whole module (e.g. rag_indexing disappearing ->
-                        # that endpoint silently 404s). Route to the log sink so ops sees it at a glance.
-                        logger.exception(
-                            f"Module config '{module_name}' failed to parse — "
-                            f"this module will be UNAVAILABLE"
-                        )
         except Exception:
-            # On config-model validation failure, log the full traceback (including field-level
-            # detail) to the log sink. The service still starts in degraded mode (_config_model=None,
-            # so all APIs 404); switching to fail-fast would be a separate decision.
-            logger.exception("Config model validation failed — starting in DEGRADED mode (no config model)")
+            logger.exception("Config model validation failed — no config model loaded")
             cls._config_model = None
-    
+
+    @classmethod
+    def factory_raw(cls) -> Dict[str, Any]:
+        """The config files as they are on disk now (merged, unexpanded): the factory
+        values the console's "reset" restores."""
+        if not cls._config_dir:
+            return {}
+        return load_config_dir(cls._config_dir)[0]
+
     @classmethod
     def _check_profile(cls, config_model: ConfigModel) -> None:
         """Validate rag.profile (src/config/profile.py). Errors raise (-> the model is not
@@ -184,36 +216,6 @@ class Config:
         """Dotted path -> env-var name for config values written as ${VAR} references."""
         return dict(cls._env_refs)
 
-    @classmethod
-    def _load_config(cls, config_path: str):
-        """Load the config file.
-
-        Args:
-            config_path: The config-file path.
-
-        Raises:
-            ValueError: If the path is unsafe.
-            FileNotFoundError: If the config file does not exist.
-        """
-        config_file_path = cls._validate_config_path(config_path)  # guards against path traversal
-        
-        try:
-            if config_file_path.exists():
-                with open(config_file_path, 'r', encoding='utf-8') as file:
-                    raw = yaml.safe_load(file) or {}
-                from src.config.profile import env_refs
-                cls._env_refs = env_refs(raw)
-                cls._config = expand_env_vars(raw)
-            else:
-                raise FileNotFoundError(f"Config file not found: {config_path}")
-                
-        except ValueError:
-            raise
-        except Exception as e:
-            print(f"Failed to load config file: {e}")
-            traceback.print_exc()
-            cls._config = {}
-    
     @classmethod
     def get_config(cls) -> Dict[str, Any]:
         """Return the full config dict."""
@@ -263,20 +265,15 @@ class Config:
 
     @classmethod
     def get_module_model(cls, module_name: str) -> Optional[ModuleConfig]:
-        """Get a single module's ModuleConfig (via safe dict access, avoiding attribute injection).
-
-        Args:
-            module_name: A key in config.modules.enabled.
-
-        Returns:
-            The ModuleConfig, or None (module not enabled / config not yet loaded).
-        """
-        if cls._config_model is None:
+        """An enabled module's wiring from the registry (src/config/modules.py), or None
+        when the module is not enabled or no config is loaded."""
+        if cls._config_model is None or module_name not in cls._config_model.modules.enabled:
             return None
-        return cls._module_configs.get(module_name, None)
+        from src.config.modules import MODULES
+        return MODULES.get(module_name)
 
 
-def get_config(config_path: str) -> Optional[ConfigModel]:
+def get_config(config_dir: str = DEFAULT_CONFIG_DIR) -> Optional[ConfigModel]:
     """Convenience function: load the config and return the parsed ConfigModel (if parsing succeeded)."""
-    Config.set_config(config_path)
+    Config.set_config(config_dir)
     return Config.get_config_model()

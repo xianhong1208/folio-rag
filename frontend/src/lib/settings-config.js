@@ -7,10 +7,8 @@ const LLM_PROVIDERS = ['', 'openai', 'openai-compatible', 'vllm', 'ollama', 'azu
 
 export const META = {
   'rag.embedding': { title: 'Embedding', icon: 'layers', probe: 'embedding', desc: 'Vectorization for documents and queries', warn: 'Changing any field makes existing folder vectors incompatible with the new model — those folders must be re-indexed. New uploads use the new settings immediately.' },
-  'rag.llm': { title: 'LLM', icon: 'spark', probe: 'llm', desc: 'Default model for every LLM role (contextual prefixes, answers, eval)' },
-  'rag.contextual_llm': { title: 'Contextual-Prefix LLM', icon: 'spark', probe: 'contextual_llm', desc: 'Override for contextual retrieval prefixes — usually a small, cheap model' },
-  'rag.answer_llm': { title: 'Answer LLM', icon: 'message', probe: 'answer_llm', desc: 'Override for answers in the Search Playground' },
-  'rag.eval_llm': { title: 'Eval LLM', icon: 'flask', probe: 'eval_llm', desc: 'Override for evaluation question generation and judging' },
+  'rag.llm': { title: 'LLM', icon: 'spark', probe: 'llm', desc: 'Answers, evaluation, and contextual prefixes unless overridden below' },
+  'rag.contextual_llm': { title: 'Contextual-Prefix LLM', icon: 'spark', probe: 'contextual_llm', desc: 'Optional. Writes only one short sentence of context per chunk, so a small, fast model is enough — and it runs once per chunk, which saves a lot of indexing time and cost' },
   'rag.contextual_retrieval': { title: 'Contextual Retrieval', icon: 'list', desc: 'LLM-generated context prefix per chunk at index time' },
   'rag.rerank': { title: 'Reranker', icon: 'sort', probe: 'rerank', desc: 'Cross-encoder re-scoring of retrieval results' },
   'rag.parsing': { title: 'Document Parsing', icon: 'scan', probe: 'vision', desc: 'Where PDFs and images are parsed: local docling models or a cloud vision model' },
@@ -43,8 +41,6 @@ export const FIELDS = {
   'rag.llm.timeout': { label: 'Timeout (s)', type: 'number' },
   'rag.llm.max_retries': { label: 'Retries', type: 'number', hint: 'On 429 / 5xx / timeouts, honoring Retry-After' },
   ...roleLlm('contextual_llm'),
-  ...roleLlm('answer_llm'),
-  ...roleLlm('eval_llm'),
   'rag.contextual_retrieval.enabled': { label: 'Enabled', type: 'bool', hint: 'Disabling speeds up indexing significantly at the cost of retrieval quality' },
   'rag.contextual_retrieval.max_context_length': { label: 'Max Prefix Length (chars)', type: 'number' },
   'rag.contextual_retrieval.max_concurrent': { label: 'Concurrent LLM Requests', type: 'number' },

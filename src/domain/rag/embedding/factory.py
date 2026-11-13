@@ -98,7 +98,7 @@ class EmbeddingProviderFactory:
         """Create provider from configuration object
 
         Args:
-            embedding_config: EmbeddingConfig from config.yaml
+            embedding_config: EmbeddingConfig from config/models.yaml
 
         Returns:
             IEmbeddingProvider instance

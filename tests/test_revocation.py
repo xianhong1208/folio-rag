@@ -391,10 +391,10 @@ def test_init_auth_installs_and_clears_the_list(monkeypatch):
     assert rv.get_revocation_list() is None
 
 
-def test_config_yaml_template_ships_disabled_with_env_refs():
+def test_auth_yaml_template_ships_disabled_with_env_refs():
     import yaml
     from src.config.profile import env_refs
-    raw = yaml.safe_load(open("config/config.yaml", encoding="utf-8"))
+    raw = yaml.safe_load(open("config/auth.yaml", encoding="utf-8"))
     rev = raw["auth"]["revocation"]
     refs = env_refs(raw)
     assert refs["auth.revocation.client_secret"] == "FOLIO_REVOCATION_CLIENT_SECRET"

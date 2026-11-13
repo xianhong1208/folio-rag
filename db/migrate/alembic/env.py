@@ -21,7 +21,7 @@ _project_root = os.path.dirname(_db_dir)
 if _project_root not in sys.path:
     sys.path.insert(0, _project_root)
 
-# Change cwd to project root before importing Config so config/config.yaml
+# Change cwd to project root before importing Config so config/*.yaml
 # resolves via its relative paths.
 _original_cwd = os.getcwd()
 os.chdir(_project_root)

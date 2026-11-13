@@ -117,7 +117,7 @@ jobs:
           --health-timeout 5s
           --health-retries 10
     env:
-      # config/config.yaml reads ${DATABASE_URL}; the harness creates and drops its
+      # config/database.yaml reads ${DATABASE_URL}; the harness creates and drops its
       # own throwaway database ($RAG_ITEST_DB) on this server.
       DATABASE_URL: postgresql://postgres:postgres@localhost:5432/postgres
       RAG_RUN_DB_ITESTS: '1'

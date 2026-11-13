@@ -24,6 +24,10 @@ Folio 是一套開源、給 Model Context Protocol 用的檢索增強生成(RAG)
 [CHANGELOG](CHANGELOG.md);接下來的規劃見[路線圖](ROADMAP.zh-TW.md)(1.5:Docker 映像檔、備份,以及
 透過 OpenAI 相容 API 做 OCR 與語音轉文字)。
 
+> **1.5 的變更(已在 `dev`,尚未發佈):** `config/config.yaml` 拆成 `config/` 底下的六個檔案,所有機密與每台機器各自的值
+> 都放在 `.env`,舊檔不再讀取;移除 `rag.answer_llm` 與 `rag.eval_llm`(回答與評估都用 `rag.llm`)。
+> `scripts/split_config.py` 可轉換 1.4 的設定,詳見[從 1.4 升級](docs/configuration.zh-TW.md#從-14-升級)。
+
 > **1.5 將移除:** 內建的 OCR、內建的語音轉文字(FireRedASR、docling-whisper)以及 `/v1` 媒體端點。
 > 1.4.x 仍可照常使用,但會在日誌中提出警告,`/v1` 的回應也會帶 `Deprecation` 標頭。請改用 OpenAI
 > 相容的視覺模型讀取掃描 PDF 與圖片、OpenAI 相容的轉錄端點處理音訊,例如都由
@@ -69,9 +73,9 @@ cd folio-rag
 # 全雲端:直接 `uv sync`。
 uv sync --extra local --group cuda
 
-cp .env.example .env         # 設定 DATABASE_URL(PostgreSQL + pgvector)
-# 編輯 config/config.yaml:rag.embedding / rag.llm / rag.rerank 端點、
-#                         auth.issuer / auth.audience、server.port
+cp .env.example .env         # DATABASE_URL(PostgreSQL + pgvector)、模型端點與金鑰、
+                             # MCP_GATE_URL / FOLIO_AUDIENCE:所有機密與每台機器各自的值
+# 模型、檢索調校、port:config/models.yaml、retrieval.yaml、system.yaml(裡面沒有機密)
 
 uv run python main.py        # 啟動時會建立 schema 並執行 migration
 ```
@@ -88,13 +92,11 @@ MCP Gate 只會為它認得的 audience 簽發 token。
 **1. 在 MCP Gate 註冊伺服器。** *Services → Register Service*,填入這台伺服器的 host、port 與路徑
 (`/mcp`)。audience 預設就是 MCP 網址,例如 `http://127.0.0.1:5039/mcp`。
 
-**2. 讓 Folio 指向 MCP Gate**,在 `config/config.yaml`:
+**2. 讓 Folio 指向 MCP Gate**,寫在 `.env`(由 `config/auth.yaml` 讀取):
 
-```yaml
-auth:
-  enabled: true
-  issuer:   "http://localhost:4568"          # MCP Gate 網址(RS256 JWKS issuer)
-  audience: "http://127.0.0.1:5039/mcp"      # 必須和在 MCP Gate 註冊的 audience 一字不差
+```bash
+MCP_GATE_URL=http://localhost:4568          # MCP Gate 網址(RS256 JWKS issuer)
+FOLIO_AUDIENCE=http://127.0.0.1:5039/mcp    # 必須和在 MCP Gate 註冊的 audience 一字不差
 ```
 
 **3. 建立資料夾並加入文件**,可以在主控台(*Library → New Folder → Upload Files*,用 MCP Gate 發的
@@ -128,7 +130,7 @@ Folio_product-docs  mode="search"  query="how do I rotate the signing key?"
 | Profile | 模型 | 安裝 |
 |---|---|---|
 | `local`(預設) | 什麼都可以。內附的設定呼叫自架的 embedding、LLM 與 reranker 端點,並在行程內執行 CKIP 斷詞、含 OCR 的 Docling 解析與 FireRedASR 語音轉文字 | `uv sync --extra local --group rocm-r714 \| cuda \| cpu` |
-| `hybrid` | 同上,用於自架與雲端端點混用;直接寫在 `config.yaml` 裡的 API 金鑰會被警告 | 同 `local` |
+| `hybrid` | 同上,用於自架與雲端端點混用;直接寫在設定檔裡的 API 金鑰會被警告 | 同 `local` |
 | `cloud` | 每個角色都是 HTTP 端點,金鑰必須是 `${ENV}` 參照;不需要 torch,也不下載模型 | `uv sync` |
 
 用 `rag.profile` 設定,詳見[雲端 profile](docs/configuration.zh-TW.md#雲端-profile)。主控台與不需驗證的
@@ -140,7 +142,7 @@ token。Docker 映像檔與 compose 檔預計在 1.5 推出。
 | | |
 |---|---|
 | [運作原理](docs/how-it-works.zh-TW.md) | 檢索管線、檢索細節(BM25、斷詞、重排、延遲、相關度門檻)、量測檢索品質、每項功能的細節 |
-| [設定](docs/configuration.zh-TW.md) | 常用的每個設定,以及雲端 profile |
+| [設定](docs/configuration.zh-TW.md) | 六個設定檔與 `.env`、常用的每個設定、雲端 profile、從 1.4 升級 |
 | [驗證](docs/auth.zh-TW.md) | 依 MCP Gate 使用者的資料夾歸屬,以及 token 撤銷 feed |
 | [主控台](docs/console.zh-TW.md) | 登入、兩種權限層級、每個頁面、升級或更換 embedding 模型後重新索引 |
 | [API 參考](docs/api.zh-TW.md) | MCP、REST、主控台與健康檢查端點 |

@@ -3,8 +3,8 @@
 
 apply:   validate -> mutate ConfigModel in place -> persist to DB (survives
          restart) -> rebind live objects.
-reset:   delete the DB override -> restore the field from its config.yaml
-         value -> rebind.
+reset:   delete the DB override -> restore the field from its value in the
+         config files (config/*.yaml, as on disk now) -> rebind.
 startup: at main.py startup, overlay the DB overrides onto the freshly loaded
          ConfigModel. The adapter is not built yet, so there is nothing to
          rebind — the first construction picks up the overlaid values.
@@ -42,9 +42,10 @@ def load_overrides_on_startup() -> int:
     from db.db import get_engine
     get_engine()
     config_model = Config.get_config_model()
-    # Which key variables config.yaml pairs with which servers: taken before any override.
+    # Which key variables the config files pair with which servers: taken before any override.
     ro.capture_startup(config_model)
     overrides = RuntimeSettingsDB.load_all()
+    overrides = _drop_removed_roles(overrides)
     if not overrides:
         return 0
     applied = 0
@@ -59,10 +60,25 @@ def load_overrides_on_startup() -> int:
             logger.warning(f"[RUNTIME] Skipping invalid override {path}={shown!r}: {e}")
     for path in ro.enforce_reference_pairing(config_model):
         logger.warning(f"[RUNTIME] {path} cleared: its ${{...}} reference is not paired with "
-                       "the server this role now points to (config.yaml decides which). "
+                       "the server this role now points to (config/models.yaml decides which). "
                        "Enter the key again on the Settings page.")
     logger.info(f"[RUNTIME] Applied {applied}/{len(overrides)} runtime override(s) on startup")
     return applied
+
+
+def _drop_removed_roles(overrides: Dict[str, Any]) -> Dict[str, Any]:
+    """Delete stored overrides of the LLM roles removed in 1.5 (rag.answer_llm,
+    rag.eval_llm): answers and evaluation use rag.llm now. Returns the rest."""
+    from src.config.layout import REMOVED_SECTIONS
+    kept: Dict[str, Any] = {}
+    for path, value in overrides.items():
+        if any(path.startswith(sec + ".") for sec in REMOVED_SECTIONS):
+            RuntimeSettingsDB.delete(path)
+            logger.warning(f"[RUNTIME] Dropped stored setting {path}: that LLM role was removed "
+                           "in Folio 1.5 (answers and evaluation use rag.llm)")
+            continue
+        kept[path] = value
+    return kept
 
 
 def get_settings_view() -> Dict[str, Any]:
@@ -129,11 +145,11 @@ def apply_settings(patch: Dict[str, Any], updated_by: Optional[str] = None
 
 
 def reset_setting(path: str, updated_by: Optional[str] = None) -> bool:
-    """Remove a single override, restore the config.yaml value, and rebind. Returns whether an override existed to delete.
+    """Remove a single override, restore the config files' value, and rebind. Returns whether an override existed to delete.
 
     The factory value is resolved and validated *before* the override row is deleted:
     deleting first meant a failure here (e.g. a whole optional section missing from
-    config.yaml) left the DB reset but the running value unchanged, behind a 500.
+    the config files) left the DB reset but the running value unchanged, behind a 500.
     """
     if path not in ro.EDITABLE:
         raise ValueError(f"Setting path is not editable: {path}")
@@ -177,8 +193,18 @@ def audit_log(limit: int = 100):
     return SettingsAuditDB.recent(limit)
 
 
+def _factory_node(path: str) -> Any:
+    """The raw (unexpanded) value at a dotted path in the config files; KeyError if absent."""
+    node: Any = Config.factory_raw()
+    for part in path.split("."):
+        if not isinstance(node, dict):
+            raise KeyError(path)
+        node = node[part]
+    return node
+
+
 def _yaml_reference(path: str) -> Optional[str]:
-    """For a key config.yaml writes as a ``${VAR}`` reference: that reference, unexpanded.
+    """For a key the config files write as a ``${VAR}`` reference: that reference, unexpanded.
 
     Resetting a key must restore the reference, not the expanded key: under the cloud
     profile a literal key is refused (the reset failed with 422), and anywhere else it
@@ -186,38 +212,26 @@ def _yaml_reference(path: str) -> Optional[str]:
     """
     if path not in ro.SECRET_PATHS or not Config.get_env_refs().get(path):
         return None
-    import yaml
     from src.config.profile import WHOLE_ENV_REF_RE
     try:
-        with open(Config._config_path, "r", encoding="utf-8") as f:
-            node: Any = yaml.safe_load(f) or {}
-        for part in path.split("."):
-            node = node[part]
+        node = _factory_node(path)
     except Exception:
         return None
     return node if isinstance(node, str) and WHOLE_ENV_REF_RE.match(node) else None
 
 
 def _yaml_value(path: str) -> Any:
-    """The factory value at a dotted path: config.yaml on disk (``${ENV}`` placeholders
-    expanded, as at startup), else the field's pydantic default.
+    """The factory value at a dotted path: the merged config files on disk (``${ENV}``
+    placeholders expanded, as at startup), else the field's pydantic default.
 
     The default is found by walking the schema *types*, not the live objects: an
-    optional section absent from config.yaml (e.g. ``rag.asr``) is None at runtime,
+    optional section absent from the files (e.g. ``rag.asr``) is None at runtime,
     and walking instances raised AttributeError (a 500 on reset).
     """
     import typing
-    import yaml
     from src.config.config_manager import expand_env_vars
-    raw_path = Config._config_path
     try:
-        if raw_path:
-            with open(raw_path, "r", encoding="utf-8") as f:
-                data = expand_env_vars(yaml.safe_load(f) or {})
-            node: Any = data
-            for part in path.split("."):
-                node = node[part]
-            return node
+        return expand_env_vars(_factory_node(path))
     except Exception:
         pass
     # Fallback: the field's declared default, found through the model classes

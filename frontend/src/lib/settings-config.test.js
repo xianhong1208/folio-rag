@@ -34,14 +34,22 @@ import { normalizeValue, keyIndicator, runsLabel, probeText } from './settings-c
 
 describe('per-role settings', () => {
   it('every probing section names a backend role', () => {
-    const roles = ['embedding', 'llm', 'contextual_llm', 'answer_llm', 'eval_llm', 'rerank', 'vision', 'asr']
+    const roles = ['embedding', 'llm', 'contextual_llm', 'rerank', 'vision', 'asr']
     for (const meta of Object.values(META)) if (meta.probe) expect(roles).toContain(meta.probe)
+  })
+  it('has no removed LLM roles, and says a small model is enough for contextual prefixes', () => {
+    for (const path of [...Object.keys(META), ...Object.keys(FIELDS)]) {
+      expect(path.startsWith('rag.answer_llm')).toBe(false)
+      expect(path.startsWith('rag.eval_llm')).toBe(false)
+    }
+    expect(META['rag.contextual_llm'].desc).toMatch(/one short sentence/)
+    expect(META['rag.contextual_llm'].desc).toMatch(/small, fast model/)
   })
   it('every api_key field is a secret input', () => {
     for (const [path, f] of Object.entries(FIELDS)) if (path.endsWith('.api_key')) expect(f.type).toBe('secret')
   })
   it('empty nullable values mean unset (inherit / follow the profile)', () => {
-    expect(normalizeValue(FIELDS['rag.answer_llm.model'], '')).toBeNull()
+    expect(normalizeValue(FIELDS['rag.contextual_llm.model'], '')).toBeNull()
     expect(normalizeValue(FIELDS['rag.parsing.pdf'], '')).toBeNull()
     expect(normalizeValue(FIELDS['rag.llm.model'], '')).toBe('')
     expect(normalizeValue(undefined, 'x')).toBe('x')

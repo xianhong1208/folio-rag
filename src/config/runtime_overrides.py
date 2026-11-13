@@ -1,7 +1,7 @@
 
 """Runtime settings overrides — whitelist, validation, in-place mutation (the core of admin hot-reconfig).
 
-Layering: config.yaml = factory defaults (read-only) -> the RuntimeSettings table = live overrides
+Layering: config/*.yaml = factory defaults (read-only) -> the RuntimeSettings table = live overrides
 -> the merged ConfigModel = the single source of truth every service reads.
 
 Why in-place setattr rather than swapping in a fresh ConfigModel: consumers (context_generator
@@ -35,17 +35,15 @@ EDITABLE: Dict[str, str] = {
     "rag.embedding.request_dimensions": "warn",
     "rag.embedding.timeout": "live",
     "rag.embedding.max_retries": "live",
-    # Model services — default LLM (every LLM role inherits unset fields from it)
+    # Model services — the LLM (answers, evaluation; contextual_llm inherits unset fields)
     "rag.llm.provider": "live",
     "rag.llm.model": "live",
     "rag.llm.base_url": "live",
     "rag.llm.api_key": "live",
     "rag.llm.timeout": "live",
     "rag.llm.max_retries": "live",
-    # Per-role LLM overrides (empty = inherit rag.llm)
-    **{f"rag.{role}.{f}": "live"
-       for role in ("contextual_llm", "answer_llm", "eval_llm")
-       for f in ("provider", "model", "base_url", "api_key")},
+    # Contextual-prefix LLM override (empty = inherit rag.llm)
+    **{f"rag.contextual_llm.{f}": "live" for f in ("provider", "model", "base_url", "api_key")},
     # Contextual retrieval behavior
     "rag.contextual_retrieval.enabled": "live",
     "rag.contextual_retrieval.max_context_length": "live",
@@ -152,7 +150,7 @@ _RANGES: Dict[str, Tuple[float, float]] = {
     "rag.parsing.max_pages_per_file": (0, 1_000_000),
     "rag.parsing.max_pages_per_day": (0, 100_000_000),
 }
-_LLM_ROLES = ("contextual_llm", "answer_llm", "eval_llm")
+_LLM_ROLES = ("contextual_llm",)
 _NULLABLE = {"rag.rerank.top_n", "rag.contextual_retrieval.reasoning_effort",
              # per-role LLM overrides: empty = inherit rag.llm
              *(f"rag.{r}.{f}" for r in _LLM_ROLES for f in ("provider", "model", "base_url")),
@@ -243,7 +241,7 @@ SECRET_PATHS = {p for p in EDITABLE if p.endswith("api_key")}
 MASK = "•••"
 
 # Path prefix -> rebind group (dispatch key for rag_context.apply_runtime_changes).
-# answer_llm / eval_llm / parsing are read per request or per file, so they need no rebind.
+# parsing is read per file, so it needs no rebind.
 REBIND_GROUPS = ("rag.embedding", "rag.llm", "rag.contextual_llm", "rag.contextual_retrieval",
                  "rag.rerank", "rag.asr", "rag.retrieval")
 
@@ -251,13 +249,13 @@ REBIND_GROUPS = ("rag.embedding", "rag.llm", "rag.contextual_llm", "rag.contextu
 # Console writes store the ${VAR} reference in the DB, never the resolved key.
 _secret_source: Dict[str, Optional[str]] = {}
 
-# Variable -> origins config.yaml sends it to (see src/config/key_references.py), taken
+# Variable -> origins config/models.yaml sends it to (see src/config/key_references.py), taken
 # from the startup config before any runtime override is applied.
 _startup_pairs: Optional[Dict[str, set]] = None
 
 
 def capture_startup(config_model, refs: Optional[Dict[str, str]] = None) -> Dict[str, set]:
-    """Record which key variables config.yaml pairs with which servers. Called at startup
+    """Record which key variables config/models.yaml pairs with which servers. Called at startup
     before the stored overrides are applied; ``refs`` defaults to Config's references."""
     global _startup_pairs
     from src.config.key_references import paired_origins
@@ -280,7 +278,7 @@ def _reset_startup_for_tests() -> None:
 
 
 def secret_ref(path: str) -> Optional[str]:
-    """Env-var name a secret currently comes from (console write first, then config.yaml)."""
+    """Env-var name a secret currently comes from (console write first, then config/models.yaml)."""
     if path in _secret_source:
         return _secret_source[path]
     from src.config.config_manager import Config
@@ -301,7 +299,7 @@ def _effective_refs(pending: Dict[str, Optional[str]]) -> Dict[str, str]:
 def _resolve_secret(path: str, value: Any, key_vars) -> Tuple[Any, Optional[str]]:
     """``${VAR}`` → (resolved key, "VAR"); literal → (value, None). Rejects the mask.
 
-    Only a variable in ``key_vars`` (those config.yaml uses as a model key) is ever read;
+    Only a variable in ``key_vars`` (those config/models.yaml uses as a model key) is ever read;
     any other reference, set or not, gets the same generic error, so the answer never
     tells whether a variable exists. Which server it may go to is checked by the caller.
     """
@@ -386,8 +384,8 @@ def validate_and_apply(config_model, patch: Dict[str, Any], *, carry_check: bool
     All-or-nothing: any single validation failure -> ValueError, and nothing is written.
 
     Model keys (see src/config/key_references.py):
-    - a ``${VAR}`` key is accepted only for a variable config.yaml uses as a model key,
-      and only while the role's server (base_url origin) is one config.yaml pairs it with;
+    - a ``${VAR}`` key is accepted only for a variable config/models.yaml uses as a model key,
+      and only while the role's server (base_url origin) is one that file pairs it with;
       any other reference gets one generic error;
     - when a role's base_url moves to another origin and the patch gives that role no new
       key, its own key is cleared (``applied`` holds ``None`` for it, and a warning says
@@ -463,7 +461,7 @@ def validate_and_apply(config_model, patch: Dict[str, Any], *, carry_check: bool
                         f"and it would send the key it inherits from {a.key_path} there; give it "
                         "its own api_key in the same change")
 
-        # A reference only for the server config.yaml pairs it with.
+        # A reference only for the server config/models.yaml pairs it with.
         refs = _effective_refs(pending_refs)
         for path, _role in dropped:
             refs.pop(path, None)
@@ -508,7 +506,7 @@ def validate_and_apply(config_model, patch: Dict[str, Any], *, carry_check: bool
 
 def enforce_reference_pairing(config_model) -> List[str]:
     """Startup, after the stored overrides: clear any key that comes from a ``${VAR}``
-    reference while its role points at a server config.yaml does not pair with that
+    reference while its role points at a server config/models.yaml does not pair with that
     variable (e.g. a base_url override stored before 1.4.2). Returns the cleared paths."""
     from src.config.key_references import reference_allowed, role_keys
     rag = getattr(config_model, "rag", None)

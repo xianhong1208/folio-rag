@@ -122,11 +122,11 @@ class FileIndex(Base):
 
 
 class RuntimeSetting(Base):
-    """Runtime setting overrides, layered on top of config.yaml at startup.
+    """Runtime setting overrides, layered on top of config/*.yaml at startup.
 
     key = dotted path (e.g. "rag.rerank.score_threshold"); value is JSONB wrapped as
     {"value": ...} because a bare scalar at the JSONB top level behaves inconsistently
-    across drivers. config.yaml stays the factory default; this table holds live,
+    across drivers. config/*.yaml stays the factory default; this table holds live,
     individually resettable adjustments.
     """
     __tablename__ = 'RuntimeSettings'

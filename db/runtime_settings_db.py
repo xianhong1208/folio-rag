@@ -2,7 +2,7 @@
 """RuntimeSettings persistence — the override layer for settings hot-changed
 from the admin panel.
 
-config.yaml holds the read-only factory defaults; this table holds live
+config/*.yaml holds the read-only factory defaults; this table holds live
 adjustments (dotted-path key -> value). At startup main.py reads them back and
 overlays them onto the ConfigModel; every subsequent admin change is
 write-through.
@@ -49,7 +49,7 @@ class RuntimeSettingsDB(BaseDB):
                 rows = session.query(RuntimeSetting).all()
                 return {r.key: (r.value or {}).get("value") for r in rows}
         except Exception as e:
-            log.warning(f"RuntimeSettings load_all failed (using yaml defaults only): {e}")
+            log.warning(f"RuntimeSettings load_all failed (using config-file defaults only): {e}")
             return {}
 
     @classmethod
@@ -66,7 +66,7 @@ class RuntimeSettingsDB(BaseDB):
 
     @classmethod
     def delete(cls, key: str) -> bool:
-        """Remove a single override (reverting to the yaml default). Returns
+        """Remove a single override (reverting to the config-file default). Returns
         whether a row was actually deleted."""
         with DBSession() as session:
             row = session.get(RuntimeSetting, key)

@@ -3,7 +3,7 @@
 
 config.modules.rag.mcp_tools.function_name points at this module's
 register_agentic_tools. (The module and function names describe the agentic,
-three-mode query and are referenced by existing config.yaml files, so they did
+three-mode query and are referenced by existing config files, so they did
 not change when the project was renamed to Folio.) It does two things:
 1. Initializes DynamicToolManager (bound to the FastMCP instance).
 2. Provides the _query function — injected as the backend when

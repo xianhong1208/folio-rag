@@ -14,23 +14,13 @@ import argparse
 import sys
 from pathlib import Path
 
-# Load the project's .env before anything reads os.environ. Config expands
-# ${DATABASE_URL:-...}, so DATABASE_URL must be present first. override=True lets
-# this project's .env win over a stale global export lingering in the shell.
-def _load_dotenv() -> None:
-    import os
-    env_file = Path(__file__).resolve().parent / ".env"
-    if not env_file.exists():
-        return
-    for line in env_file.read_text(encoding="utf-8").splitlines():
-        line = line.strip()
-        if not line or line.startswith("#") or "=" not in line:
-            continue
-        key, _, value = line.partition("=")
-        os.environ[key.strip()] = value.strip().strip('"').strip("'")
+# Load the project's .env before anything reads os.environ. config/*.yaml expands
+# ${DATABASE_URL:-...}, ${LLM_BASE_URL:-...} and the other per-machine values, so they
+# must be present first. override=True lets this project's .env win over a stale global
+# export lingering in the shell.
+from src.config.dotenv import load_dotenv as _load_dotenv  # noqa: E402
 
-
-_load_dotenv()
+_load_dotenv(Path(__file__).resolve().parent / ".env")
 
 # Let the PyTorch CUDA allocator grow segments instead of fragmenting them: on a
 # card shared with vLLM, fragmentation alone causes out-of-memory errors in the
@@ -63,7 +53,7 @@ import uvicorn
 from app import create_app
 from db import db as db_module
 from db.migrate import DatabaseMigrator
-from src.config.config_manager import Config
+from src.config.config_manager import Config, ConfigFileError
 from src.log import get_server_logger, setup_logger
 
 
@@ -123,7 +113,9 @@ def main():
         description="Folio MCP Server",
         formatter_class=argparse.ArgumentDefaultsHelpFormatter,
     )
-    parser.add_argument("--config", type=str, default="config/config.yaml")
+    parser.add_argument("--config-dir", type=str, default="config",
+                        help="Directory holding the six config files (database.yaml, auth.yaml, "
+                             "models.yaml, mcp.yaml, retrieval.yaml, system.yaml)")
     parser.add_argument("--host", type=str)
     parser.add_argument("--port", type=int)
     parser.add_argument("--log-level", type=str,
@@ -143,10 +135,10 @@ def main():
     args = parser.parse_args()
 
     try:
-        Config.set_config(args.config)
+        Config.set_config(args.config_dir)
         config_obj = Config.get_config_model()
         if not config_obj:
-            raise RuntimeError("Pydantic ConfigModel not loaded")
+            raise RuntimeError("the configuration is invalid (see the error above)")
 
         log_conf = Config.get_logging_config()
         if not log_conf:
@@ -183,7 +175,7 @@ def main():
                 ensure_database_ready(db_url, logger)
             except Exception as e:
                 logger.error(f"❌ DB bootstrap failed: {e}")
-                logger.error("   Check Postgres is running and credentials in config.yaml are correct")
+                logger.error("   Check Postgres is running and DATABASE_URL (.env / config/database.yaml) is correct")
                 sys.exit(1)
 
             # Compare the vector-table dimension against config to catch a model swap or
@@ -237,11 +229,11 @@ def main():
 
         for change in getattr(config_obj.app, "renamed_defaults", []) if config_obj.app else []:
             logger.warning(
-                f"⚠️ config.yaml still has the pre-Folio default ({change}); "
-                "update config/config.yaml to silence this warning")
+                f"⚠️ the config still has the pre-Folio default ({change}); "
+                "update config/system.yaml or config/mcp.yaml to silence this warning")
 
         logger.info(f"Starting {getattr(config_obj.app, 'title', None) or 'Folio MCP Server'}...")
-        logger.info(f"Config: {args.config}")
+        logger.info(f"Config: {args.config_dir}/ (+ .env)")
         logger.info(f"URL: http://{host}:{port}")
         mcp_endpoint = "mcp" if transport == "http" else transport
         logger.info(f"MCP Endpoint: http://{host}:{port}/{mcp_endpoint}")
@@ -282,9 +274,9 @@ def main():
             access_log=False,  # client origin/status is already logged during token validation
         )
 
-    except FileNotFoundError as e:
+    except ConfigFileError as e:
         from loguru import logger as base_logger
-        base_logger.error(f"Configuration file not found: {e}")
+        base_logger.error(f"Configuration error: {e}")
         sys.exit(1)
     except Exception as e:
         from loguru import logger as base_logger

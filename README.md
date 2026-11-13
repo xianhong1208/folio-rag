@@ -26,6 +26,12 @@ server; answers come in the question's language. See the [CHANGELOG](CHANGELOG.m
 [ROADMAP](ROADMAP.md) for what comes next (1.5: a Docker image, backups, and OCR and speech through
 an OpenAI-compatible API).
 
+> **Changed in 1.5 (on `dev`, not released yet):** `config/config.yaml` is split into six files
+> under `config/` with every secret and per-machine value in `.env`, and the old file is no longer
+> read; `rag.answer_llm` and `rag.eval_llm` are removed (answers and evaluation use `rag.llm`).
+> `scripts/split_config.py` converts a 1.4 config: see
+> [Upgrading from 1.4](docs/configuration.md#upgrading-from-14).
+
 > **Removed in 1.5:** the built-in OCR, the built-in speech-to-text (FireRedASR, docling-whisper)
 > and the `/v1` media endpoints. 1.4.x keeps them working and warns in the log; `/v1` responses
 > carry a `Deprecation` header. Move to an OpenAI-compatible vision model for scanned PDFs and
@@ -75,9 +81,9 @@ cd folio-rag
 # All-cloud: plain `uv sync`.
 uv sync --extra local --group cuda
 
-cp .env.example .env         # set DATABASE_URL (PostgreSQL + pgvector)
-# edit config/config.yaml: rag.embedding / rag.llm / rag.rerank endpoints,
-#                          auth.issuer / auth.audience, server.port
+cp .env.example .env         # DATABASE_URL (PostgreSQL + pgvector), model endpoints and keys,
+                             # MCP_GATE_URL / FOLIO_AUDIENCE: every secret and per-machine value
+# models, retrieval tuning, port: config/models.yaml, retrieval.yaml, system.yaml (no secrets there)
 
 uv run python main.py        # creates the schema and runs migrations on start
 ```
@@ -94,13 +100,11 @@ there first: MCP Gate only issues tokens for audiences it knows.
 **1. Register the server in MCP Gate.** *Services → Register Service*, with this server's host, port
 and path (`/mcp`). The audience defaults to the MCP URL, for example `http://127.0.0.1:5039/mcp`.
 
-**2. Point Folio at MCP Gate** in `config/config.yaml`:
+**2. Point Folio at MCP Gate** in `.env` (`config/auth.yaml` reads them):
 
-```yaml
-auth:
-  enabled: true
-  issuer:   "http://localhost:4568"          # MCP Gate base URL (RS256 JWKS issuer)
-  audience: "http://127.0.0.1:5039/mcp"      # must equal the audience registered in MCP Gate
+```bash
+MCP_GATE_URL=http://localhost:4568          # MCP Gate base URL (RS256 JWKS issuer)
+FOLIO_AUDIENCE=http://127.0.0.1:5039/mcp    # must equal the audience registered in MCP Gate
 ```
 
 **3. Create a folder and add documents**, in the console (*Library → New Folder → Upload Files*,
@@ -135,7 +139,7 @@ its source file and heading.
 | Profile | Models | Install |
 |---|---|---|
 | `local` (default) | Anything goes. The shipped config calls self-hosted embedding, LLM and reranker endpoints, and runs CKIP segmentation, Docling parsing with OCR and FireRedASR speech-to-text in-process | `uv sync --extra local --group rocm-r714 \| cuda \| cpu` |
-| `hybrid` | The same, for a mix of self-hosted and cloud endpoints; API keys written literally in `config.yaml` are warned about | as `local` |
+| `hybrid` | The same, for a mix of self-hosted and cloud endpoints; API keys written literally in the config files are warned about | as `local` |
 | `cloud` | Every role is an HTTP endpoint and keys must be `${ENV}` references; no torch and no model downloads | `uv sync` |
 
 Set it with `rag.profile`; see [Cloud profile](docs/configuration.md#cloud-profile). Keep the
@@ -148,7 +152,7 @@ planned for 1.5.
 | | |
 |---|---|
 | [How it works](docs/how-it-works.md) | the pipeline, retrieval in detail (BM25, segmentation, reranking, latency, relevance cutoff), measuring retrieval, every feature in detail |
-| [Configuration](docs/configuration.md) | every setting you are likely to touch, and the cloud profile |
+| [Configuration](docs/configuration.md) | the six config files and `.env`, every setting you are likely to touch, the cloud profile, upgrading from 1.4 |
 | [Authentication](docs/auth.md) | folder ownership by MCP Gate user, and the token revocation feed |
 | [Console](docs/console.md) | signing in, the two permission tiers, each page, re-indexing after an upgrade or an embedding model change |
 | [API reference](docs/api.md) | MCP, REST, console and health endpoints |
