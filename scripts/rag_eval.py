@@ -128,7 +128,7 @@ def _gen_question(client, model: str, chunk_text: str) -> str:
 def generate_eval_set(folder, n: int, out_path: str):
     from src.domain.rag.context_generator import ContextGenerator
     from src.domain.rag.llm_client import model_name, role_llm
-    llm = role_llm("eval_llm")  # rag.eval_llm over rag.llm
+    llm = role_llm("llm")
     client = ContextGenerator._create_sync_client(llm)
     model = model_name(llm)
     samples = _sample_chunks(folder, n)
@@ -443,7 +443,7 @@ async def evaluate(folder, items, k: int, progress=None, judge: bool = False) ->
     if judge:
         from src.domain.rag.context_generator import ContextGenerator
         from src.domain.rag.llm_client import model_name, role_llm
-        llm = role_llm("eval_llm")  # rag.eval_llm over rag.llm
+        llm = role_llm("llm")
         jclient = ContextGenerator._create_sync_client(llm)
         jmodel = model_name(llm)
 
@@ -637,11 +637,14 @@ def main():
                     help="force-regenerate the eval set (use after reindex — node_ids change)")
     ap.add_argument("--judge", action="store_true",
                     help="also LLM-grade answer quality (faithfulness + relevance; 2 extra LLM calls/item)")
-    ap.add_argument("--config", default="config/config.yaml")
+    ap.add_argument("--config-dir", default="config",
+                    help="directory with the six config files (secrets come from .env)")
     args = ap.parse_args()
 
+    from src.config.dotenv import load_dotenv
+    load_dotenv()
     from src.config.config_manager import Config
-    Config.set_config(args.config)
+    Config.set_config(args.config_dir)
     from db.runtime_settings_db import RuntimeSettingsDB
     RuntimeSettingsDB.ensure_table()
 

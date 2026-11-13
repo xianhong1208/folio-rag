@@ -95,17 +95,17 @@ class TestRoleResolution:
                                           "hybrid_search": False},
             "vector_store": {"type": "pgvector", "table_prefix": "v"},
             "llm": {"provider": "openai", "model": "base"},
-            "answer_llm": {"model": "big"},
+            "contextual_llm": {"model": "small"},
         })
         with patch("src.config.config_manager.Config.get_config_model",
                    return_value=SimpleNamespace(rag=rag)):
-            assert role_llm("answer_llm").model == "big"
-            assert role_llm("eval_llm").model == "base"
+            assert role_llm("contextual_llm").model == "small"
+            assert role_llm("llm").model == "base"  # answers and evaluation
 
     def test_role_llm_unset_raises(self):
         with patch("src.config.config_manager.Config.get_config_model", return_value=None):
             with pytest.raises(ValueError, match="No LLM configured"):
-                role_llm("answer_llm")
+                role_llm("llm")
 
     def test_context_generator_uses_contextual_role(self):
         from src.domain.rag.context_generator import ContextGenerator

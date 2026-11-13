@@ -65,6 +65,11 @@ dmypy.json
 
 #config
 config/config_azure.yaml
+# Folio <= 1.4's single config file: no longer read (1.5 splits it into six files).
+config/config.yaml
+# Integration-test copy of config/ and scripts/split_config.py's .env lines (secrets)
+config/_itest/
+.env.split
 
 
 # File storage (keep directory structure but ignore actual files)
@@ -84,7 +89,7 @@ evals/asr/golden_transcripts/*
 evals/asr/drafts/*
 !evals/**/.gitkeep
 
-# Local environment overrides (DATABASE_URL etc.) — never commit real secrets
+# Secrets and per-machine values (DATABASE_URL, model endpoints and keys) — never commit
 .env
 
 # Node / frontend build deps

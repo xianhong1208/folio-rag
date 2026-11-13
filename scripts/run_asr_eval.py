@@ -41,7 +41,8 @@ def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--provider", help="override rag.asr.provider from config")
     ap.add_argument("--baseline", help="compare against an existing baseline JSON")
-    ap.add_argument("--config", default="config/config.yaml")
+    ap.add_argument("--config-dir", default="config",
+                    help="directory with the six config files (secrets come from .env)")
     args = ap.parse_args()
 
     pairs = []
@@ -58,8 +59,10 @@ def main() -> int:
         print(f"   {GOLDEN_DIR.relative_to(REPO)}/<name>.txt (human-proofread Traditional-Chinese transcript)")
         return 2
 
+    from src.config.dotenv import load_dotenv
+    load_dotenv()
     from src.config.config_manager import Config
-    Config.set_config(args.config)
+    Config.set_config(args.config_dir)
     from src.config.model import AsrConfig
     from src.domain.rag.asr_provider import create_asr_provider
     from src.domain.rag.audio_defense import _filter_whisper_hallucinations

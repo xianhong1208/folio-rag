@@ -15,7 +15,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from src.utils.db_url import alembic_safe_url, db_url_from_config_file, resolve_db_url
+from src.utils.db_url import alembic_safe_url, db_url_from_config_dir, resolve_db_url
 
 _REPO = Path(__file__).resolve().parents[1]
 
@@ -48,25 +48,34 @@ def test_alembic_safe_url_escapes_percent():
     assert alembic_safe_url(url) == "postgresql://u:p%%40ss@h:5444/db"
 
 
-class TestFromConfigFile:
+class TestFromConfigDir:
+    def _dir(self, tmp_path, database_yaml):
+        from tests.config_helpers import write_config_dir
+        d = write_config_dir(tmp_path / "cfg", {})
+        (d / "database.yaml").write_text(database_yaml, encoding="utf-8")
+        return d
+
     def test_applies_port_field(self, tmp_path):
-        p = tmp_path / "c.yaml"
-        p.write_text("database:\n  url: postgresql://u:pw@localhost/rag\n  port: 5444\n")
-        assert ":5444/rag" in db_url_from_config_file(p)
+        d = self._dir(tmp_path, "database:\n  url: postgresql://u:pw@localhost/rag\n  port: 5444\n")
+        assert ":5444/rag" in db_url_from_config_dir(d)
 
     def test_expands_env_placeholder(self, tmp_path, monkeypatch):
         monkeypatch.setenv("ITEST_DB_URL_X", "postgresql://u:pw@dbhost/other")
-        p = tmp_path / "c.yaml"
-        p.write_text('database:\n  url: "${ITEST_DB_URL_X:-postgresql://u:pw@localhost/rag}"\n'
-                     "  port: 5444\n")
-        r = db_url_from_config_file(p)
-        assert "dbhost:5444/other" in r
+        monkeypatch.setenv("ITEST_DB_PORT_X", "5444")
+        d = self._dir(tmp_path, 'database:\n  url: "${ITEST_DB_URL_X:-postgresql://u:pw@localhost/rag}"\n'
+                      '  port: "${ITEST_DB_PORT_X:-}"\n')
+        assert "dbhost:5444/other" in db_url_from_config_dir(d)
+
+    def test_empty_port_means_the_url_decides(self, tmp_path, monkeypatch):
+        monkeypatch.delenv("ITEST_DB_PORT_X", raising=False)
+        d = self._dir(tmp_path, 'database:\n  url: postgresql://u:pw@h:6000/rag\n'
+                      '  port: "${ITEST_DB_PORT_X:-}"\n')
+        assert db_url_from_config_dir(d).endswith("@h:6000/rag")
 
     def test_missing_url_raises(self, tmp_path):
-        p = tmp_path / "c.yaml"
-        p.write_text("database:\n  port: 5444\n")
+        d = self._dir(tmp_path, "database:\n  port: 5444\n")
         with pytest.raises(RuntimeError, match="no database.url"):
-            db_url_from_config_file(p)
+            db_url_from_config_dir(d)
 
 
 def test_migrator_engine_uses_resolved_url():

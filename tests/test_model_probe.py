@@ -55,7 +55,7 @@ class TestProbes:
         with FakeModelServer(dim=8) as srv:
             rag = _config(srv.url).rag
             results = {r: probe_role(rag, r) for r in
-                       ("embedding", "contextual_llm", "answer_llm", "eval_llm", "rerank", "vision", "asr")}
+                       ("embedding", "llm", "contextual_llm", "rerank", "vision", "asr")}
             vision_req = [b for b in srv.posts("/chat/completions")
                           if isinstance(b["messages"][0]["content"], list)][0]
             asr_form = srv.posts("/audio/transcriptions")[0]
@@ -77,7 +77,7 @@ class TestProbes:
     def test_http_error_shows_only_the_status(self):
         with FakeModelServer() as srv:
             srv.fail_next = [(401, None)]
-            r = probe_role(_config(srv.url).rag, "answer_llm")
+            r = probe_role(_config(srv.url).rag, "llm")
         assert r == {**r, "status": "down", "detail": "HTTP 401"}
 
     def test_rerank_and_asr_errors(self):
@@ -161,7 +161,7 @@ class TestSecretsThroughTheConsole:
     def test_env_reference_is_resolved_and_persisted_as_reference(self, monkeypatch):
         monkeypatch.setenv("NEW_KEY", "sk-live-123")
         cfg = _config()
-        ro.capture_startup(cfg, refs={"rag.rerank.api_key": "NEW_KEY"})  # config.yaml's variable
+        ro.capture_startup(cfg, refs={"rag.rerank.api_key": "NEW_KEY"})  # config/models.yaml's variable
         applied, _ = ro.validate_and_apply(cfg, {"rag.rerank.api_key": "${NEW_KEY}"})
         assert cfg.rag.rerank.api_key == "sk-live-123"
         assert applied == {"rag.rerank.api_key": "${NEW_KEY}"}  # what the DB stores
@@ -216,8 +216,8 @@ class TestSecretsThroughTheConsole:
     def test_new_paths_resolve_and_parsing_section_is_created(self):
         cfg = _config(parsing=None)
         ro.validate_and_apply(cfg, {"rag.parsing.max_pages_per_file": 10,
-                                    "rag.answer_llm.model": "big"})
-        assert cfg.rag.parsing.max_pages_per_file == 10 and cfg.rag.answer_llm.model == "big"
+                                    "rag.contextual_llm.model": "small"})
+        assert cfg.rag.parsing.max_pages_per_file == 10 and cfg.rag.contextual_llm.model == "small"
         assert ro.rebind_groups_for(["rag.contextual_llm.model", "rag.parsing.pdf"]) == ["rag.contextual_llm"]
 
 
@@ -234,10 +234,14 @@ class TestSettingsView:
         by_path = {s["path"]: s for s in view["settings"]}
         emb = by_path["rag.embedding.api_key"]
         assert emb["value"] == "•••" and emb["is_set"] is True and emb["env"] == "EMB_KEY"
-        assert by_path["rag.answer_llm.api_key"]["is_set"] is False
+        assert by_path["rag.contextual_llm.api_key"]["is_set"] is False
+        # The LLM roles removed in 1.5 are not returned any more.
+        assert not [p for p in by_path if p.startswith(("rag.answer_llm.", "rag.eval_llm."))]
+        assert {r["role"] for r in view["roles"]}.isdisjoint({"answer_llm", "eval_llm"})
         assert view["profile"] == "cloud" and isinstance(view["usage"], dict)
         roles = {r["role"]: r for r in view["roles"]}
-        assert roles["answer_llm"]["key_env"] == "LLM_KEY"  # inherited from rag.llm
+        assert roles["llm"]["key_env"] == "LLM_KEY"
+        assert roles["contextual_llm"]["key_env"] == "LLM_KEY"  # inherited from rag.llm
         assert roles["vision"]["key_set"] is True and roles["vision"]["key_env"] is None
         assert all(v != "k" for r in view["roles"] for v in r.values())  # no key values anywhere
 

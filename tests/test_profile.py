@@ -102,7 +102,8 @@ class TestAsrInProcess:
 class TestResolveLlm:
     def test_inherits_base(self):
         rag = _rag(llm={"provider": "openai", "model": "base", "api_key": "k"})
-        assert resolve_llm(rag, "answer_llm") is rag.llm
+        assert resolve_llm(rag, "contextual_llm") is rag.llm
+        assert resolve_llm(rag, "llm") is rag.llm  # answers and evaluation
 
     def test_override_fields_win_and_rest_inherit(self):
         rag = _rag(llm={"provider": "openai", "model": "base", "base_url": "https://a/v1",
@@ -114,17 +115,27 @@ class TestResolveLlm:
         assert rag.llm.model == "base"  # base untouched
 
     def test_override_without_base(self):
-        rag = _rag(eval_llm={"provider": "openai-compatible", "model": "judge",
-                             "base_url": "https://j/v1"})
-        got = resolve_llm(rag, "eval_llm")
-        assert isinstance(got, RAGLLMConfig) and got.model == "judge"
+        rag = _rag(contextual_llm={"provider": "openai-compatible", "model": "small",
+                                   "base_url": "https://j/v1"})
+        got = resolve_llm(rag, "contextual_llm")
+        assert isinstance(got, RAGLLMConfig) and got.model == "small"
 
     def test_none_when_nothing_configured(self):
-        assert resolve_llm(_rag(), "answer_llm") is None
+        assert resolve_llm(_rag(), "contextual_llm") is None
+        assert resolve_llm(_rag(), "llm") is None
 
     def test_unknown_role(self):
         with pytest.raises(ValueError):
             resolve_llm(_rag(), "summary_llm")
+
+    def test_removed_roles_are_gone(self):
+        """answer_llm / eval_llm were removed in 1.5: answers and evaluation use rag.llm"""
+        for role in ("answer_llm", "eval_llm"):
+            with pytest.raises(ValueError):
+                resolve_llm(_rag(), role)
+        rag = _rag(llm={"model": "base"}, answer_llm={"model": "big"}, eval_llm={"model": "judge"})
+        assert not hasattr(rag, "answer_llm") and not hasattr(rag, "eval_llm")
+        assert {e["role"] for e in role_summary(rag)}.isdisjoint({"answer_llm", "eval_llm"})
 
 
 class TestCheckProfile:
@@ -218,10 +229,10 @@ class TestSecrets:
         assert env_refs(raw) == {"rag.embedding.api_key": "OPENAI_API_KEY", "rag.llm.api_key": "X"}
 
     def test_iter_secret_fields_covers_every_role(self):
-        rag = _rag(llm={"api_key": "a"}, answer_llm={"api_key": "b"}, rerank={"api_key": "c"},
+        rag = _rag(llm={"api_key": "a"}, contextual_llm={"api_key": "b"}, rerank={"api_key": "c"},
                    asr={"api_key": "d"}, parsing=VISION)
         paths = dict(iter_secret_fields(rag))
-        assert {"rag.embedding.api_key", "rag.llm.api_key", "rag.answer_llm.api_key",
+        assert {"rag.embedding.api_key", "rag.llm.api_key", "rag.contextual_llm.api_key",
                 "rag.rerank.api_key", "rag.asr.api_key", "rag.parsing.vision.api_key"} <= set(paths)
 
     def test_literal_secret_paths(self):
@@ -248,20 +259,21 @@ class TestRoleSummary:
 
     def test_cloud_summary_and_role_secret_path(self):
         rag = _rag(profile="cloud", parsing=VISION, llm={"provider": "openai", "model": "base"},
-                   answer_llm={"model": "big", "api_key": "x"}, rerank={"enabled": True, "api": "cohere"},
+                   contextual_llm={"model": "small", "api_key": "x"}, rerank={"enabled": True, "api": "cohere"},
                    asr={"provider": "openai-compatible", "model": "whisper-1"})
         roles = {e["role"]: e for e in role_summary(rag)}
         assert roles["vision"]["runs"] == "endpoint" and roles["vision"]["model"] == "gpt-4o-mini"
-        assert roles["answer_llm"]["model"] == "big" and roles["answer_llm"]["inherits"] is None
-        assert roles["answer_llm"]["secret_path"] == "rag.answer_llm.api_key"
-        assert roles["eval_llm"]["secret_path"] == "rag.llm.api_key"
+        assert roles["contextual_llm"]["model"] == "small" and roles["contextual_llm"]["inherits"] is None
+        assert roles["contextual_llm"]["secret_path"] == "rag.contextual_llm.api_key"
+        assert roles["llm"]["secret_path"] == "rag.llm.api_key" and roles["llm"]["model"] == "base"
+        assert roles["llm"]["runs"] == "endpoint"
         assert roles["contextual_llm"]["runs"] == "off"  # contextual retrieval not enabled
         assert roles["rerank"]["provider"] == "cohere"
         assert roles["asr"]["runs"] == "endpoint"
 
     def test_no_llm_marks_llm_roles_off(self):
         roles = {e["role"]: e for e in role_summary(_rag())}
-        assert roles["answer_llm"]["runs"] == "off"
+        assert roles["llm"]["runs"] == "off"
 
     def test_cloud_unset_asr_is_off(self):
         roles = {e["role"]: e for e in role_summary(_rag(profile="cloud", parsing=VISION))}
@@ -288,7 +300,7 @@ class TestRoleSummary:
         assert "no model — bigram" in text
 
 
-# config.yaml integration: profile errors stop the model from loading.
+# Config files integration: profile errors stop the model from loading.
 
 _BASE_YAML = """\
 server: {host: 127.0.0.1, port: 8080, transport: http}
@@ -313,14 +325,15 @@ def _clean_config():
     yield
     Config._config = {}
     Config._config_model = None
-    Config._module_configs = {}
+    Config._config_dir = None
     Config._env_refs = {}
 
 
 def _load(tmp_path, monkeypatch, text):
+    from tests.config_helpers import write_config_dir
     monkeypatch.chdir(tmp_path)
-    (tmp_path / "c.yaml").write_text(text, encoding="utf-8")
-    Config.set_config("c.yaml")
+    write_config_dir(tmp_path / "cfg", text)
+    Config.set_config("cfg")
     return Config.get_config_model()
 
 

@@ -5,7 +5,7 @@ and validates the per-role choices against them:
 
 * ``local``  — everything is allowed (the pre-profile behaviour; existing configs are
   implicitly ``local`` and validate exactly as before).
-* ``hybrid`` — everything is allowed; API keys written literally in config.yaml are
+* ``hybrid`` — everything is allowed; API keys written literally in config/models.yaml are
   reported as warnings, because a hybrid deployment usually holds at least one billable
   cloud key.
 * ``cloud``  — every role must be an HTTP endpoint. In-process providers (HuggingFace
@@ -14,7 +14,7 @@ and validates the per-role choices against them:
   The FTS segmenter defaults to the model-free ``bigram`` there.
 
 Why reject (not warn) literal keys in ``cloud``: a cloud key is a billable credential
-and config.yaml is the file people copy, paste into issues and commit. ``local`` keeps
+and config/models.yaml is the file people copy, paste into issues and commit. ``local`` keeps
 accepting literal values because self-hosted vLLM/Ollama endpoints take placeholder keys
 (such as "not-needed") that are not secrets. Errors fail startup (main.py exits) and
 reject the offending console change (HTTP 422); they never degrade silently.
@@ -52,7 +52,7 @@ class ProfileReport:
 def env_refs(raw: Any, prefix: str = "") -> Dict[str, str]:
     """Map dotted path → first referenced env-var name, for every raw (pre-expansion) string
     value that contains ``${VAR}``. Lets the server tell a key that came from the environment
-    from one written into config.yaml after expansion has erased the difference."""
+    from one written into the config files after expansion has erased the difference."""
     out: Dict[str, str] = {}
     if isinstance(raw, dict):
         for k, v in raw.items():
@@ -88,7 +88,7 @@ def check_profile(rag_config, refs: Optional[Mapping[str, str]] = None) -> Profi
     Args:
         rag_config: a RAGConfig (or a deep copy with pending runtime changes applied).
         refs: secret path → env-var name for keys that came from ``${ENV}`` references
-            (from config.yaml or a console-stored reference). None = treat as unknown, so
+            (from config/models.yaml or a console-stored reference). None = treat as unknown, so
             the literal-key rule is skipped (used where the source cannot be known).
     """
     report = ProfileReport()

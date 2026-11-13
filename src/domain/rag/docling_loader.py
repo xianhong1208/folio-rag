@@ -8,7 +8,7 @@ Uses IBM's Docling to parse PDF/DOCX/PPTX with full structure preservation:
 
 Replaces: SimpleDirectoryReader + SentenceSplitter for structured documents.
 
-Device configuration comes from config.yaml:
+Device configuration comes from config/models.yaml (DOCLING_DEVICE):
     rag:
       docling:
         device: "cuda:4"    # "cpu", "cuda", "cuda:0", "cuda:4"

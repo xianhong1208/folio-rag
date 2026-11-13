@@ -1,0 +1,20 @@
+# Database — PostgreSQL with pgvector. The connection comes from .env (DATABASE_URL);
+# no password is written here. Use a plain postgresql:// URL (psycopg2), never +asyncpg.
+database:
+  url: "${DATABASE_URL:-postgresql://postgres:CHANGE_ME@localhost:5432/folio}"
+  # Only used when the URL has no port of its own; empty = the URL decides.
+  port: "${DATABASE_PORT:-}"
+  echo: false
+  # Two shared pools (sync psycopg2 + async asyncpg) serve the whole app, every
+  # folder's vector store included: at most 2 x (pool_size + max_overflow) connections.
+  pool_size: 10
+  max_overflow: 10
+  pool_timeout: 30
+  pool_recycle: 3600
+  vector_store_engines: shared     # shared | per_folder (private 1+2 pools per cached folder)
+  vector_store_cache_size: 64      # LRU size for per-folder PGVectorStore objects
+  # Days kept in append-only tables (0 = keep for ever); purged at startup, then daily
+  retention:
+    index_jobs_days: 30            # finished indexing jobs
+    query_logs_days: 90            # query analytics
+    settings_audit_days: 365       # settings change history

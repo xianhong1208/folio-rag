@@ -5,9 +5,9 @@ shape (provider / base_url / model / api_key / timeout / max_retries), so a depl
 point each one at a different OpenAI-compatible endpoint:
 
     embedding       rag.embedding
-    contextual_llm  rag.contextual_llm  → inherits rag.llm   (contextual-retrieval prefixes)
-    answer_llm      rag.answer_llm      → inherits rag.llm   (CRAG answers in the console)
-    eval_llm        rag.eval_llm        → inherits rag.llm   (eval question generation / judge)
+    llm             rag.llm                                (answers, evaluation, and the default)
+    contextual_llm  rag.contextual_llm  → inherits rag.llm   (contextual-retrieval prefixes:
+                                                             one short sentence per chunk)
     rerank          rag.rerank
     vision          rag.parsing.vision                     (cloud PDF / image parsing)
     asr             rag.asr                                (speech-to-text)
@@ -21,7 +21,8 @@ from typing import Any, Dict, List, Optional
 
 from src.config.model import LLMRoleConfig, ParsingConfig, RAGLLMConfig
 
-LLM_ROLES = ("contextual_llm", "answer_llm", "eval_llm")
+# Optional per-role overrides of rag.llm (answer_llm / eval_llm were removed in 1.5).
+LLM_ROLES = ("contextual_llm",)
 
 # Providers that load weights into this process (everything else is an HTTP endpoint).
 IN_PROCESS_EMBEDDING = frozenset({"huggingface", "local"})
@@ -30,8 +31,7 @@ IN_PROCESS_ASR = frozenset({"docling-whisper", "fireredasr"})
 ROLE_LABELS = {
     "embedding": "Embedding",
     "contextual_llm": "Contextual-prefix LLM",
-    "answer_llm": "Answer LLM",
-    "eval_llm": "Eval LLM",
+    "llm": "LLM (answers, evaluation)",
     "rerank": "Reranker",
     "vision": "Document parsing (vision)",
     "asr": "Speech-to-text",
@@ -39,11 +39,14 @@ ROLE_LABELS = {
 
 
 def resolve_llm(rag_config, role: str) -> Optional[RAGLLMConfig]:
-    """The effective LLM config for ``role``: ``rag.<role>`` fields over ``rag.llm``.
+    """The effective LLM config for ``role``: ``rag.<role>`` fields over ``rag.llm``
+    (``role="llm"``: ``rag.llm`` itself, used for answers and evaluation).
 
     Returns None when neither is configured. A role override without a base ``rag.llm``
     is still usable on its own (it is merged over the RAGLLMConfig defaults).
     """
+    if role == "llm":
+        return getattr(rag_config, "llm", None)
     if role not in LLM_ROLES:
         raise ValueError(f"Unknown LLM role: {role!r} (expected one of {LLM_ROLES})")
     base: Optional[RAGLLMConfig] = getattr(rag_config, "llm", None)
@@ -136,11 +139,14 @@ def role_summary(rag_config) -> List[Dict[str, Any]]:
         out.append({"role": "embedding", "secret_path": "rag.embedding.api_key", **entry})
 
     cr = getattr(rag_config, "contextual_retrieval", None)
-    role_enabled = {
-        "contextual_llm": bool(cr and cr.enabled),
-        "answer_llm": True,
-        "eval_llm": True,
-    }
+    llm = getattr(rag_config, "llm", None)
+    if llm is None:
+        entry = _endpoint(None, None, None, enabled=False)
+    else:
+        entry = _endpoint(llm.provider, llm.azure_deployment or llm.model, llm.base_url)
+    out.append({"role": "llm", "secret_path": "rag.llm.api_key", **entry})
+
+    role_enabled = {"contextual_llm": bool(cr and cr.enabled)}
     for role in LLM_ROLES:
         llm = resolve_llm(rag_config, role)
         own = getattr(rag_config, role, None) is not None

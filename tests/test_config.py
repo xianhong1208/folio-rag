@@ -23,7 +23,8 @@ from src.config.model import (
     RAGConfig,
     ConfigModel,
 )
-from src.config.config_manager import Config, get_config
+from src.config.config_manager import Config, ConfigFileError, get_config
+from tests.config_helpers import write_config_dir
 
 
 # Shared fixtures / helpers
@@ -33,11 +34,11 @@ def _reset_config_state():
     """Reset Config class-level state before and after each test, to avoid cross-test pollution"""
     Config._config = {}
     Config._config_model = None
-    Config._module_configs = {}
+    Config._config_dir = None
     yield
     Config._config = {}
     Config._config_model = None
-    Config._module_configs = {}
+    Config._config_dir = None
 
 
 VALID_YAML = """\
@@ -67,10 +68,11 @@ modules:
 """
 
 
-def _write_config(tmp_path, monkeypatch, text, name="config.yaml"):
-    """Write the YAML into tmp_path and chdir there (so the path allowlist is based on tmp_path)"""
+def _write_config(tmp_path, monkeypatch, text, name="config"):
+    """Write the tree as the six files under tmp_path/<name> and chdir to tmp_path
+    (the config dir must be inside the working directory)."""
     monkeypatch.chdir(tmp_path)
-    (tmp_path / name).write_text(text, encoding="utf-8")
+    write_config_dir(tmp_path / name, text)
     return name
 
 
@@ -242,10 +244,10 @@ def test_config_model_full_tree():
             "max_size": "10MB", "backup_count": 1,
         },
         app={},
-        modules={"enabled": ["a", "b"]},
+        modules={"enabled": ["rag", "admin"]},
     )
     assert isinstance(cfg.server, ServerConfig)
-    assert cfg.modules.enabled == ["a", "b"]
+    assert cfg.modules.enabled == ["rag", "admin"]
     assert cfg.rag is None
 
 
@@ -268,43 +270,35 @@ def test_config_model_missing_section():
     assert any(e["loc"][0] == "server" for e in exc_info.value.errors())
 
 
-def test_modules_config_extra_allowed():
-    """ModulesConfig extra='allow': extra module sections are preserved without error"""
-    cfg = ModulesConfig(enabled=["demo"], demo={"description": "x"})
-    assert cfg.enabled == ["demo"]
-    assert cfg.model_dump()["demo"] == {"description": "x"}
+def test_modules_config_rejects_wiring_and_unknown_modules():
+    """modules holds only `enabled`: wiring lives in code, and an unknown name is refused"""
+    assert ModulesConfig(enabled=["rag", "admin"]).enabled == ["rag", "admin"]
+    with pytest.raises(ValidationError, match="Extra inputs"):
+        ModulesConfig(enabled=["rag"], rag={"description": "x"})
+    with pytest.raises(ValidationError, match="unknown module"):
+        ModulesConfig(enabled=["demo"])
 
 
-# config/config_manager.py -- _validate_config_path
+# config/config_manager.py -- _validate_config_dir
 
-def test_validate_config_path_allows_relative_paths(tmp_path, monkeypatch):
-    """Relative paths under cwd (root level / config/ / subdirectory) all pass validation"""
+def test_validate_config_dir_allows_dirs_under_cwd(tmp_path, monkeypatch):
     monkeypatch.chdir(tmp_path)
-    assert Config._validate_config_path("config.yaml").name == "config.yaml"
-    assert Config._validate_config_path("config/app.yaml").name == "app.yaml"
-    # ALLOWED_CONFIG_DIRS includes "." -> any subpath under cwd is allowed
-    assert Config._validate_config_path("sub/dir/x.yml").suffix == ".yml"
+    assert Config._validate_config_dir("config").name == "config"
+    assert Config._validate_config_dir("sub/dir").name == "dir"
 
 
-def test_validate_config_path_rejects_traversal(tmp_path, monkeypatch):
+def test_validate_config_dir_rejects_traversal(tmp_path, monkeypatch):
     """../ path traversal outside cwd -> ValueError"""
     monkeypatch.chdir(tmp_path)
     with pytest.raises(ValueError, match="outside the allowed base directory"):
-        Config._validate_config_path("../evil.yaml")
+        Config._validate_config_dir("../evil")
 
 
-def test_validate_config_path_rejects_absolute_outside(tmp_path, monkeypatch):
+def test_validate_config_dir_rejects_absolute_outside(tmp_path, monkeypatch):
     """An absolute path outside cwd -> ValueError"""
     monkeypatch.chdir(tmp_path)
     with pytest.raises(ValueError, match="outside the allowed base directory"):
-        Config._validate_config_path("/etc/passwd.yaml")
-
-
-def test_validate_config_path_rejects_bad_extension(tmp_path, monkeypatch):
-    """A non-.yaml/.yml extension -> ValueError"""
-    monkeypatch.chdir(tmp_path)
-    with pytest.raises(ValueError, match="extension"):
-        Config._validate_config_path("config.txt")
+        Config._validate_config_dir("/etc")
 
 
 # config/config_manager.py -- get_config / set_config lifecycle
@@ -329,7 +323,7 @@ def test_get_config_env_var_placeholder_expanded(tmp_path, monkeypatch):
     """`${VAR:-default}` is expanded from the environment at load time.
 
     config_manager.expand_env_vars runs over the parsed YAML, so the DB URL can
-    come from the environment while config.yaml keeps a safe default.
+    come from the environment while the config files keep a safe default.
     """
     monkeypatch.setenv("TEST_DB_URL", "postgresql://real/db")
     yaml_text = VALID_YAML.replace(
@@ -360,63 +354,44 @@ def test_get_config_invalid_schema_returns_none(tmp_path, monkeypatch):
     assert Config.get_config_model() is None
 
 
-def test_get_config_malformed_yaml_returns_none(tmp_path, monkeypatch):
-    """YAML syntax error -> swallowed internally, _config cleared, returns None"""
-    name = _write_config(tmp_path, monkeypatch, "server: [unclosed\n  :::")
-    assert get_config(name) is None
-    assert Config.get_config() == {}
+def test_get_config_malformed_yaml_raises_naming_the_file(tmp_path, monkeypatch):
+    """A YAML syntax error stops loading with the file's name"""
+    name = _write_config(tmp_path, monkeypatch, VALID_YAML)
+    (tmp_path / name / "models.yaml").write_text("rag: [unclosed\n  :::", encoding="utf-8")
+    with pytest.raises(ConfigFileError, match="models.yaml is not valid YAML"):
+        get_config(name)
 
 
-def test_get_config_missing_file_returns_none(tmp_path, monkeypatch):
-    """File does not exist -> returns None (the FileNotFoundError is swallowed by _load_config's catch-all)
-
-    Note: the _load_config docstring claims it raises FileNotFoundError, but in
-    the implementation the raise is inside a try block and caught by
-    `except Exception`, so it never actually propagates. This test pins down the
-    current (actual) behavior.
-    """
+def test_get_config_missing_dir_raises_listing_every_file(tmp_path, monkeypatch):
     monkeypatch.chdir(tmp_path)
-    assert get_config("no_such_file.yaml") is None
-    assert Config.get_config() == {}
+    with pytest.raises(ConfigFileError) as e:
+        get_config("no_such_dir")
+    for f in ("database.yaml", "auth.yaml", "models.yaml", "mcp.yaml", "retrieval.yaml", "system.yaml"):
+        assert f in str(e.value)
 
 
-def test_set_config_loads_enabled_module_configs(tmp_path, monkeypatch):
-    """An enabled module's detailed config goes into the safe dict, retrievable via get_module_model; a disabled one returns None"""
-    yaml_text = VALID_YAML.replace(
-        "modules:\n  enabled: []\n",
-        "modules:\n"
-        "  enabled: [demo]\n"
-        "  demo:\n"
-        "    api_router:\n"
-        "      module: src.api.router.demo\n"
-        "      router_name: router\n"
-        "      prefix: /api/demo\n"
-        "    mcp_tools: null\n"
-        "    description: demo module\n",
-    )
+def test_get_module_model_comes_from_the_registry(tmp_path, monkeypatch):
+    """An enabled module's wiring comes from src/config/modules.py; a disabled one is None"""
+    yaml_text = VALID_YAML.replace("modules:\n  enabled: []\n", "modules:\n  enabled: [rag_query, rag]\n")
     name = _write_config(tmp_path, monkeypatch, yaml_text)
     Config.set_config(name)
-    module = Config.get_module_model("demo")
-    assert module is not None
-    assert module.api_router.prefix == "/api/demo"
-    assert module.mcp_tools is None
-    assert module.description == "demo module"
-    assert Config.get_module_model("not_enabled") is None
+    q = Config.get_module_model("rag_query")
+    assert q.api_router.module == "src.api.router.rag_query" and q.api_router.prefix == "/api/rag"
+    assert Config.get_module_model("rag").mcp_tools.function_name == "register_agentic_tools"
+    assert Config.get_module_model("admin") is None  # known but not enabled
+    assert Config.get_module_model("nope") is None
 
 
-def test_set_config_skips_invalid_module_config(tmp_path, monkeypatch):
-    """A single module config missing required fields -> that module is skipped, the main config still loads successfully"""
-    yaml_text = VALID_YAML.replace(
-        "modules:\n  enabled: []\n",
-        "modules:\n"
-        "  enabled: [broken]\n"
-        "  broken:\n"
-        "    description: missing api_router and mcp_tools\n",
-    )
-    name = _write_config(tmp_path, monkeypatch, yaml_text)
-    Config.set_config(name)
-    assert Config.get_config_model() is not None  # main config succeeded
-    assert Config.get_module_model("broken") is None  # the broken module was skipped
+def test_every_registered_module_imports():
+    """The registry's import paths and names exist (a typo would 404 a whole API)"""
+    import importlib
+    from src.config.modules import DEFAULT_ENABLED, MODULES
+    assert set(DEFAULT_ENABLED) == set(MODULES)
+    for name, m in MODULES.items():
+        if m.api_router:
+            assert hasattr(importlib.import_module(m.api_router.module), m.api_router.router_name), name
+        if m.mcp_tools:
+            assert hasattr(importlib.import_module(m.mcp_tools.module), m.mcp_tools.function_name), name
 
 
 def test_getters_return_none_before_load():
@@ -431,12 +406,12 @@ def test_getters_return_none_before_load():
     assert Config.get_module_model("any") is None
 
 
-def test_config_path_outside_allowed_dirs_rejected(tmp_path):
-    """Config path safety check: any path outside the allowed dirs raises ValueError (path-traversal defense)."""
-    evil = tmp_path / "evil.yaml"
-    evil.write_text("server: {}\n", encoding="utf-8")
+def test_config_dir_outside_cwd_rejected(tmp_path, monkeypatch):
+    """Config dir safety check: a dir outside the working directory raises (path-traversal defense)."""
+    write_config_dir(tmp_path / "outside", VALID_YAML)
+    monkeypatch.chdir(tmp_path / "outside")
     with pytest.raises(ValueError, match="Security Error"):
-        Config._load_config(str(evil))
+        Config.set_config(str(tmp_path))
 
 
 def test_asr_config_defaults():

@@ -97,12 +97,12 @@ def main(workdir: str, mode: str) -> dict:
                 return "[true]"
             return "A short context line." if "<chunk>" in content else "An answer [1]."
         srv.chat_reply = chat
-        Path("config").mkdir(exist_ok=True)
-        Path("config/config.yaml").write_text(CONFIG.format(url=srv.url), encoding="utf-8")
+        from tests.config_helpers import write_config_dir
+        write_config_dir("config", CONFIG.format(url=srv.url))
 
         # ---- boot
         from src.config.config_manager import Config
-        Config.set_config("config/config.yaml")
+        Config.set_config("config")
         cfg = Config.get_config_model()
         assert cfg is not None and cfg.rag.profile == "cloud", "cloud config failed to load"
         import app

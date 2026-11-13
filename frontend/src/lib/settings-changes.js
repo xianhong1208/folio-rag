@@ -5,7 +5,7 @@ import { FIELDS, META, sectionOf } from './settings-config'
 
 export const TABS = [
   { key: 'models', label: 'Models', query: 'who embeds, who answers',
-    sections: ['rag.embedding', 'rag.llm', 'rag.contextual_llm', 'rag.answer_llm', 'rag.eval_llm'] },
+    sections: ['rag.embedding', 'rag.llm', 'rag.contextual_llm'] },
   { key: 'indexing', label: 'Indexing', query: 'how documents become chunks',
     sections: ['rag.parsing', 'rag.contextual_retrieval'] },
   { key: 'retrieval', label: 'Retrieval', query: 'how a query finds them again',
@@ -14,10 +14,12 @@ export const TABS = [
     sections: ['rag.asr'] },
 ]
 
-// Role overrides are optional; the Models tab folds them away under the main LLM.
-export const OVERRIDE_SECTIONS = ['rag.contextual_llm', 'rag.answer_llm', 'rag.eval_llm']
+// The contextual-prefix override is optional; the Models tab folds it away under the main LLM.
+export const OVERRIDE_SECTIONS = ['rag.contextual_llm']
 
 // The old console linked /settings/<section> (e.g. /settings/embedding); keep those links working.
+// answer-llm / eval-llm were removed in 1.5 (answers and evaluation use the LLM); their links
+// still open the Models tab.
 const LEGACY = { embedding: 'models', llm: 'models', 'contextual-llm': 'models', 'answer-llm': 'models', 'eval-llm': 'models',
   contextual: 'indexing', parsing: 'indexing', reranker: 'retrieval', retrieval: 'retrieval', asr: 'speech' }
 

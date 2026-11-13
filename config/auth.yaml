@@ -1,0 +1,19 @@
+# Authentication — verify MCP Gate OAuth 2.1 access tokens offline (RS256, JWKS).
+# The issuer, audience and revocation client are per machine: set them in .env.
+auth:
+  enabled: true
+  issuer: "${MCP_GATE_URL:-http://localhost:4568}"        # MCP Gate base URL (JWKS issuer)
+  # Must equal the token's aud: how MCP Gate registered this server.
+  audience: "${FOLIO_AUDIENCE:-http://127.0.0.1:5039/mcp}"
+  required_scopes: []                        # scopes every token must carry (empty = none)
+  cache_ttl: 60                              # JWKS cache TTL (seconds)
+  # MCP Gate revocation feed: without it a token revoked in MCP Gate keeps working here
+  # until it expires. Needs a confidential client bound to this server in MCP Gate
+  # (docs/auth.md -> "Token revocation"). The secret must stay an ${ENV_VAR} reference.
+  revocation:
+    enabled: "${FOLIO_REVOCATION_ENABLED:-false}"
+    client_id: "${FOLIO_REVOCATION_CLIENT_ID:-}"
+    client_secret: "${FOLIO_REVOCATION_CLIENT_SECRET:-}"
+    poll_interval_sec: 30                      # a revocation takes effect within about this long
+    fail_mode: "open"                          # open | closed (reject all tokens when the feed is stale)
+    stale_after_intervals: 4                   # "stale" = no successful poll for 4 x poll_interval_sec

@@ -3,7 +3,7 @@
 
 - GET  /api/admin/settings        — whitelisted settings view (effective value/level/override status)
 - PUT  /api/admin/settings        — hot update ({"settings": {path: value}}); all-or-nothing validation
-- DELETE /api/admin/settings/{path} — remove one override, restoring the config.yaml value
+- DELETE /api/admin/settings/{path} — remove one override, restoring the config files' value
 - POST /api/admin/probe           — test model-service connectivity (GET {base_url}/models)
 - POST /api/admin/probe/{role}    — per-role health probe: one minimal real request with the
                                     saved settings (the key stays server-side)
@@ -71,7 +71,7 @@ async def put_settings(
 
 @router.delete("/api/admin/settings/{path:path}")
 async def delete_setting(path: str, ident: ConsoleIdentity = Depends(require_console_admin)):
-    """Remove one override -> restore the config.yaml factory value (takes effect immediately)."""
+    """Remove one override -> restore the config files' factory value (takes effect immediately)."""
     from src.adapter import runtime_settings_service as svc
     try:
         removed = svc.reset_setting(path, updated_by=ident.actor)

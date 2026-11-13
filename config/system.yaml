@@ -1,0 +1,17 @@
+# Server, logging and the app's name.
+server:
+  host: "0.0.0.0"
+  port: 5039
+  transport: "http"
+
+logging:
+  level: "DEBUG"
+  format: "colorized"
+  file: "logs/app.log"
+  max_size: "10MB"
+  backup_count: 3
+
+app:
+  name: "Folio"
+  title: "Folio MCP Server"
+  description: "Folio — hierarchical chunking + auto-merging retrieval for LLM agents"

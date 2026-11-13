@@ -1,6 +1,6 @@
 import { useEffect, useState, useCallback, useMemo } from 'react'
 import { useLocation, useNavigate } from 'react-router-dom'
-import { Layers, Sparkles, List, ArrowDownUp, Mic, SlidersHorizontal, MessageSquare, FlaskConical, ScanText } from 'lucide-react'
+import { Layers, Sparkles, List, ArrowDownUp, Mic, SlidersHorizontal, ScanText } from 'lucide-react'
 import { get, post, api } from '../services/api'
 import { fmtNum } from '../lib/format'
 import { META, FIELDS, PRESETS, sectionOf, normalizeValue, keyIndicator, runsLabel, probeText } from '../lib/settings-config'
@@ -10,7 +10,7 @@ import { useSession } from '../contexts/SessionContext'
 import PageCap from '../components/PageCap'
 import { TABS, OVERRIDE_SECTIONS, tabFromParam, diffChanges, changesPerTab, stagePreset, needsReindex, showValue } from '../lib/settings-changes'
 
-const ICON = { layers: Layers, spark: Sparkles, list: List, sort: ArrowDownUp, mic: Mic, sliders: SlidersHorizontal, message: MessageSquare, flask: FlaskConical, scan: ScanText }
+const ICON = { layers: Layers, spark: Sparkles, list: List, sort: ArrowDownUp, mic: Mic, sliders: SlidersHorizontal, scan: ScanText }
 
 function Field({ path, f, value, entry, onChange, disabled, pending }) {
   const wide = f.type === 'textarea'
@@ -26,7 +26,7 @@ function Field({ path, f, value, entry, onChange, disabled, pending }) {
         <div className="grow" />
         {key && <span className={'pill ' + key.cls} title="API keys are never shown; only whether one is set and which environment variable it comes from">{key.text}</span>}
         {pending && <span className="pend" title="Changed here, not applied yet">pending</span>}
-        {overridden && <span className="ovr" title="Differs from config.yaml">Overridden</span>}
+        {overridden && <span className="ovr" title="Differs from the config files">Overridden</span>}
         {isBool && (
           <label className="toggle"><input type="checkbox" aria-label={f.label} checked={!!value} disabled={disabled} onChange={(e) => setV(e.target.checked)} /><span /></label>
         )}
@@ -40,7 +40,7 @@ function Field({ path, f, value, entry, onChange, disabled, pending }) {
         ) : f.type === 'textarea' ? (
           <textarea id={path} value={value ?? ''} disabled={disabled} onChange={(e) => setV(e.target.value)} />
         ) : f.type === 'secret' ? (
-          <input id={path} type="password" autoComplete="off" placeholder={'A ${ENV_VAR} from config.yaml, or type the key'} value={value === '•••' ? '' : (value ?? '')} disabled={disabled} onChange={(e) => setV(e.target.value)} />
+          <input id={path} type="password" autoComplete="off" placeholder={'A ${ENV_VAR} from config/models.yaml, or type the key'} value={value === '•••' ? '' : (value ?? '')} disabled={disabled} onChange={(e) => setV(e.target.value)} />
         ) : f.range ? (
           <div className="slider-wrap">
             <input id={path} type="range" min={f.range[0]} max={f.range[1]} step={f.step || 0.05} disabled={disabled}
@@ -245,9 +245,9 @@ export default function SettingsPage() {
           <dt>apply</dt>
           <dd>Edits collect in the bar at the bottom and take effect when you <b>Apply</b> them. They survive restarts.</dd>
           <dt>override</dt>
-          <dd><span className="ovr">Overridden</span> marks a value that differs from <code>config.yaml</code>.</dd>
+          <dd><span className="ovr">Overridden</span> marks a value that differs from the config files (<code>config/*.yaml</code>).</dd>
           <dt>keys</dt>
-          <dd>Give a key as <code>{'${ENV_VAR}'}</code> to keep it out of the database (required under the cloud profile): only a variable that <code>config.yaml</code> uses as a model key, for the same server it uses it with. Otherwise type the key. Moving a model to another server (another scheme, host or port in its base URL) clears its key: enter the key for the new server in the same change.</dd>
+          <dd>Give a key as <code>{'${ENV_VAR}'}</code> to keep it out of the database (required under the cloud profile): only a variable that <code>config/models.yaml</code> uses as a model key, for the same server it uses it with. Otherwise type the key. Moving a model to another server (another scheme, host or port in its base URL) clears its key: enter the key for the new server in the same change.</dd>
         </dl>
       )}
       {tabKey === 'models' && <RolesPanel view={view} readOnly={readOnly} probes={roleProbe} onProbe={runProbe} />}
@@ -265,7 +265,7 @@ export default function SettingsPage() {
           {main.map(block)}
           {overrides.length > 0 && (
             <details className="overrides" open={overridesPending || undefined}>
-              <summary><span className="sec">Per-role overrides <span className="r">optional · empty fields inherit the LLM above</span></span></summary>
+              <summary><span className="sec">Contextual-prefix override <span className="r">optional · a small, fast model is enough · empty fields inherit the LLM above</span></span></summary>
               {overrides.map(block)}
             </details>
           )}

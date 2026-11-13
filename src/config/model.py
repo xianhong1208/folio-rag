@@ -5,8 +5,25 @@ All Pydantic config models are collected here for reuse across the project.
 """
 
 import logging as _logging
-from typing import List, Literal, Optional, Union
-from pydantic import BaseModel, ConfigDict, Field, PrivateAttr, field_validator, model_validator
+from typing import Annotated, Any, List, Literal, Optional, Union
+from pydantic import (BaseModel, BeforeValidator, ConfigDict, Field, PrivateAttr, field_validator,
+                      model_validator)
+
+# Module wiring lives in code; re-exported here for existing imports.
+from src.config.modules import MODULES, McpToolsConfig, ModuleConfig, RouterConfig
+
+
+def _blank_to_none(value: Any) -> Any:
+    """An empty value means "not set". config/*.yaml reads endpoints and keys from
+    ``${VAR:-}`` references, which expand to "" when the variable is unset."""
+    if isinstance(value, str) and not value.strip():
+        return None
+    return value
+
+
+# Optional values that an unset ${VAR:-} reference leaves empty.
+OptStr = Annotated[Optional[str], BeforeValidator(_blank_to_none)]
+OptInt = Annotated[Optional[int], BeforeValidator(_blank_to_none)]
 
 # Secrets are excluded from repr()/str() (repr=False), so logging a whole config
 # object, or an exception message that embeds one, can never print them.
@@ -41,7 +58,7 @@ class DatabaseConfig(BaseModel):
     pool_timeout: int
     pool_recycle: int
     host: Optional[str] = None
-    port: Optional[int] = None
+    port: OptInt = None  # ${DATABASE_PORT:-} — empty = the URL's own port
     database: Optional[str] = None
     user: Optional[str] = None
     password: Optional[str] = Field(None, repr=False)
@@ -94,7 +111,7 @@ class RevocationConfig(BaseModel):
     """
     enabled: bool = False
     client_id: Optional[str] = None
-    # Must be an ${ENV_VAR} reference; a literal secret in config.yaml is refused at startup.
+    # Must be an ${ENV_VAR} reference; a literal secret in config/auth.yaml is refused at startup.
     client_secret: Optional[str] = Field(None, repr=False)
     poll_interval_sec: float = Field(30, ge=5, le=3600)
     # "open": keep accepting tokens when the feed is unreachable (logged loudly);
@@ -186,7 +203,7 @@ class AppConfig(BaseModel):
     def _upgrade_pre_rename_defaults(cls, data, handler):
         """Treat the values shipped before the rename to Folio as "not set".
 
-        A config.yaml copied from the old template still says ``tool_prefix:
+        A config copied from the old template still says ``tool_prefix:
         "Agentic"`` and ``name: "Agentic RAG"``. Those were defaults, not a
         choice, so they load as the Folio defaults; any other value is kept.
         """
@@ -208,31 +225,19 @@ class AppConfig(BaseModel):
         return list(self._renamed_defaults)
 
 
-class RouterConfig(BaseModel):
-    """API router configuration."""
-    module: str
-    router_name: str
-    prefix: str
-
-
-class McpToolsConfig(BaseModel):
-    """MCP tools configuration."""
-    module: str
-    function_name: str
-
-
-class ModuleConfig(BaseModel):
-    """Module configuration."""
-    api_router: Optional[RouterConfig]
-    mcp_tools: Optional[McpToolsConfig]
-    description: str
-
-
 class ModulesConfig(BaseModel):
-    """Top-level modules configuration."""
-    model_config = ConfigDict(extra="allow")
+    """``modules`` in config/mcp.yaml: only the list of enabled modules."""
+    model_config = ConfigDict(extra="forbid")
 
     enabled: List[str]
+
+    @field_validator("enabled")
+    @classmethod
+    def _known_modules(cls, v: List[str]) -> List[str]:
+        unknown = [m for m in v if m not in MODULES]
+        if unknown:
+            raise ValueError(f"unknown module(s) {unknown}; known modules: {sorted(MODULES)}")
+        return v
 
 
 class RAGEmbeddingConfig(BaseModel):
@@ -241,11 +246,11 @@ class RAGEmbeddingConfig(BaseModel):
     provider: str
     model: str
     dimension: int
-    api_key: Optional[str] = Field(None, repr=False)  # Prefer "${ENV_VAR}"; literal keys are rejected in profile: cloud
+    api_key: OptStr = Field(None, repr=False)  # Prefer "${ENV_VAR}"; literal keys are rejected in profile: cloud
     api_key_env: Optional[str] = None  # Environment variable name for API key
     # OpenAI-compatible endpoint (honoured by every HTTP provider, including `openai`);
     # also used as azure_endpoint for the Azure provider.
-    base_url: Optional[str] = None
+    base_url: OptStr = None
     api_version: Optional[str] = None  # Azure API version (e.g., "2024-02-01")
     azure_deployment: Optional[str] = None  # Azure deployment name
     # e5-family needs "query: "/"passage: " prefixes; empty (default) for bge-family.
@@ -345,16 +350,14 @@ class RAGVectorStoreConfig(BaseModel):
 
 
 class RAGLLMConfig(BaseModel):
-    """Default LLM for every LLM role (contextual prefixes, answers, eval question generation).
-
-    Each role can override any field through ``rag.contextual_llm`` / ``rag.answer_llm`` /
-    ``rag.eval_llm`` (see LLMRoleConfig); unset fields inherit from here.
+    """The LLM: answers, evaluation, and contextual prefixes unless ``rag.contextual_llm``
+    overrides it (see LLMRoleConfig; unset fields there inherit from here).
     """
     # openai | openai-compatible | vllm | ollama (all OpenAI-compatible; base_url honoured) | azure
     provider: str = "azure"
     model: str = "gpt-4o-mini"
-    api_key: Optional[str] = Field(None, repr=False)
-    base_url: Optional[str] = None  # OpenAI-compatible endpoint (Azure: the resource endpoint)
+    api_key: OptStr = Field(None, repr=False)
+    base_url: OptStr = None  # OpenAI-compatible endpoint (Azure: the resource endpoint)
     api_version: Optional[str] = "2024-12-01-preview"
     azure_deployment: Optional[str] = None
     timeout: float = Field(120.0, gt=0)  # per-request timeout (seconds)
@@ -362,11 +365,12 @@ class RAGLLMConfig(BaseModel):
 
 
 class LLMRoleConfig(BaseModel):
-    """Per-role LLM override. Every field is optional; unset fields inherit from ``rag.llm``."""
-    provider: Optional[str] = None
-    model: Optional[str] = None
-    api_key: Optional[str] = Field(None, repr=False)
-    base_url: Optional[str] = None
+    """Per-role LLM override (``rag.contextual_llm``). Every field is optional; unset
+    fields inherit from ``rag.llm``."""
+    provider: OptStr = None
+    model: OptStr = None
+    api_key: OptStr = Field(None, repr=False)
+    base_url: OptStr = None
     api_version: Optional[str] = None
     azure_deployment: Optional[str] = None
     timeout: Optional[float] = Field(None, gt=0)
@@ -397,7 +401,7 @@ class RerankConfig(BaseModel):
     enabled: bool = False
     model: str = "BAAI/bge-reranker-v2-m3"
     base_url: str = "http://localhost:8787"
-    api_key: Optional[str] = Field(None, repr=False)
+    api_key: OptStr = Field(None, repr=False)
     # HTTP API style:
     #   score   — vLLM POST /v1/score {text_1, text_2}            (default; previous behaviour)
     #   cohere  — Cohere POST /v1/rerank {query, documents}        → results[{index, relevance_score}]
@@ -450,9 +454,9 @@ class AsrConfig(BaseModel):
     # fireredasr (local FireRedASR-AED-L, Traditional-Chinese output; weights see fireredasr_provider.py)
     provider: str = "docling-whisper"
     # ---- Cloud (openai-compatible) only: POST {base_url}/audio/transcriptions ----
-    base_url: Optional[str] = None          # e.g. http://host:8000/v1
-    api_key: Optional[str] = Field(None, repr=False)
-    model: Optional[str] = None             # cloud model name, e.g. whisper-1
+    base_url: OptStr = None                 # e.g. http://host:8000/v1
+    api_key: OptStr = Field(None, repr=False)
+    model: OptStr = None                    # cloud model name, e.g. whisper-1
     language: Optional[str] = None          # ISO-639-1 hint (e.g. "zh"); empty = auto-detect
     # Long audio is resampled to 16 kHz mono and uploaded in segments cut at silences, so
     # no single request hits the provider's upload limit (OpenAI: 25 MB ≈ 13 min of 16k pcm).
@@ -468,9 +472,9 @@ class VisionModelConfig(BaseModel):
     ``image_url`` data-URI part; ``azure`` uses the Azure OpenAI client instead.
     """
     provider: str = "openai-compatible"  # openai | openai-compatible | vllm | ollama | azure
-    model: Optional[str] = None
-    base_url: Optional[str] = None
-    api_key: Optional[str] = Field(None, repr=False)
+    model: OptStr = None
+    base_url: OptStr = None
+    api_key: OptStr = Field(None, repr=False)
     api_version: Optional[str] = None
     azure_deployment: Optional[str] = None
     timeout: float = Field(120.0, gt=0)
@@ -557,10 +561,9 @@ class RAGConfig(BaseModel):
     retrieval: RAGRetrievalConfig
     vector_store: RAGVectorStoreConfig
     llm: Optional[RAGLLMConfig] = None
-    # Per-role LLM overrides (unset fields inherit from `llm`)
+    # Optional override for contextual prefixes only (unset fields inherit from `llm`).
+    # It writes one short sentence of context per chunk, so a small, fast model is enough.
     contextual_llm: Optional[LLMRoleConfig] = None
-    answer_llm: Optional[LLMRoleConfig] = None
-    eval_llm: Optional[LLMRoleConfig] = None
     contextual_retrieval: Optional[ContextualRetrievalConfig] = None
     rerank: Optional[RerankConfig] = None
     docling: Optional[DoclingConfig] = None
