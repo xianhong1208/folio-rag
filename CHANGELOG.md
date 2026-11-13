@@ -6,6 +6,9 @@ to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Fixed
+- **Searching a folder that was never indexed returns an empty result.** A folder's vector table is created by its first indexing run; until then an MCP search answered `internal_error` (`UndefinedTable`) and `POST /api/rag/query` (and the console's Search) answered 404 "Vector store table missing". Both now return the normal empty result: MCP with `results: []`, `low_relevance: true` and a `_hint` saying the folder has nothing indexed yet; REST with 200, `results: []`, the new `not_indexed: true` and the message "Query returned 0 results: this folder has nothing indexed yet". The missing table is recognised by PostgreSQL's SQLSTATE (42P01) and only when it is that folder's own table, so any other missing relation still fails. These searches are not recorded in the query analytics (no false knowledge gap) and are never cached, so the folder answers as soon as its first file is indexed.
+
 ### Docs
 - **Roadmap and README rewritten.** `ROADMAP.md` and the new `ROADMAP.zh-TW.md` list what each released version brought, the agreed plan from 1.4.2 to 1.10 (each item has an issue in its GitHub milestone), what comes later and the known limitations; the Graph RAG decision gate is kept. The READMEs are shorter, with badges, a console screenshot, a quick start and deployment options. The reference material moved, in English and Traditional Chinese, to `docs/how-it-works.md`, `docs/configuration.md`, `docs/auth.md`, `docs/console.md`, `docs/api.md` and `docs/development.md`. Corrected on the way: the API docs at `/docs` are always on (there is no `ENABLE_API_DOCS`), and folders still keyed per token are those from before 1.4.1, not 1.5.
 
