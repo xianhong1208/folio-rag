@@ -39,7 +39,7 @@ Folio 是一套開源、給 Model Context Protocol 用的檢索增強生成(RAG)
 - **Cross-encoder 重排**(`mxbai-rerank-base-v2`、`bge-reranker-v2-m3`),MCP 搜尋也會說明「找不到相關
   內容」。
 - **Contextual retrieval。** 索引時由 LLM 為每個 chunk 寫一句脈絡說明;重新索引改過的檔案時,只重做有變動的
-  chunk。
+  chunk。以舊版切塊流程或其他 embedding 模型索引的檔案,會標示需要重新索引。
 - **每人各自的資料夾。** 你只看得到自己 MCP Gate 帳號的資料夾,MCP、REST 與主控台都一樣。
 - **多種格式。** PDF、Office(含舊版與 RTF)、OpenDocument、HTML 與 MHTML、Markdown、EPUB、電子郵件、
   圖片(OCR)與音訊。
@@ -142,7 +142,7 @@ token。Docker 映像檔與 compose 檔預計在 1.5 推出。
 | [運作原理](docs/how-it-works.zh-TW.md) | 檢索管線、檢索細節(BM25、斷詞、重排、延遲、相關度門檻)、量測檢索品質、每項功能的細節 |
 | [設定](docs/configuration.zh-TW.md) | 常用的每個設定,以及雲端 profile |
 | [驗證](docs/auth.zh-TW.md) | 依 MCP Gate 使用者的資料夾歸屬,以及 token 撤銷 feed |
-| [主控台](docs/console.zh-TW.md) | 登入、兩種權限層級、每個頁面、升級後重新索引 |
+| [主控台](docs/console.zh-TW.md) | 登入、兩種權限層級、每個頁面、升級或更換 embedding 模型後重新索引 |
 | [API 參考](docs/api.zh-TW.md) | MCP、REST、主控台與健康檢查端點 |
 | [PostgreSQL 維運](docs/operations-postgres.md) | 連線數預算與資料庫維護(英文) |
 | [開發](docs/development.zh-TW.md) | 架構、檢查、CI 與發布 |

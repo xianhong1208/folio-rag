@@ -26,7 +26,7 @@
 | 頁面 | 功能 |
 |------|------|
 | **Overview** | 活的檢索管線、語料讀數、索引健康、模型服務狀態。 |
-| **Folders** | 建立資料夾(歸你所有);點進去可上傳檔案、看逐檔索引狀態、檢視 chunk(AI 脈絡說明與文件原文分開顯示)、重新索引、刪除。以舊版切塊流程索引的檔案會標示 **Re-index recommended**;資料夾列表會逐一統計(**N stale**),並可一鍵重建。 |
+| **Folders** | 建立資料夾(歸你所有);點進去可上傳檔案、看逐檔索引狀態、檢視 chunk(AI 脈絡說明與文件原文分開顯示)、重新索引、刪除。以舊版切塊流程、或以不同於目前設定的 embedding 模型索引的檔案,會標示 **Re-index recommended**;資料夾列表會逐一統計(**N stale**),並可一鍵重建。 |
 | **Search Playground** | 對資料夾即時查詢,顯示**逐訊號檢索軌跡** —— Vector · BM25 · Hybrid · Rerank 各自名次並列 —— 並可加 RAG 答案。 |
 | **Index Jobs** | 索引任務即時串流與進度;可取消執行中的任務。 |
 | **Query Analytics** | 查詢量、延遲、零結果率、熱門查詢與知識缺口。 |
@@ -42,3 +42,7 @@
 不用一個個點開資料夾去找:資料夾列表會在含有這類檔案的資料夾上顯示琥珀色的 **N stale** 標籤(`GET /api/admin/folders` 的 `reindex_recommended_files`),按該列的重新索引按鈕就只會重建那些檔案。
 
 目前的切塊流程是第 3 版(依章節對齊切塊,搭配第 3 版的脈絡說明 prompt),因此在此之前索引的檔案都會被標示。重新索引之前,檔案會保留舊的 chunk,照常可以搜尋。
+
+## 更換 embedding 模型後重新索引
+
+每個檔案也會記錄索引時用的 embedding 模型與維度(`embedding_model`、`embedding_dimension`)。在 config.yaml 或設定頁改了 `rag.embedding.model` 或 `rag.embedding.dimension` 之後,所有用舊模型索引的檔案會立刻以同樣方式標示 **Re-index recommended**,並計入資料夾的 **N stale** 標籤:它們的向量來自另一個模型,跟新的查詢對不上。標籤的提示文字與 API 的 `reindex_reason` 會說明是哪一種情況(`embedding` 或 `pipeline`)。改回原本的模型,標示就會消失。1.4.2 之前索引的檔案,伺服器啟動時會從資料夾的向量表補上維度;從未記錄模型或維度的檔案,不會因此被標示。

@@ -42,7 +42,8 @@ an OpenAI-compatible API).
 - **Cross-encoder reranking** (`mxbai-rerank-base-v2`, `bge-reranker-v2-m3`), and MCP search says
   when nothing relevant was found.
 - **Contextual retrieval.** An LLM writes a short context line for each chunk at index time;
-  re-indexing an edited file only redoes the chunks that changed.
+  re-indexing an edited file only redoes the chunks that changed. Files indexed by an older
+  chunking pipeline or another embedding model are marked for re-indexing.
 - **Per-person folders.** You only see the folders of your MCP Gate account, over MCP, REST and the
   console alike.
 - **Many formats.** PDF, Office (including legacy and RTF), OpenDocument, HTML and MHTML, Markdown,
@@ -149,7 +150,7 @@ planned for 1.5.
 | [How it works](docs/how-it-works.md) | the pipeline, retrieval in detail (BM25, segmentation, reranking, latency, relevance cutoff), measuring retrieval, every feature in detail |
 | [Configuration](docs/configuration.md) | every setting you are likely to touch, and the cloud profile |
 | [Authentication](docs/auth.md) | folder ownership by MCP Gate user, and the token revocation feed |
-| [Console](docs/console.md) | signing in, the two permission tiers, each page, re-indexing after an upgrade |
+| [Console](docs/console.md) | signing in, the two permission tiers, each page, re-indexing after an upgrade or an embedding model change |
 | [API reference](docs/api.md) | MCP, REST, console and health endpoints |
 | [PostgreSQL operations](docs/operations-postgres.md) | connection budget and database upkeep |
 | [Development](docs/development.md) | architecture, checks, CI and releasing |

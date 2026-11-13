@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { isPartial, needsReindex, countNeedsReindex, folderStaleCount, staleFileIds, batches, RETRY_BATCH } from './fileStatus'
+import { isPartial, needsReindex, reindexNote, countNeedsReindex, folderStaleCount, staleFileIds, batches, RETRY_BATCH } from './fileStatus'
 
 describe('isPartial', () => {
   it('flags an indexed file that carries a parse warning', () => {
@@ -46,5 +46,18 @@ describe('folder list stale count', () => {
     expect(batches([], 2)).toEqual([])
     const ids = Array.from({ length: RETRY_BATCH + 1 }, (_, i) => i)
     expect(batches(ids).map((b) => b.length)).toEqual([RETRY_BATCH, 1])
+  })
+})
+
+describe('reindexNote', () => {
+  it('names the embedding model the file was indexed with', () => {
+    const n = reindexNote({ status: 'indexed', reindex_recommended: true, reindex_reason: 'embedding', embedding_model: 'old-emb', embedding_dimension: 768 })
+    expect(n).toContain('another embedding model (old-emb, 768 dims)')
+  })
+  it('falls back to the pipeline note', () => {
+    expect(reindexNote({ status: 'indexed', reindex_recommended: true, reindex_reason: 'pipeline' })).toContain('older chunking pipeline')
+  })
+  it('is empty when no re-index is needed', () => {
+    expect(reindexNote({ status: 'indexed', reindex_recommended: false, reindex_reason: null })).toBe('')
   })
 })
