@@ -98,8 +98,10 @@ local = [
     "kaldi-native-fbank>=1.15",
     "sentencepiece>=0.2.0",
     # OCR runs via docling's transitive rapidocr (torch backend); no onnxruntime needed.
-    # Pinned to 4.x; 5.x needs separate sentence-transformers / llama-index compatibility checks.
-    "transformers>=4.46.0,<5.0.0",
+    # 5.x: 4.x carries advisories fixed only in 5.0-5.10 (torch.load in Trainer, malicious
+    # config.json, save_pretrained path traversal, ...). Output checked equal to 4.57 for CKIP
+    # segmentation, HuggingFace embeddings and docling layout/OCR.
+    "transformers>=5.22.0,<6.0.0",
     # CKIP word segmentation for Chinese BM25/FTS (Academia Sinica). Segments in Python, then
     # Postgres tokenizes with `simple`; replaces the old pg_jieba/jiebacfg path.
     "ckip-transformers>=0.3.4",
@@ -197,13 +199,16 @@ exclude_lines = [
 # PyTorch install split (PEP 735). Groups are mutually exclusive — see [tool.uv] conflicts.
 [dependency-groups]
 
-# NVIDIA CUDA 12.6 (local build-box GPU testing). torch 2.8+ is required by docling ASR.
+# NVIDIA CUDA 13.0 wheels (driver >= 580). The same torch line as the cpu group: torch < 2.10
+# carries GHSA-63cw-57p8-fm3p (torch.load RCE) and the < 2.13 lstm_cell / unpack_sequence /
+# jit.script advisories. PyTorch publishes 2.14 for CUDA 13.0, not 12.x.
 cuda = [
-    "torch>=2.8.0,<2.9",
-    "torchvision>=0.23.0,<0.24",
-    "torchaudio>=2.8.0,<2.9",
+    "torch>=2.14.0,<2.15",
+    "torchvision>=0.29.0,<0.30",
+    # torchaudio's newest release is 2.11; it supports torch 2.14 (the cpu group pairs them too).
+    "torchaudio>=2.11.0,<2.12",
     # triton is listed so its [tool.uv.sources] index pin applies (it is a torch transitive dep).
-    "triton>=3.4.0,<3.5",
+    "triton>=3.8.0,<3.9",
 ]
 
 # Pure CPU (CI / no GPU). Keep torch >= 2.8 — earlier versions break docling ASR.
@@ -234,7 +239,10 @@ concurrent-downloads = 8
 # setuptools is a torch dependency. Below 84.1 it carries PYSEC-2026-3447 and GHSA-xmj3-9gf7-h52w;
 # this makes a lock that would fall back to an older one (an older AMD torch caps it at <82) fail
 # instead of passing the dependency audit's back door.
-constraint-dependencies = ["setuptools>=84.1"]
+#
+# Mako (via alembic) below 1.4.2 carries GHSA-5639-2j2p-m4mx. soupsieve (via beautifulsoup4) below
+# 4.0.0 carries CVE-2026-126190 and CVE-2026-126192; nothing that depends on it caps it below 4.
+constraint-dependencies = ["setuptools>=84.1", "mako>=1.4.2", "soupsieve>=4.0.0"]
 
 # Copy files into the venv instead of hard-linking them from the uv cache. NLTK >= 3.10.4 refuses
 # to open a data file with more than one hard link (CWE-59), and llama-index ships its stopwords
@@ -268,8 +276,8 @@ name = "pytorch-rocm-multiarch"
 url = "https://repo.amd.com/rocm/whl-multi-arch/"
 # Not explicit: torch[device-all]'s transitive ROCm runtime libs also live on this index.
 [[tool.uv.index]]
-name = "pytorch-cu126"
-url = "https://download.pytorch.org/whl/cu126"
+name = "pytorch-cu130"
+url = "https://download.pytorch.org/whl/cu130"
 explicit = true
 [[tool.uv.index]]
 name = "pytorch-cpu"
@@ -283,23 +291,23 @@ explicit = true
 fireredasr = { path = "vendor/fireredasr_src" }
 torch = [
     { index = "pytorch-rocm-multiarch", group = "rocm-r714" },
-    { index = "pytorch-cu126",          group = "cuda"      },
+    { index = "pytorch-cu130",          group = "cuda"      },
     { index = "pytorch-cpu",            group = "cpu"       },
 ]
 torchvision = [
     { index = "pytorch-rocm-multiarch", group = "rocm-r714" },
-    { index = "pytorch-cu126",          group = "cuda"      },
+    { index = "pytorch-cu130",          group = "cuda"      },
     { index = "pytorch-cpu",            group = "cpu"       },
 ]
 torchaudio = [
     { index = "pytorch-rocm-multiarch", group = "rocm-r714" },
-    { index = "pytorch-cu126",          group = "cuda"      },
+    { index = "pytorch-cu130",          group = "cuda"      },
     { index = "pytorch-cpu",            group = "cpu"       },
 ]
 # Pin triton to the CUDA index; otherwise the AMD index's +rocm local version outranks the
-# bare 3.4.0 that CUDA needs, and torch.compile breaks on NVIDIA.
+# bare 3.8.0 that CUDA needs, and torch.compile breaks on NVIDIA.
 triton = [
-    { index = "pytorch-cu126",        group = "cuda" },
+    { index = "pytorch-cu130",        group = "cuda" },
 ]
 
 
