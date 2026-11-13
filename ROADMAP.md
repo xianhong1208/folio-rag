@@ -2,7 +2,7 @@
 
 [繁體中文](ROADMAP.zh-TW.md)
 
-Where Folio is going after 1.4.1. The plan was agreed on 2026-11-13, after looking at how RAGFlow,
+Where Folio is going after 1.4.2. The plan was agreed on 2026-11-13, after looking at how RAGFlow,
 Onyx, Kotaemon, R2R, Dify, Open WebUI and Khoj solve the same problems. Each line says what you
 get, not how it is built. Every item has an issue in the GitHub milestone of its version.
 
@@ -37,13 +37,14 @@ first use. Signing out ends the console session on the server. Answers come in t
 language. Duplicate folder and file names are refused. No sideways scrolling in the console on a
 phone.
 
+**1.4.2 (2026-11-13).** Known risks fixed: model key settings can no longer be used to send the server's environment variables elsewhere; a large upload is refused before it fills memory; changing the embedding model marks the files that need re-indexing; searching a folder that was never indexed returns an empty result. Dependencies updated for every open advisory (transformers 5, torch 2.14 for CUDA 13). Advance notice that 1.5 removes the built-in OCR, speech-to-text and the `/v1` media endpoints.
+
 Details: [CHANGELOG.md](CHANGELOG.md).
 
 ## Next
 
 | Version | What you get |
 |---|---|
-| **1.4.2: fixes** | **Known risks fixed:** changing the embedding model marks the folders that need re-indexing; model key settings can no longer be used to reveal the server's environment variables; a large upload is refused before it fills memory; searching a folder that was never indexed returns an empty result instead of an internal error. **Advance notice:** the built-in OCR and speech-to-text, and the `/v1` OCR and transcription endpoints, are removed in 1.5. The notice says what replaces them. |
 | **1.5: install in one command, never lose data** | **A lightweight Docker image** and a compose file with PostgreSQL + pgvector, plus an optional MCP Gate profile. The built-in OCR and speech models leave the image: scanned PDFs and images are read by a **vision model over an OpenAI-compatible API** (for example Qwen3-VL served by [Forgeyard](https://github.com/xianhong1208/forgeyard)), and audio goes to Forgeyard's transcription. The `/v1` OCR and speech endpoints go too; a **migration guide** shows how to point Folio at Forgeyard. **A deploy guide.** **`folio backup` / `folio restore`** and scheduled backups. **Export and import one folder.** Prometheus metrics at **`/metrics`**. |
 | **1.6: find the document** | **Metadata and tags** on documents, with filters in REST, the console and MCP. **Results by document**, not only by passage. **Search across all your folders.** A **Library** page. An MCP **`find`** mode that returns documents. |
 | **1.7: better answers** | **Query rewriting and multi-query**, with HyDE and translation as opt-ins. Each one is kept only if the golden set improves. **Figures** described by a vision model, so they can be found. **Citations open the PDF** at the highlighted passage. **Thumbs up / down** on answers. |
