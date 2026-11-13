@@ -26,9 +26,9 @@
 | `rag.retrieval.rerank_candidates` | `60` | 僅用於 `fused` 候選池:`max(3 × top_k, 此值)` 個融合候選送進 cross-encoder;可即時調整(1–200)。 |
 | `rag.retrieval.mcp_response_token_budget` | `6000` | MCP 搜尋回應的估算 token 上限;超過時省略排名最低的結果並在回應中註明。`0` = 不限制。 |
 | `rag.retrieval.min_relevance` | 隨附設定檔為 `0.9`(未設定時 `0`) | MCP 搜尋:最高 rerank 分數低於此值 → `low_relevance: true`(只標記、不刪除)。依模型而定;`0` = 關閉。 |
-| `rag.asr.provider` | `fireredasr` | 音訊轉錄:`fireredasr`（本地繁中）· `docling-whisper` · `openai-compatible`。`rag.asr.enabled: false` 時音檔會以明確訊息標為失敗(不做任何轉錄)。 |
+| `rag.asr.provider` | `fireredasr` | 音訊轉錄:`fireredasr`（本地繁中）· `docling-whisper` · `openai-compatible`。`rag.asr.enabled: false` 時音檔會以明確訊息標為失敗(不做任何轉錄)。`fireredasr` 與 `docling-whisper` **將在 1.5 移除**,請改用 `openai-compatible`([詳見](api.zh-TW.md#15-移除內建-ocr語音轉文字與-v1-媒體端點))。 |
 | `rag.retrieval.segmenter` | `ckip`(`profile: cloud` 為 `bigram`) | 關鍵字檢索的中文斷詞器:`ckip` · `jieba` · `bigram`（見[運作原理](how-it-works.zh-TW.md)的「中文斷詞」）。 |
-| `rag.docling.ocr_enabled` | `true` | 掃描 PDF 與圖片的 OCR。設 `false` 會真的關掉(重啟後生效);沒有文字層的掃描檔會以明確訊息失敗。 |
+| `rag.docling.ocr_enabled` | `true` | 掃描 PDF 與圖片的 OCR。設 `false` 會真的關掉(重啟後生效);沒有文字層的掃描檔會以明確訊息失敗。內建 OCR **將在 1.5 移除**,請改用搭配 `rag.parsing.vision` 的雲端解析([詳見](api.zh-TW.md#15-移除內建-ocr語音轉文字與-v1-媒體端點))。 |
 | `rag.contextual_retrieval.max_doc_chars` | `60000` | 每個 chunk 交給 LLM 的文件文字上限。LLM 讀的是大綱加上 chunk 所在章節,以 chunk 為中心最多 12,000 字元。 |
 | `rag.retrieval.*` | — | Top-K、相似度門檻、BM25 候選數、`hybrid_fusion`（`rrf`/`concat`）、auto-merging。可從主控台即時調,或用 **High Precision / Balanced / High Recall** 預設。 |
 | `rag.profile` | `local` | `local` · `hybrid` · `cloud` —— 見[雲端 profile](#雲端-profile)。 |
@@ -126,7 +126,14 @@ profile 做了什麼:
 **主控台。** *Settings* 最上方是 **Model Roles** 面板:每個角色跑在哪、provider、模型與端點、
 是否已設定金鑰以及來自哪個環境變數（金鑰值永不回傳）,還有 **Test** 按鈕,用已儲存的設定送出一次最小的真實請求
 （一次 embedding —— 會檢查維度 ——、16 token 的對話、給視覺模型的 8×8 圖片、一組 rerank、給語音轉文字的半秒靜音）。
-金鑰欄位可填 `${ENV_VAR}`;伺服器存的是參照,不是金鑰。修改需要 `rag:admin` scope。
+修改需要 `rag:admin` scope。
+
+**執行期設定的金鑰。** 金鑰欄位可以填金鑰本身,或 `${VAR}` 參照;伺服器存的是參照,不是金鑰。只有 config.yaml
+本來就拿來當模型 `api_key` 的變數才能這樣參照,而且該角色指向的伺服器(`base_url` 的 scheme、主機與連接埠)必須是
+config.yaml 讓這個變數使用的伺服器。其他參照一律得到同一個「不允許」錯誤,不論變數存不存在。角色的 `base_url`
+改到另一台伺服器時,除非同一次修改給了新金鑰,否則它的金鑰會被清除(回應會說明);繼承 `rag.llm` 金鑰的 LLM 角色,
+必須在同一次修改給自己的金鑰。重設金鑰會恢復 config.yaml 的參照。啟動時,違反這些規則的已存金鑰設定會被略過;
+會送到未配對伺服器的金鑰參照會被清除,並在日誌中警告。
 
 每日上限存在記憶體中,於 UTC 午夜或重啟時歸零 —— 它是防失控的保護,不是計費。
 

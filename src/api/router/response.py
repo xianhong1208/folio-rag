@@ -512,6 +512,8 @@ class QueryResponseData(BaseModel):
     results: List[RAGSearchResultDoc] = Field(default_factory=list)
     total_results: int
     retrieval_time_ms: Optional[float] = Field(None)
+    not_indexed: bool = Field(
+        False, description="True when the folder has nothing indexed yet (the result is empty, not an error)")
 
 
 class QueryResponse(BaseModel):

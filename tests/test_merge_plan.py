@@ -90,9 +90,12 @@ class TestQueryEngine:
         from src.domain.exceptions import FolderNotFoundError
         from src.domain.rag.query_engine import QueryEngine
 
+        class UndefinedTable(Exception):
+            pgcode = "42P01"
+
         searcher = MagicMock()
         searcher.search = AsyncMock(side_effect=sqlalchemy.exc.ProgrammingError(
-            "s", {}, Exception('relation "data_1" does not exist')))
+            "s", {}, UndefinedTable('relation "data_1" does not exist')))
         eng = QueryEngine(MagicMock(), searcher=searcher)
         try:
             await eng.aquery("q", SearchSettings())

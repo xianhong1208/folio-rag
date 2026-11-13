@@ -24,6 +24,12 @@ Folio 是一套開源、給 Model Context Protocol 用的檢索增強生成(RAG)
 [CHANGELOG](CHANGELOG.md);接下來的規劃見[路線圖](ROADMAP.zh-TW.md)(1.5:Docker 映像檔、備份,以及
 透過 OpenAI 相容 API 做 OCR 與語音轉文字)。
 
+> **1.5 將移除:** 內建的 OCR、內建的語音轉文字(FireRedASR、docling-whisper)以及 `/v1` 媒體端點。
+> 1.4.x 仍可照常使用,但會在日誌中提出警告,`/v1` 的回應也會帶 `Deprecation` 標頭。請改用 OpenAI
+> 相容的視覺模型讀取掃描 PDF 與圖片、OpenAI 相容的轉錄端點處理音訊,例如都由
+> [Forgeyard](https://github.com/xianhong1208/forgeyard) 提供。詳見
+> [改用什麼](docs/api.zh-TW.md#15-移除內建-ocr語音轉文字與-v1-媒體端點)。
+
 ## 主要功能
 
 - **會合併回來的階層式切塊。** 小的 leaf 用來精準比對,大的 parent 提供完整脈絡,兩者都不跨章節;同一段落

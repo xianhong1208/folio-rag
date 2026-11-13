@@ -26,9 +26,9 @@ Settings live in `config/config.yaml`; secrets come from environment variables (
 | `rag.retrieval.rerank_candidates` | `60` | `fused` pool only: `max(3 × top_k, this)` fused candidates go to the cross-encoder; live-tunable (1–200). |
 | `rag.retrieval.mcp_response_token_budget` | `6000` | Estimated-token cap on an MCP search response; lowest-ranked results are dropped to fit and the response says so. `0` = no cap. |
 | `rag.retrieval.min_relevance` | `0.9` in the shipped config (`0` when unset) | MCP search: best rerank score below this → `low_relevance: true` (flagged, not dropped). Model-specific; `0` = off. |
-| `rag.asr.provider` | `fireredasr` | Audio transcription: `fireredasr` (local zh-TW) · `docling-whisper` · `openai-compatible`. `rag.asr.enabled: false` fails audio files with a clear message (nothing is transcribed). |
+| `rag.asr.provider` | `fireredasr` | Audio transcription: `fireredasr` (local zh-TW) · `docling-whisper` · `openai-compatible`. `rag.asr.enabled: false` fails audio files with a clear message (nothing is transcribed). `fireredasr` and `docling-whisper` are **removed in 1.5**: move to `openai-compatible` ([details](api.md#removed-in-15-built-in-ocr-speech-to-text-and-the-v1-media-endpoints)). |
 | `rag.retrieval.segmenter` | `ckip` (`bigram` under `profile: cloud`) | Chinese segmenter for keyword search: `ckip` · `jieba` · `bigram` (see *Chinese segmentation* in [How Folio works](how-it-works.md)). |
-| `rag.docling.ocr_enabled` | `true` | OCR for scanned PDFs and images. `false` really skips it (restart to apply); a scan with no text layer then fails with a clear message. |
+| `rag.docling.ocr_enabled` | `true` | OCR for scanned PDFs and images. `false` really skips it (restart to apply); a scan with no text layer then fails with a clear message. The built-in OCR is **removed in 1.5**: use cloud parsing with `rag.parsing.vision` ([details](api.md#removed-in-15-built-in-ocr-speech-to-text-and-the-v1-media-endpoints)). |
 | `rag.contextual_retrieval.max_doc_chars` | `60000` | Upper bound on the document text the LLM reads per chunk. It reads the outline plus the chunk's own section, windowed to at most 12,000 characters. |
 | `rag.retrieval.*` | — | Top-K, similarity cutoff, BM25 candidates, `hybrid_fusion` (`rrf`/`concat`), auto-merging. Tunable live from the console, or via the **High Precision / Balanced / High Recall** presets. |
 | `rag.profile` | `local` | `local` · `hybrid` · `cloud` — see [Cloud profile](#cloud-profile). |
@@ -136,8 +136,18 @@ What the profile does:
 model and endpoint, whether a key is set and which environment variable it comes from (keys are
 never returned), and a **Test** button that sends one minimal real request with the saved settings
 (an embedding — dimension checked —, a 16-token chat, an 8×8 image for the vision model, one rerank
-pair, half a second of silence for speech-to-text). Key fields accept `${ENV_VAR}`; the server
-stores the reference, never the key. Changes need the `rag:admin` scope.
+pair, half a second of silence for speech-to-text). Changes need the `rag:admin` scope.
+
+**Keys set at runtime.** A key field takes the key itself, or a `${VAR}` reference; the server
+stores the reference, never the key. A reference is accepted only for a variable that config.yaml
+already uses as a model `api_key`, and only while the role points at a server (scheme, host and
+port of its `base_url`) that config.yaml uses that variable with. Any other reference gets the same
+"not allowed" error, whether the variable exists or not. When a role's `base_url` moves to another
+server, its key is cleared unless the same change gives it a new one (the answer says so); an LLM
+role that inherits `rag.llm`'s key must get its own key in that change. Resetting a key restores
+config.yaml's reference. At startup, stored key settings that break these rules are skipped, and a
+key reference that would reach a server it is not paired with is cleared, with a warning in the
+log.
 
 Daily caps are kept in memory and reset at UTC midnight or on restart — they are a runaway guard,
 not billing.
