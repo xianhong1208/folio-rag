@@ -8,7 +8,7 @@ with file validation and security checks.
 
 from typing import Dict, Any, Optional, List, Union
 from db.db import File, Session as DBSession
-from db.filedb import FileDB, FileNameConflictError
+from db.filedb import FileDB, FileNameConflictError, FileTooLargeError, file_too_large_message
 from db.folderdb import FolderDB
 from sqlalchemy.exc import NoResultFound
 from uuid import UUID, uuid4
@@ -51,10 +51,19 @@ class FileAdapter():
             FolderDB.update(folder_id, file_count=actual_file_count, total_size=actual_total_size)
 
     @staticmethod
-    def _store_file(folder, file_content: bytes, file_name: str,
+    def _store_file(folder, file_content, file_name: str,
                     description: Optional[str], tags: Optional[List[str]]):
-        """Validate, save and record one uploaded file (blocking). Returns (validation, record)."""
-        validation_result = FileDB._validate_file_content(file_content, file_name)
+        """Validate, save and record one uploaded file (blocking). Returns (validation, record).
+
+        ``file_content`` is either bytes or a binary file object (an upload's spooled
+        temporary file). A file object is copied to storage in chunks with the size
+        limit enforced while copying, so the upload is never held in memory whole.
+        """
+        streamed = not isinstance(file_content, (bytes, bytearray))
+        if streamed:
+            ext, mime_type = FileDB.check_file_name(file_name)
+        else:
+            validation_result = FileDB._validate_file_content(file_content, file_name)
         if FileAdapter._name_taken(folder.id, file_name):
             # Files are stored under their own uuid, so a second upload would not replace
             # the first: it would sit next to it and every search would return both.
@@ -64,19 +73,30 @@ class FileAdapter():
         # Generate the UUID up front so the file is saved and the DB
         # record created against the same id in a single pass.
         file_id = uuid4()
-        file_path = FileStorage.save_file(folder.user_token, folder.name, str(file_id), file_content)
+        if streamed:
+            file_path, size, content_hash = FileStorage.save_stream(
+                folder.user_token, folder.name, str(file_id), file_content, FileDB.MAX_FILE_SIZE)
+            validation_result = {'file_size': size, 'mime_type': mime_type,
+                                 'extension': ext, 'content_hash': content_hash}
+        else:
+            file_path = FileStorage.save_file(folder.user_token, folder.name, str(file_id), file_content)
 
-        file_record = FileDB.create(
-            id=file_id,
-            folder_id=folder.id,
-            file_name=file_name,
-            file_path=file_path,
-            file_size=validation_result['file_size'],
-            mime_type=validation_result['mime_type'],
-            description=description,
-            tags=tags,
-            content_hash=validation_result.get('content_hash'),
-        )
+        try:
+            file_record = FileDB.create(
+                id=file_id,
+                folder_id=folder.id,
+                file_name=file_name,
+                file_path=file_path,
+                file_size=validation_result['file_size'],
+                mime_type=validation_result['mime_type'],
+                description=description,
+                tags=tags,
+                content_hash=validation_result.get('content_hash'),
+            )
+        except Exception:
+            # No record, no file: an orphan on disk would never be listed or cleaned up.
+            FileStorage.delete_file(file_path)
+            raise
         return validation_result, file_record
 
     @staticmethod
@@ -123,7 +143,8 @@ class FileAdapter():
         Args:
             files_data: A single file-data dict or a list of file-data dicts.
                       Single-file format: {
-                          'file_content': bytes,
+                          'file_content': bytes or a binary file object,
+                          'file_size': Optional[int] (declared size, checked first),
                           'file_name': str,
                           'description': Optional[str],
                           'tags': Optional[List[str]]
@@ -153,6 +174,10 @@ class FileAdapter():
                 tags = file_data.get('tags')
 
                 logger.info(f"Processing file: {file_name}, description: {description}, tags: {tags}")
+                # The size the upload declared (known before any copying): refuse at once.
+                declared = file_data.get('file_size')
+                if declared is not None and declared > FileDB.MAX_FILE_SIZE:
+                    raise FileTooLargeError(file_too_large_message(FileDB.MAX_FILE_SIZE))
 
                 # Validation (hashing), the disk write and the INSERT all block: one
                 # worker-thread hop per file.

@@ -38,6 +38,10 @@ MAX_TOP_K = 20
 _HINT_NO_RESULTS = (
     "No matching passages. Rephrase the query with other keywords or synonyms "
     "(e.g. the document's own terms), or use mode='list' to see which files exist.")
+_HINT_NOT_INDEXED = (
+    "This folder has nothing indexed yet: its files have not been indexed (or indexing "
+    "has not finished), so there is nothing to search. Say the folder has no searchable "
+    "content yet; use mode='list' to see its files and their status.")
 _HINT_FEW = (
     "Only {n} passage(s) matched. If they do not answer the question, rephrase the "
     "query with more specific terms; do not read whole files to make up for it.")
@@ -306,7 +310,10 @@ async def handle_search(
                     top_score=getattr(outcome, "top_score", None),
                     min_relevance=min_relevance)
 
-    if not results:
+    if not results and getattr(outcome, "not_indexed", False) is True:
+        response["_hint"] = _HINT_NOT_INDEXED
+        hint_reason = "not_indexed"
+    elif not results:
         response["_hint"] = _HINT_NO_RESULTS
         hint_reason = "no_results"
     elif response["low_relevance"]:

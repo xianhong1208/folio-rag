@@ -1,430 +1,168 @@
 # Folio
 
-**An open-source Retrieval-Augmented Generation server for the Model Context Protocol — hierarchical chunking, auto-merging retrieval, and hybrid vector + Chinese BM25 search, exposed to MCP clients as per-folder tools.**
+[![License: MIT](https://img.shields.io/github/license/xianhong1208/folio-rag)](LICENSE)
+[![Backend CI](https://github.com/xianhong1208/folio-rag/actions/workflows/backend.yml/badge.svg?branch=dev)](https://github.com/xianhong1208/folio-rag/actions/workflows/backend.yml)
+[![Console CI](https://github.com/xianhong1208/folio-rag/actions/workflows/frontend.yml/badge.svg?branch=dev)](https://github.com/xianhong1208/folio-rag/actions/workflows/frontend.yml)
+[![Release](https://img.shields.io/github/v/release/xianhong1208/folio-rag)](https://github.com/xianhong1208/folio-rag/releases)
 
-Folio turns a folder of documents into a retrieval tool that Claude Code, Claude Desktop, Cursor and any other MCP client can call. Each folder becomes a `Folio_<folder>` tool with three modes — **search**, **list** and **read** — backed by a pipeline that chunks hierarchically, retrieves with dense + sparse signals, merges neighbouring hits into whole passages, and re-ranks with a cross-encoder. It is a **resource server**: it verifies OAuth tokens offline and never issues them, pairing with [MCP Gate](https://github.com/xianhong1208/MCP_Gate) as the authorization server.
+**Turn a folder of documents into a search tool for Claude, Cursor and any other MCP client: hybrid vector + Chinese BM25 retrieval, a reranker, and auto-merged passages, one `Folio_<folder>` tool per folder.**
 
-Folio was called *Agentic RAG* up to v1.1.0. The repository, the default database names (`agentic_rag`) and the storage layout keep the old name; nothing needs migrating.
+[Documentation](docs/how-it-works.md) · [繁體中文](README.zh-TW.md) · [Roadmap](ROADMAP.md) · [Changelog](CHANGELOG.md)
 
-License: MIT&nbsp;·&nbsp;Python 3.12&nbsp;·&nbsp;PostgreSQL + pgvector&nbsp;·&nbsp;Works with FastMCP&nbsp;·&nbsp;OAuth 2.1 (resource server)
+![The Search Playground: an answer with citations, and each result's vector, BM25, fusion and rerank scores](docs/images/console-search.png)
 
-[繁體中文](README.zh-TW.md) · [Quick start](#quick-start) · [How it works](#how-it-works) · [Configuration](#configuration) · [Console](#use-the-console) · [Architecture](#architecture)
+Folio is an open-source retrieval-augmented generation (RAG) server for the Model Context Protocol.
+Each folder becomes a `Folio_<folder>` tool with three modes, **search**, **list** and **read**. It
+is an OAuth 2.1 **resource server**: it verifies tokens offline and never issues them, and pairs
+with [MCP Gate](https://github.com/xianhong1208/MCP_Gate) as the authorization server. Folio was
+called *Agentic RAG* up to v1.1.0; the database names (`agentic_rag`) and the storage layout keep
+the old name, and nothing needs migrating.
 
-```
-┌────────────────┐     Folio_<folder> tool call (Bearer JWT)    ┌───────────────────────────────┐
-│   MCP client   │ ───────────────────────────────────────────▶ │  Folio (resource server)       │
-│  Claude / IDE  │ ◀─────────────────────────────────────────── │  /mcp · per-user folder tools  │
-└───────┬────────┘        auto-merged passages + scores         └───────────────┬───────────────┘
-        │ OAuth flow                                                             │ verify JWT offline
-        ▼                                                                        ▼
-  ┌─────────────┐                              retrieval pipeline (per query)
-  │  MCP Gate │  RS256 JWKS                  ingest ─▶ chunk ─▶ embed ─▶ pgvector ─▶ hybrid retrieve
-  │ OAuth 2.1 AS│  (offline verify)            (Docling) (leaf+parent) (e5·1024d)   (vector + BM25/CKIP)
-  └─────────────┘                                   └▶ auto-merge + expand ─▶ rerank ─▶ gpt-oss-120b
-```
+## What's new
+
+**1.4.1:** folders belong to the person, not to one token, so every personal access token and OAuth
+sign-in of one MCP Gate user sees the same folders; signing out ends the console session on the
+server; answers come in the question's language. See the [CHANGELOG](CHANGELOG.md), and the
+[ROADMAP](ROADMAP.md) for what comes next (1.5: a Docker image, backups, and OCR and speech through
+an OpenAI-compatible API).
+
+> **Removed in 1.5:** the built-in OCR, the built-in speech-to-text (FireRedASR, docling-whisper)
+> and the `/v1` media endpoints. 1.4.x keeps them working and warns in the log; `/v1` responses
+> carry a `Deprecation` header. Move to an OpenAI-compatible vision model for scanned PDFs and
+> images and an OpenAI-compatible transcription endpoint for audio, for example both served by
+> [Forgeyard](https://github.com/xianhong1208/forgeyard). See
+> [what replaces them](docs/api.md#removed-in-15-built-in-ocr-speech-to-text-and-the-v1-media-endpoints).
 
 ## Key features
 
-- **Section-aligned hierarchical chunking + auto-merging retrieval.** Documents are split into small **leaves** (precise matching) and large **parents** (full context) at index time, and neither ever spans two sections. Each leaf carries its **breadcrumb** (file › heading path, xlsx sheet names included), so two documents with the same structure — two product manuals, two price sheets — stay distinguishable. When several leaves from the same passage are hit, the whole parent is returned instead of fragments; a single-leaf hit expands to its neighbours so the answer never loses narrative continuity.
-- **Hybrid search, tuned for Chinese.** Dense vector retrieval (pgvector) is fused with sparse **BM25** using Reciprocal Rank Fusion, so keyword signal genuinely affects ranking. Chinese text is word-segmented before Postgres full-text indexing — with **CKIP** (Academia Sinica) by default, or jieba / a dependency-free bigram tokenizer — so space-less Chinese actually gets tokenized instead of collapsing into one term.
-- **Cross-encoder reranking.** A `bge-reranker-v2-m3` / `mxbai-rerank-base-v2` model re-scores the fused candidates for fine-grained Top-K precision.
-- **Contextual retrieval.** At index time an LLM writes a short context line for each chunk (Anthropic's recommended technique) from the document outline and the chunk's own section, in the document's language. The context and breadcrumb are what the chunk is *found* by (embedding, BM25, rerank); results always show the original document text.
-- **Incremental re-indexing.** Re-indexing a file reuses the context line and embedding of every unchanged chunk, so editing one section costs about one LLM call and one embedding. The file's chunks are swapped in a single transaction — it never disappears from search mid-way.
-- **Per-folder MCP tools, scoped per user.** Every folder is registered as a `Folio_<folder>` tool; the tool list a caller sees is filtered by who their token belongs to — you only see folders you own. Ownership is keyed on the token's `sub` (the MCP Gate user), so every token of one user — personal access tokens and OAuth sign-ins alike — sees the same folders (see [Folder ownership](#folder-ownership)). Tool names stay within what every MCP client accepts (`[A-Za-z0-9_-]`, 64 chars): a folder name with spaces, CJK or other symbols becomes `Folio_<ascii part>_<8-char hash>`, the same name every time.
-- **OAuth 2.1 resource server.** One `RemoteAuthProvider` + `JWTVerifier` protects `/mcp`; tokens are verified locally against MCP Gate's JWKS (RS256, offline), and are bound to this server's audience so a token for another server never works here.
-- **Document + audio ingestion.** [Docling](https://github.com/DS4SD/docling) parses PDF, Office (including legacy `.doc` / `.xls` / `.ppt`, RTF and Excel templates), OpenDocument, HTML and MHTML web archives, Markdown, EPUB, email and images (with OCR); legacy Office and RTF go through LibreOffice, so `soffice` must be installed. **FireRedASR** transcribes audio locally in Traditional Chinese (or any OpenAI-compatible `/v1/transcriptions` endpoint).
-- **Built-in evaluation harness.** Auto-generates questions from your own chunks and scores the production pipeline (the same call as `/api/rag/query`) against `vector` / `bm25` / `rrf` / `rerank` — all through the production search path — on **Recall@k · MRR · nDCG@k**, so you can tune retrieval against your real corpus.
-- **Retrieval Terminal console.** A React single-page console at `/admin`: pipeline overview, folders & files, a **Search Playground** that shows the per-signal retrieval trace, live index-job stream, query analytics, the evaluation harness, live settings, health and an audit timeline.
-- **Runs on your GPU.** PyTorch is selected per platform with PEP 735 dependency groups (`rocm-r714` / `cuda` / `cpu`) — AMD ROCm, NVIDIA CUDA or pure CPU.
+- **Hierarchical chunks that merge back.** Small leaves for precise matching, large parents for
+  context, never across a section; several hits in one passage come back as the whole passage.
+- **Hybrid search, tuned for Chinese.** Dense vectors (pgvector) and BM25 fused with Reciprocal
+  Rank Fusion; Chinese is word-segmented first (CKIP, jieba or bigram).
+- **Cross-encoder reranking** (`mxbai-rerank-base-v2`, `bge-reranker-v2-m3`), and MCP search says
+  when nothing relevant was found.
+- **Contextual retrieval.** An LLM writes a short context line for each chunk at index time;
+  re-indexing an edited file only redoes the chunks that changed. Files indexed by an older
+  chunking pipeline or another embedding model are marked for re-indexing.
+- **Per-person folders.** You only see the folders of your MCP Gate account, over MCP, REST and the
+  console alike.
+- **Many formats.** PDF, Office (including legacy and RTF), OpenDocument, HTML and MHTML, Markdown,
+  EPUB, email, images with OCR, and audio.
+- **Measured, not guessed.** A public 205-question golden set and an evaluation harness; the
+  console scores your own folders on Recall@k, MRR and nDCG@k.
+- **A console** at `/admin`: folders and files, a Search Playground with the per-signal trace, index
+  jobs, query analytics and knowledge gaps, evaluation, live settings, health and an audit log.
+- **Local GPU, CPU or cloud.** AMD ROCm, NVIDIA CUDA or CPU for in-process models, or every model
+  behind an OpenAI-compatible API with no torch at all.
 
-## Install
+## Installation
 
-**Prerequisites**
+You need:
 
-- Python 3.12 and [uv](https://docs.astral.sh/uv/).
-- **PostgreSQL** with the **[pgvector](https://github.com/pgvector/pgvector)** extension.
-- OpenAI-compatible endpoints for the **embedding**, **LLM** and **reranker** models (e.g. [vLLM](https://github.com/vllm-project/vllm), Ollama, or a cloud provider).
-- Node.js 22.12+ — only if you work on the console UI (Vitest 5 needs it).
+- Python 3.12 and [uv](https://docs.astral.sh/uv/);
+- **PostgreSQL** with the **[pgvector](https://github.com/pgvector/pgvector)** extension;
+- OpenAI-compatible endpoints for the **embedding**, **LLM** and **reranker** models
+  ([vLLM](https://github.com/vllm-project/vllm), Ollama, [Forgeyard](https://github.com/xianhong1208/forgeyard)
+  or a cloud provider);
+- LibreOffice (`soffice`) for legacy Office files and RTF.
 
 ```bash
 git clone https://github.com/xianhong1208/folio-rag.git
 cd folio-rag
 
-# 1. Install — local models need the `local` extra; torch follows a PEP 735 dependency group
-#    per platform, so ALWAYS pass --group with it. (All-cloud deployments: plain `uv sync`,
-#    see "Cloud profile" below.)
-uv sync --extra local --group rocm-r714    # AMD ROCm 7.14 (multi-arch wheel) | cuda | cpu
+# Local models need the `local` extra, and torch comes from a dependency group:
+# always pass one of rocm-r714 | cuda | cpu with it (cuda = CUDA 13.0, NVIDIA driver 580+).
+# All-cloud: plain `uv sync`.
+uv sync --extra local --group cuda
 
-# 2. Configure the database and model endpoints
-cp .env.example .env         # set DATABASE_URL (Postgres + pgvector)
-#   edit config/config.yaml  → rag.embedding / rag.llm / rag.rerank endpoints,
-#                               auth.issuer / auth.audience, server.port
+cp .env.example .env         # set DATABASE_URL (PostgreSQL + pgvector)
+# edit config/config.yaml: rag.embedding / rag.llm / rag.rerank endpoints,
+#                          auth.issuer / auth.audience, server.port
 
-# 3. Start (runs the DB bootstrap + migrations automatically)
-uv run python main.py
+uv run python main.py        # creates the schema and runs migrations on start
 ```
 
-The server listens on `http://0.0.0.0:5039` by default; the MCP endpoint is `/mcp` and the console is at `/admin`.
-
-Run the server as the user that owns `.venv`. NLTK 3.10.4+ refuses data files owned or writable by another account, so with a `.venv` owned by someone else, llama-index's bundled stopwords and sentence tokenizer fail with `LookupError` and long plain-text paragraphs cannot be split. Fix it with `chown -R <service user> .venv`.
+Folio listens on `http://0.0.0.0:5039`: the MCP endpoint is `/mcp` and the console is `/admin`.
+Run it as the user that owns `.venv`: NLTK 3.10.4+ refuses data files owned or writable by another
+account, and long plain-text paragraphs then fail to split (`chown -R <service user> .venv`).
 
 ## Quick start
 
-Folio authenticates through [MCP Gate](https://github.com/xianhong1208/MCP_Gate). The order matters: **register this server in MCP Gate first** — it only issues tokens for audiences it knows.
+Folio authenticates through [MCP Gate](https://github.com/xianhong1208/MCP_Gate). Register Folio
+there first: MCP Gate only issues tokens for audiences it knows.
 
-**1 — Register the server in MCP Gate.** In the MCP Gate console, *Services → Register Service*, enter this server's host / port / path (`/mcp`). Its audience defaults to the MCP URL, e.g. `http://127.0.0.1:5039/mcp`. Set the same value as `auth.audience` in `config/config.yaml`.
+**1. Register the server in MCP Gate.** *Services → Register Service*, with this server's host, port
+and path (`/mcp`). The audience defaults to the MCP URL, for example `http://127.0.0.1:5039/mcp`.
 
-**2 — Point Folio at MCP Gate** (`config/config.yaml`):
+**2. Point Folio at MCP Gate** in `config/config.yaml`:
 
 ```yaml
 auth:
   enabled: true
   issuer:   "http://localhost:4568"          # MCP Gate base URL (RS256 JWKS issuer)
-  audience: "http://127.0.0.1:5039/mcp"      # must equal the audience registered in the console
+  audience: "http://127.0.0.1:5039/mcp"      # must equal the audience registered in MCP Gate
 ```
 
-**3 — Create a folder and index documents** — from the `/admin` console (*Folders → New Folder → Upload Files*) or over REST:
+**3. Create a folder and add documents**, in the console (*Library → New Folder → Upload Files*,
+signed in with a personal access token from MCP Gate) or over REST:
 
 ```bash
-# create a token-scoped folder, then upload + index files (see the API reference)
 curl -X POST http://127.0.0.1:5039/api/folders/ \
   -H "Authorization: Bearer <TOKEN>" -H "Content-Type: application/json" \
   -d '{"name":"product-docs"}'
 ```
 
-**4 — Connect a client.** With MCP Gate in front, an OAuth-capable client needs nothing up front:
+**4. Connect a client.** An OAuth-capable client needs nothing up front:
 
 ```bash
 claude mcp add --transport http folio http://127.0.0.1:5039/mcp
 ```
 
-On first use the client registers with MCP Gate and opens the consent screen; after you allow it, the `Folio_product-docs` tool appears. For scripts / CI, mint a **personal access token** in MCP Gate and pass it as a bearer header.
+On first use the client registers with MCP Gate and shows the consent screen; then the
+`Folio_product-docs` tool appears. For scripts, pass a personal access token as a bearer header.
 
-**5 — Ask.** In the client, call the folder tool:
+**5. Ask.**
 
 ```
 Folio_product-docs  mode="search"  query="how do I rotate the signing key?"
 ```
 
-It returns the matched passages (auto-merged where relevant), each with a relevance score and its source file / heading.
+You get the matching passages, merged where they belong together, each with a relevance score and
+its source file and heading.
 
-## How it works
+## Deployment options
 
-Your folder is indexed once, then every query runs through the pipeline:
+| Profile | Models | Install |
+|---|---|---|
+| `local` (default) | Anything goes. The shipped config calls self-hosted embedding, LLM and reranker endpoints, and runs CKIP segmentation, Docling parsing with OCR and FireRedASR speech-to-text in-process | `uv sync --extra local --group rocm-r714 \| cuda \| cpu` |
+| `hybrid` | The same, for a mix of self-hosted and cloud endpoints; API keys written literally in `config.yaml` are warned about | as `local` |
+| `cloud` | Every role is an HTTP endpoint and keys must be `${ENV}` references; no torch and no model downloads | `uv sync` |
 
-| Stage | What happens |
-|-------|--------------|
-| **Ingest** | Docling parses PDF / DOCX / PPTX / XLSX / images (OCR); audio is transcribed by FireRedASR. |
-| **Chunk** | Section-aligned splitting into small **leaves** + large **parents**; each leaf gets a breadcrumb (file › headings) and an LLM context line. Tables stay whole when they fit. |
-| **Embed** | Each leaf's retrieval text (context line + breadcrumb + original text) is embedded (default `intfloat/multilingual-e5-large`, 1024-d) and written to **pgvector** together with its BM25 `text_search_tsv` (Chinese CKIP-segmented), in one transaction per file. |
-| **Retrieve** | **Hybrid**: dense vector + sparse BM25, fused with Reciprocal Rank Fusion. |
-| **Merge** | Leaves from the same passage **auto-merge** into their parent; single hits **expand** to neighbours. |
-| **Rerank** | A cross-encoder (`bge-reranker-v2-m3` / `mxbai-rerank-base-v2`) re-scores for final Top-K precision. |
-| **Answer** | For the `answer` path, `gpt-oss-120b` synthesises a response from the retrieved context, gated by a corrective-RAG confidence check. |
+Set it with `rag.profile`; see [Cloud profile](docs/configuration.md#cloud-profile). Keep the
+console and the unauthenticated `/v1` media endpoints on a trusted network or behind a reverse
+proxy with HTTPS; `/mcp` and `/api/rag/*` need a valid token. A Docker image and compose file are
+planned for 1.5.
 
-### Retrieval in detail
+## Documentation
 
-**One retrieval path.** REST `/api/rag/query`, the MCP search tool, the console Search Playground (and its trace view) and the evaluation harness all retrieve through the same code (`src/domain/rag/hybrid_search.py`): dense + BM25, fused with `rrf` (default) or `concat` (dense hits, then BM25-only hits, left for the reranker to order), reranked, then auto-merged with one shared rule. REST accepts `auto_merge` per request (`null` = follow `rag.retrieval.auto_merging.enabled`); `hybrid_alpha` is accepted and ignored. Per-request settings are passed with each call, never stored on the shared per-folder engine, so concurrent requests with different `top_k` cannot affect each other.
-
-**Keyword search (BM25).** The query is tokenised the way the index was (segmented for Chinese), question and function words (`什麼`, `嗎`, `what`, `the`, …) are dropped, and Postgres full-text search runs over **leaf chunks only** — first requiring every term (AND), then filling up with any term (OR). Its depth is `max(top_k candidates, rag.retrieval.default_sparse_top_k)`, and it runs concurrently with the vector search. The `simple` text-search config does no English stemming (`policy` ≠ `policies`); set `text_search_config: english` for an English-only corpus.
-
-**Chinese segmentation.** With the default `text_search_config: simple`, Chinese is segmented in Python before it reaches Postgres, by the segmenter in `rag.retrieval.segmenter` — the same function for indexing, *Rebuild FTS* and queries:
-
-| `segmenter` | Notes |
+| | |
 |---|---|
-| `ckip` *(default)* | Academia Sinica CKIP BERT model — most accurate on Traditional Chinese; needs torch (`uv sync --extra local`) and a model download on first use. Not allowed under `profile: cloud`. |
-| `jieba` | Dictionary-based, pure Python, no GPU. Optional extra: `uv sync --extra jieba`. |
-| `bigram` | Overlapping CJK character pairs + Latin/digit words. No model, no dependency; bigger index. The default under `profile: cloud`. |
-
-Left unset, `segmenter` follows the profile: `ckip`, or `bigram` under `profile: cloud`.
-
-Each folder's table records which segmenter built its keyword index. After changing `segmenter` (live, from Settings), the console marks folders whose index was built with another one (**FTS rebuild needed**); *Rebuild FTS* re-segments them with the configured segmenter — no re-embedding.
-
-**Reranking.** The reranker scores a candidate pool (below) and keeps the best `top_k` above `rag.rerank.score_threshold`. `mxbai-rerank-*-v2` is a Qwen model trained on a chat-formatted prompt; with `rag.rerank.auto_template: true` (default) that format is applied automatically when the configured templates are the default or the old chat-less form (turn it off if your rerank server already applies a chat template). With it, scores are calibrated probabilities and **`score_threshold: 0.5`** is meaningful for that model; without it unrelated chunks score 0.8+ and no threshold filters anything. If the reranker fails, the query returns the top `top_k` candidates in retrieval order (not the whole pool), and that degraded result is not cached.
-
-**Candidate pool.** A deep pool matters most for cross-lingual questions: a Chinese question about an English passage often ranks that passage low in both dense and BM25 search, and only the cross-encoder lifts it. Those hits are found by the dense search alone (around dense rank 15–30), and RRF ranks every passage both searches found above them, so a cut of the *fused* list has to go 60 deep to reach them. With `rag.retrieval.rerank_pool: per_list` (default) the reranker instead scores the dense top `rerank_dense_candidates` (default 30, at least 3 × `top_k`) plus the BM25 top `rerank_sparse_candidates` (default 10) — about 35 pairs. On the golden set that keeps Recall@5 0.976 and zh→en Recall@5 0.90 exactly where the 60-deep fused pool had them (from 0.957 / 0.80 with a 3 × `top_k` pool), and since a cross-encoder call costs about 6 ms per pair whatever the text length, the rerank step dropped from ~360 ms to ~225 ms. `rerank_pool: fused` restores the previous behaviour (`max(3 × top_k, rerank_candidates)` fused candidates). All four settings are live from Settings; deeper pools buy recall margin for latency. Without a reranker the pool is just `top_k`.
-
-**Latency.** A default MCP search on the golden set takes ~330 ms p50 / ~400 ms p95 at the client (was ~500 / ~600 ms; `evals/baselines/rag-2026-11-04-search-latency.md` has the per-stage table). Most of it is the rerank call (~225 ms for ~35 pairs). Before it, the query embedding (~55 ms, then the dense query) runs concurrently with segmentation and BM25 (~40 + ~20 ms), so that part costs ~80 ms. The auto-merge and neighbour-window lookups for every candidate are read while the reranker runs, so they add nothing after it; the query-log row is written after the response is sent. CKIP segments queries on one dedicated thread: on the CPU each thread that calls torch gets its own pool of worker threads, and several of them fighting over the cores made segmentation 3× slower (seconds on a busy host).
-
-**Response size.** An MCP search response is fitted to `rag.retrieval.mcp_response_token_budget` (estimated tokens, default 6000): the lowest-ranked results are left out, the response reports `omitted_results` and `response_tokens_estimated`, and the `_hint` tells the agent to ask a narrower query. `0` turns the budget off.
-
-**Saying "nothing relevant found".** Every MCP search reports how well the folder matched: `top_relevance` (the reranker's best score over all candidates, before `score_threshold`), `min_relevance` (the configured cutoff) and `low_relevance` — `true` when nothing came back or `top_relevance` is below `rag.retrieval.min_relevance`; the `_hint` then tells the agent the folder most likely does not answer the question. Each reranked result carries `relevance`, and results below the cutoff are marked `low_relevance: true`. Results are **flagged, never dropped** (dropping is `rag.rerank.score_threshold`'s job): on the golden set the cutoff rejects every out-of-scope question, but questions that are near misses of the corpus (the right law, a detail it does not state) score as high as answerable ones, so the final call stays with the agent. The shipped `0.9` is calibrated for `mxbai-rerank-v2` (sweep in `evals/baselines/rag-2026-11-03-min-relevance.md`); `0` turns the check off, and without a reranker only an empty result is flagged.
-
-**Knowledge gaps.** Every REST, console and MCP search is logged (masked token prefix only) with its result count and the reranker's best score. *Query Analytics* lists a question as a knowledge gap when its **latest** search in a folder returned nothing or its best score was below `rag.rerank.gap_threshold` (default `0.5`) — so a gap disappears once documents that answer it are added and the question is asked again.
-
-**Answers (console).** With *generate answer* on, the top chunks are graded for relevance in one LLM call, irrelevant ones are dropped (nothing relevant → no answer), and the answer is generated from the rest in the **question's language**. Each chunk keeps its result-card number, so `[3]` always means card #3 (citations are links in the console); citations of chunks the model was not given are removed, `【n†…】` markers become `[n]` and Markdown bold markers are stripped — on the streaming path too, where the final `done` frame carries the cleaned answer. If the grader's reply cannot be parsed the answer is labelled **unverified** instead of `high`.
-
-**Auth.** Folio is a *resource server*. FastMCP publishes `/.well-known/oauth-protected-resource/mcp`, which points clients at MCP Gate; the server fetches MCP Gate's JWKS once and verifies every bearer token offline (RS256 — signature, issuer, audience, expiry, scopes). MCP Gate is never on the request path.
-
-## Configuration
-
-Settings live in `config/config.yaml`; secrets come from environment variables (`.env`). The ones you are likely to touch:
-
-| Variable / setting | Default | Purpose |
-|--------------------|---------|---------|
-| `DATABASE_URL` | `postgresql://…/agentic_rag` | PostgreSQL DSN. Requires the **pgvector** extension. Use **sync** `postgresql://` (psycopg2), not `+asyncpg`. |
-| `server.port` | `5039` | HTTP + MCP bind port. The MCP endpoint is `/mcp`. |
-| `FOLIO_STORAGE_ROOT` | the project root | Directory that holds `storage/` (uploaded files and the console session secret). |
-| `FOLIO_INDEXING_CONCURRENCY`, `FOLIO_PER_FILE_TIMEOUT_SECONDS`, `FOLIO_JOB_TIMEOUT_SECONDS` | from `rag.indexing` | Runtime overrides for the indexing limits. The pre-rename `RAG_*` names still work and log a deprecation warning. |
-| `auth.enabled` / `auth.issuer` / `auth.audience` | `true` / MCP Gate URL / this server's `/mcp` URL | OAuth 2.1 verification against MCP Gate. |
-| `auth.console.session_hours` | `8` | Longest a console session lasts (it also ends when the token expires). |
-| `auth.console.session_secret` | *(generated)* | Key that signs the session cookie; `${ENV_VAR}` works. Unset → generated once into `storage/.console_session_secret` (gitignored), so sessions survive restarts. |
-| `auth.console.secure_cookie` | `auto` | Cookie `Secure` flag: `auto` = only over https; `true` behind a TLS-terminating proxy. |
-| `auth.console.admin_scope` | `rag:admin` | Scope that unlocks the console's global settings. |
-| `auth.revocation.*` | disabled | MCP Gate revocation feed, so revoked tokens stop working before they expire — see [Token revocation](#token-revocation). |
-| `rag.embedding.{model,dimension,base_url}` | `intfloat/multilingual-e5-large`, `1024`, `:7075/v1` | Embedding model; `dimension` **must** equal the model's real output dim. |
-| `rag.llm.{model,base_url}` | `openai/gpt-oss-120b`, `:5052/v1` | LLM for Contextual Retrieval and the `answer` path. |
-| `rag.rerank.{model,base_url}` | `mixedbread-ai/mxbai-rerank-base-v2`, `:8787` | Cross-encoder reranker. |
-| `rag.rerank.score_threshold` / `auto_template` | `0.0` / `true` | Drop results scoring below the threshold (0.5 suits mxbai-rerank-v2); apply mxbai-v2's chat prompt automatically. |
-| `rag.rerank.gap_threshold` | `0.5` | Knowledge-gap analytics: best rerank score below this counts as "no good match". |
-| `rag.retrieval.rerank_pool` | `per_list` | What the cross-encoder scores: `per_list` = the dense top `rerank_dense_candidates` + the BM25 top `rerank_sparse_candidates`; `fused` = the top `max(3 × top_k, rerank_candidates)` of the fused list (the previous behaviour). Live. |
-| `rag.retrieval.rerank_dense_candidates` / `rerank_sparse_candidates` | `30` / `10` | `per_list` pool depths (dense never below 3 × `top_k`). Higher = more recall margin, ~6 ms per extra pair; live-tunable (0–200). |
-| `rag.retrieval.rerank_candidates` | `60` | `fused` pool only: `max(3 × top_k, this)` fused candidates go to the cross-encoder; live-tunable (1–200). |
-| `rag.retrieval.mcp_response_token_budget` | `6000` | Estimated-token cap on an MCP search response; lowest-ranked results are dropped to fit and the response says so. `0` = no cap. |
-| `rag.retrieval.min_relevance` | `0.9` in the shipped config (`0` when unset) | MCP search: best rerank score below this → `low_relevance: true` (flagged, not dropped). Model-specific; `0` = off. |
-| `rag.asr.provider` | `fireredasr` | Audio transcription: `fireredasr` (local zh-TW) · `docling-whisper` · `openai-compatible`. `rag.asr.enabled: false` fails audio files with a clear message (nothing is transcribed). |
-| `rag.retrieval.segmenter` | `ckip` (`bigram` under `profile: cloud`) | Chinese segmenter for keyword search: `ckip` · `jieba` · `bigram` (see *Chinese segmentation*). |
-| `rag.docling.ocr_enabled` | `true` | OCR for scanned PDFs and images. `false` really skips it (restart to apply); a scan with no text layer then fails with a clear message. |
-| `rag.contextual_retrieval.max_doc_chars` | `60000` | Upper bound on the document text the LLM reads per chunk. It reads the outline plus the chunk's own section, windowed to at most 12,000 characters. |
-| `rag.retrieval.*` | — | Top-K, similarity cutoff, BM25 candidates, `hybrid_fusion` (`rrf`/`concat`), auto-merging. Tunable live from the console, or via the **High Precision / Balanced / High Recall** presets. |
-| `rag.profile` | `local` | `local` · `hybrid` · `cloud` — see [Cloud profile](#cloud-profile). |
-| `rag.<role>.{timeout,max_retries}` | per role | Request timeout and retries (429 / 5xx / timeouts, with backoff) for each model role. |
-
-GPU selection is a `uv sync --extra local --group {rocm-r714|cuda|cpu}` choice — see the top of `pyproject.toml`, where each group is mapped to its PyTorch index.
-
-### Folder ownership
-
-A folder belongs to a **person** — the MCP Gate user its token was issued to — not to one token. The owner key is the token's `sub` claim, stored as `sub:<sub>` (`Folders.user_token`; files live under `storage/sub_<sub>/<folder>/`). What MCP Gate puts in `sub`:
-
-| Token | `sub` | Who sees the folders |
-|-------|-------|----------------------|
-| Personal access token | the user's id | every PAT and OAuth sign-in of that user |
-| OAuth access token (authorization code, refresh) | the same user id | the same — a new access token every 15 minutes keeps its folders |
-| `client_credentials` token | the client's own `client_id` | that client only (a machine identity, never a user) |
-
-A token without a `sub` cannot own folders: REST answers 401, an MCP tool call returns `unauthorized`, the tool list shows no folder tools, and the console refuses the sign-in (`missing_sub`). With `auth.enabled: false` (dev mode) nothing changes: console folders are owned by `console`.
-
-Revoking a token in MCP Gate stops that token, not the folders: they belong to the person and stay reachable with their other tokens. To take folders away from someone, delete them or disable the user in MCP Gate.
-
-**Folders from before 1.4.1** were keyed on the creating token's `jti`. They are not migrated in bulk — nothing on the Folio side says which person a `jti` belonged to. Instead, the first verified request with such a token (REST, `/mcp` tool list or call, console sign-in or session) moves every folder that token owns to its `sub`: the rows, the storage directory and the files' stored paths, and the `Folio_<folder>` tools, in one transaction, exactly once. Concurrent requests are serialised per user (an in-process lock plus a PostgreSQL advisory lock, with the rows locked `FOR UPDATE`), so nothing is moved twice or half-moved. If the user already has a folder of that name (two of their PATs each had a `docs`), the moved one gets the next free name — `docs-2`, `docs-3`, … — and the settings **Audit Log** records the rename; two folders are never merged. Folders whose token is never used again (revoked or expired) stay where they are; admins see how many are left on the Overview (`legacy_owned_folders` in `GET /api/admin/overview`).
-
-### Token revocation
-
-Folio verifies MCP Gate tokens offline, so by default a token revoked in MCP Gate keeps working here until it expires — and a PAT can live up to a year. Enable the **revocation feed** and Folio polls MCP Gate's `POST /oauth/revoked` in the background (every `poll_interval_sec`, with jitter and error backoff), keeps the revoked-but-unexpired `jti`s in memory, and rejects them everywhere: `/mcp` (401 `invalid_token`), the REST API (401), console sign-in, and every request of an existing console session (the session ends with 401 `token_revoked`). A revocation takes effect within about one poll interval.
-
-| Setting | Default | Purpose |
-|---------|---------|---------|
-| `auth.revocation.enabled` | `false` (`FOLIO_REVOCATION_ENABLED`) | Turn the feed on. Off = the old behaviour, nothing is polled. |
-| `auth.revocation.client_id` | `${FOLIO_REVOCATION_CLIENT_ID}` | The resource-server client registered in MCP Gate (below). |
-| `auth.revocation.client_secret` | `${FOLIO_REVOCATION_CLIENT_SECRET}` | Its secret. **Must** be an `${ENV_VAR}` reference — a literal value refuses to start. |
-| `auth.revocation.poll_interval_sec` | `30` | How often the feed is polled (5–3600). |
-| `auth.revocation.fail_mode` | `open` | When MCP Gate is unreachable: `open` keeps accepting tokens and logs loudly; `closed` rejects every token (401 on `/mcp` and REST, 503 in the console) once no poll has succeeded for `stale_after_intervals` × `poll_interval_sec`, and until the first poll after startup succeeds. |
-| `auth.revocation.stale_after_intervals` | `4` | When the list counts as stale (`/health/detailed` reports `degraded`; `closed` starts rejecting). |
-
-The first poll fetches the whole list; later polls ask only for revocations since the previous one (with a 30 s overlap), and a full fetch repeats every hour. Entries are dropped once the token would have expired anyway. Startup logs whether the feed is enabled, and `GET /health/detailed` shows it under `checks.revocation` (`last_success`, `revoked_count`, `consecutive_failures`, `last_error`, `stale`).
-
-**Setting it up** (once per deployment):
-
-1. **Register a confidential client in MCP Gate.** Console → *OAuth Clients* → *Register trusted client*. Name it e.g. `Folio revocation feed`; leave *Redirect URIs* empty; under *Grant types* select only `client_credentials`; *Token endpoint authentication*: **Client secret (POST body)** (HTTP Basic works too — MCP Gate accepts either); *Resource server for*: **Folio**. Register, then copy the `client_id` (`mcpc_…`) and the client secret — the secret is shown once.
-2. **Bind it to Folio** — already done if you picked *Resource server for* in step 1. Otherwise, on the client's row click the server icon (*Resource server…*), choose the Folio service and *Save*; or call `PUT /api/oauth/clients/<client_id>/resource-server` with `{"service_id": "<Folio service id>"}` as a console admin. The row then reads *Resource server for Folio*. The feed lists only tokens whose audience is that service's audience, so it must equal Folio's `auth.audience`.
-3. **Give Folio the credentials** in its environment (or `.env`), then restart:
-   ```bash
-   FOLIO_REVOCATION_ENABLED=true
-   FOLIO_REVOCATION_CLIENT_ID=mcpc_...
-   FOLIO_REVOCATION_CLIENT_SECRET=...
-   ```
-   (If your `config/config.yaml` predates this feature, copy the `auth.revocation` block from the template first.)
-4. **Check it.** The startup log says `MCP Gate revocation feed: ENABLED …`; `curl -s localhost:5039/health/detailed | jq .checks.revocation` shows a recent `last_success`. Revoke a test PAT in MCP Gate; within `poll_interval_sec` a request with it gets 401. A `HTTP 401: invalid_client` in `last_error` means wrong credentials; `HTTP 403: unauthorized_client` means the client is not bound to a server.
-
-## Cloud profile
-
-Run with every model behind an API and nothing loaded locally — no GPU, no torch, no model
-downloads. Set `rag.profile: cloud` and give each role an OpenAI-compatible endpoint:
-
-```bash
-uv sync                      # core install: no torch / transformers (the local stack is `--extra local`)
-export OPENAI_API_KEY=sk-...  # keys come from the environment, never from config.yaml
-uv run python main.py
-```
-
-```yaml
-rag:
-  profile: cloud            # local (default) | hybrid | cloud
-
-  embedding:                # changing it means re-indexing existing folders
-    provider: openai        # openai | openai-compatible | azure | vllm | ollama
-    model: text-embedding-3-small
-    dimension: 1536
-    base_url: https://api.openai.com/v1      # any OpenAI-compatible gateway works
-    api_key: "${OPENAI_API_KEY}"
-    timeout: 60
-    max_retries: 3
-
-  llm:                      # default for every LLM role
-    provider: openai
-    model: gpt-4o-mini
-    api_key: "${OPENAI_API_KEY}"
-  contextual_llm:           # optional per-role overrides; unset fields inherit from llm
-    model: gpt-4.1-nano
-  # answer_llm: {...}       # Search Playground answers
-  # eval_llm: {...}         # eval question generation / judging
-
-  contextual_retrieval:
-    enabled: true
-    max_calls_per_file: 2000     # cost guards (0 = unlimited)
-    max_tokens_per_day: 5000000
-
-  rerank:
-    enabled: true
-    api: cohere             # score (vLLM /v1/score) | cohere | jina | generic (OpenAI-compatible /rerank)
-    model: rerank-v3.5
-    base_url: https://api.cohere.com
-    endpoint_path: /v2/rerank
-    api_key: "${COHERE_API_KEY}"
-
-  parsing:                  # cloud is the default under profile: cloud
-    vision:
-      provider: openai
-      model: gpt-4o-mini
-      api_key: "${OPENAI_API_KEY}"
-    max_concurrency: 4      # page requests in flight, process-wide
-    max_pages_per_file: 500
-    max_pages_per_day: 5000
-    on_page_failure: mark   # mark = keep the file, mark the page | fail
-
-  asr:
-    provider: openai-compatible
-    base_url: https://api.openai.com/v1
-    model: whisper-1
-    api_key: "${OPENAI_API_KEY}"
-    segment_seconds: 600    # long audio is uploaded in silence-aligned pieces
-
-  retrieval:
-    hybrid_search: true
-    # segmenter: bigram     # the cloud default (no model); jieba also works, ckip is rejected
-```
-
-What the profile does:
-
-- **Validation.** `cloud` refuses in-process providers (`huggingface` embedding, `fireredasr` /
-  `docling-whisper` ASR, local PDF/image parsing) and **rejects API keys that are not `${ENV}`
-  references** — a cloud key is a billable credential and config.yaml is the file that gets
-  copied around. An explicit `rag.retrieval.segmenter: ckip` is rejected too. Startup fails with the offending paths. `hybrid` only warns about literal keys;
-  `local` (the default — existing configs are unchanged) checks nothing new.
-- **Nothing local is imported.** The HuggingFace embedding provider, docling's layout/OCR
-  models, Whisper, FireRedASR and CKIP are imported only when selected; startup skips the docling
-  warm-up and logs where every role runs. `tests/test_cloud_profile_no_local_models.py` proves it
-  by running the whole pipeline on an install without the local stack.
-- **Cloud PDF and image parsing.** Every page is transcribed to Markdown by the vision model,
-  and the pages are stitched into **one** document before chunking, so headings, breadcrumbs and
-  tables continue across page breaks. Each page is sent the previous page's tail and the current
-  heading path; pages run in ordered blocks for bounded concurrency; failed pages are retried with
-  backoff and, if they still fail, marked in the text instead of failing the file. Chunks keep the
-  page they start on for citations. Per-file and per-day page caps bound the cost. The
-  unauthenticated `/v1/ocr/general` endpoint is not routed to the paid model.
-- **Cloud speech-to-text.** Audio is resampled and uploaded in segments cut at silences (so no
-  request exceeds an upload limit), with retries, and re-asked when a transcript is empty despite
-  speech or loops.
-- **Retries and timeouts per role** (`timeout`, `max_retries`): 429 / 5xx / timeouts back off
-  exponentially with jitter and honour `Retry-After`.
-- **Chinese BM25.** CKIP is a local torch model, so the cloud profile segments Chinese with the
-  model-free `bigram` segmenter by default; `jieba` (`uv sync --extra jieba`) is the other choice.
-  An explicit `rag.retrieval.segmenter: ckip` is rejected — keep CKIP with `profile: hybrid` and
-  `uv sync --extra local`.
-
-**Console.** *Settings* opens with a **Model Roles** panel: where each role runs, its provider,
-model and endpoint, whether a key is set and which environment variable it comes from (keys are
-never returned), and a **Test** button that sends one minimal real request with the saved settings
-(an embedding — dimension checked —, a 16-token chat, an 8×8 image for the vision model, one rerank
-pair, half a second of silence for speech-to-text). Key fields accept `${ENV_VAR}`; the server
-stores the reference, never the key. Changes need the `rag:admin` scope.
-
-Daily caps are kept in memory and reset at UTC midnight or on restart — they are a runaway guard,
-not billing.
-
-**Chunk token counting** never downloads anything: it uses `assets/hf_tokenizers/<org>--<model>` when present, else the bundled XLM-RoBERTa tokenizer in `resources/tokenizers/` (the tokenizer of multilingual-e5 and bge-m3), so a fresh clone with OpenAI or Azure embeddings works out of the box.
-
-**Parsing failures are visible.** If docling cannot parse some pages (for example the GPU runs out of memory inside a stage), the parse is retried with a smaller batch; pages still missing are listed on the file (a *Partial* badge in the console, `warning` in the REST status).
-
-## Use the console
-
-The **Retrieval Terminal** console is a React SPA served at `/admin`.
-
-### Console login
-
-You sign in by pasting an **MCP Gate access token issued for this service** — usually a personal access token (PAT). The server verifies it once, offline, exactly like a REST or MCP call (signature, issuer, audience, expiry; it must carry a `sub` and a `jti`), then sets an HttpOnly session cookie. The token itself is never stored or sent back.
-
-- **The session is you.** You see and manage exactly the folders owned by the user the token was issued to (folders are keyed on its `sub`) — the same folders every token of that user reaches over REST and MCP. Folders you create in the console belong to you too. Other users' folders are invisible.
-- **Two tiers.** Any valid token can sign in and manage its own folders. Changing runtime **Settings**, testing arbitrary endpoints, and reading the settings **Audit Log** and server-wide storage figures need the **`rag:admin`** scope. Without it, Settings and System Health are read-only (secrets are always masked), and Overview / Index Jobs / Query Analytics always cover only your own folders — `rag:admin` unlocks global settings, never another user's folders, jobs or queries. Admins also see on the Overview how many folders still belong to a pre-1.5 per-token key (see [Folder ownership](#folder-ownership)).
-- **Sessions** last `auth.console.session_hours` (8 h) or until the token expires, whichever is first. With the [revocation feed](#token-revocation) enabled, revoking the token in MCP Gate also ends its sessions within a poll interval; without it a running session lasts until expiry or *Sign out* (verification is offline).
-
-**Issuing tokens in MCP Gate.** No MCP Gate change is needed:
-
-1. *Services* → open the Folio service → *Scopes declared by this server* → add **`rag:admin`**. Do **not** mark it as a default scope (defaults are preselected on every new token). If the service restricts its *Allowed scopes*, allow `rag:admin` too.
-2. *Issue Token* → *Target service*: Folio (audience = `auth.audience`). Tick `rag:admin` for operators who may change settings; leave it off for people who only manage their own folders. Give it a label and copy the token — it is shown once.
-
-Paste the token on the login screen. Folders created before 1.5 belong to the token that created them until that token is used again, which moves them to you (see [Folder ownership](#folder-ownership)). Scripts can skip the cookie and call `/api/admin/*` with `Authorization: Bearer <token>` — the same rules apply, and no CSRF header is needed.
-
-**Dev mode.** With `auth.enabled: false` there is no login: the console is open to anyone who can reach the port, with full admin rights and every folder visible (folders created there are owned by `console`). The server logs a warning at startup. Use it only on a trusted machine.
-
-**Network exposure.** Even with login on, keep the console (`/admin`, `/api/admin/*`) reachable only from trusted networks — a VPN, an internal network, or a reverse proxy that restricts it — and serve it over HTTPS. Login protects folders and settings from people without a valid token, but the console can upload and delete documents, run queries against your model endpoints and (with `rag:admin`) change them, so it should not face the open internet. `/mcp` and `/api/rag/*` are designed to be reachable by MCP clients and need only a valid token.
-
-| Page | What you do there |
-|------|-------------------|
-| **Overview** | The live retrieval pipeline, corpus readouts, index health, and model-service status. |
-| **Folders** | Create folders (owned by you); open one to upload files, watch per-file index status, view chunks (with the AI context line shown apart from the document text), reindex, or delete. Files indexed by an older chunking pipeline show **Re-index recommended**; the folder list counts them per folder (**N stale**) with a one-click re-index. |
-| **Search Playground** | Run a live query against a folder and see the **per-signal retrieval trace** — Vector · BM25 · Hybrid · Rerank ranks side by side — plus an optional RAG answer. |
-| **Index Jobs** | Live stream of indexing jobs with progress; cancel a running job. |
-| **Query Analytics** | Volume, latency, zero-result rate, top queries and knowledge gaps. |
-| **Evaluation** | Auto-generate a question set and score `production` (same call as `/api/rag/query`), `vector`-only and `bm25`-only on Recall@k · MRR · nDCG@k; baseline deltas only against runs on the same question set. |
-| **Settings** | Live, persisted configuration for Embedding / LLM / Contextual Retrieval / Reranker / Speech-to-Text / Retrieval, with retrieval presets and connection tests. Changing anything needs `rag:admin`. |
-| **System Health** | Live connectivity to every external dependency. |
-| **Audit Log** | A timeline of every runtime settings change and who made it (`rag:admin`). |
-
-### Re-indexing after an upgrade
-
-Chunking changes are versioned per file. A file indexed by an older pipeline keeps working exactly as before, but shows **Re-index recommended** in the folder view (and `reindex_recommended: true` in `GET /api/rag/file/{id}/index/status`). Use the row's re-index button, or the header link that selects all such files, then *Reindex selected*. Per-file re-indexing is incremental from then on; *Reindex Folder* drops the folder's table and rebuilds everything.
-
-You don't have to open every folder to find them: the folder list shows an amber **N stale** badge on each folder that holds such files (`reindex_recommended_files` in `GET /api/admin/folders`), and the re-index button in that folder's row re-indexes just those files.
-
-The current pipeline is version 3 (section-aligned chunks, with the version-3 context prompt), so every file indexed before it is marked. Until it is re-indexed, a file keeps its old chunks and is still searchable.
-
-## API reference
-
-| Group | Endpoints |
-|-------|-----------|
-| **MCP** | `POST /mcp` — per-folder `Folio_<folder>` tools (`search` / `list` / `read`); `GET /.well-known/oauth-protected-resource/mcp` |
-| **Folders & files** | `/api/folders*` · `/api/folders/{id}/files*` (create, upload, list, download, delete — token-scoped) |
-| **RAG** | `POST /api/rag/query` (hybrid retrieval + rerank) · `/api/rag/files/{id}/index`, `/reindex`, `/index/jobs*` (background indexing + SSE progress) |
-| **Console session** | `POST /api/console/session` `{token}` (sign in) · `GET` (who am I) · `DELETE` (sign out) |
-| **Console (admin)** | `/api/admin/overview` · `/api/admin/folders*` · `/api/admin/jobs` · `/api/admin/analytics` · `/api/admin/eval/{run,status,report}` · `/api/admin/settings*` · `/api/admin/health` · `/api/admin/audit` · `/api/admin/probe` |
-| **Operational** | `GET /health` |
-
-Set `ENABLE_API_DOCS=true` for the full OpenAPI reference at `/docs`.
-
-## Measuring retrieval
-
-Retrieval and chunking changes are judged by numbers, not by eye. `evals/` holds a public golden set — 205 questions over a 19-document corpus (Taiwanese laws, U.S. government pages, fictional company documents, PDFs with tables, synthetic zh-TW meeting transcripts), stratified by question type and language, with ~10% unanswerable — plus 20 out-of-scope questions for the relevance cutoff. The harness scores a running server through the same MCP search an agent uses:
-
-```bash
-.venv/bin/python scripts/eval_retrieval.py --token-file <pat.json> --runs 2
-```
-
-It reports Recall@5/10/20, MRR, nDCG, response tokens, duplicate ratio and latency per question type, the false-accept rate on unanswerable questions and a `min_relevance` sweep, and writes `evals/baselines/rag-<date>-<label>.{json,md}`. Committed baselines record each change's before and after. See [`evals/README.md`](evals/README.md) for the token file, how the corpus is built and what each metric means.
-
-## Architecture
-
-- **FastMCP + FastAPI** on one ASGI app. The FastMCP app is *mounted* so its auth middleware protects `/mcp`; the FastAPI routers serve the REST API and the console.
-- **PostgreSQL + pgvector** for storage; each folder gets its own `data_<folder>_<uuid>` table. Retrieval uses [LlamaIndex](https://github.com/run-llama/llama_index)'s `PGVectorStore` in hybrid mode.
-- **Sync SQLAlchemy** (psycopg2) throughout — do not use `+asyncpg`.
-- **Console**: Vite + React + React Router + Tailwind, built to `static/console` and served at `/admin`.
-
-See [`ROADMAP.md`](ROADMAP.md) for what's under evaluation (Graph RAG, "LLM Wiki").
+| [How it works](docs/how-it-works.md) | the pipeline, retrieval in detail (BM25, segmentation, reranking, latency, relevance cutoff), measuring retrieval, every feature in detail |
+| [Configuration](docs/configuration.md) | every setting you are likely to touch, and the cloud profile |
+| [Authentication](docs/auth.md) | folder ownership by MCP Gate user, and the token revocation feed |
+| [Console](docs/console.md) | signing in, the two permission tiers, each page, re-indexing after an upgrade or an embedding model change |
+| [API reference](docs/api.md) | MCP, REST, console and health endpoints |
+| [PostgreSQL operations](docs/operations-postgres.md) | connection budget and database upkeep |
+| [Development](docs/development.md) | architecture, checks, CI and releasing |
+| [Retrieval evaluation](evals/README.md) | the golden set, the harness and the baselines |
 
 ## Contributing
 
-Issues and pull requests are welcome. Code comments are in English. Run the unit suite with `uv run pytest` and the linter with `uvx ruff check .`; the PostgreSQL integration suite under `tests/integration` is opt-in (`RAG_RUN_DB_ITESTS=1`) and creates and drops its own database.
+Issues and pull requests are welcome. Branch off `dev` and open the pull request into `dev`. Code and comments are in
+English; the console is English only by decision. Run the checks in
+[docs/development.md](docs/development.md) first: `uv run pytest`, `uvx ruff check .`, and
+`npm test` plus `npm run build` in `frontend/` when you change the console.
 
-## License
+## Licence
 
 [MIT](LICENSE)

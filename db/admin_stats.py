@@ -12,7 +12,11 @@ from typing import Any, Dict, List, Optional
 from sqlalchemy import and_, func, or_
 
 from db.db import File, FileIndex, Folder, IndexJob, Session
-from src.domain.rag.chunk_identity import CHUNK_PIPELINE_VERSION, reindex_recommended
+from src.domain.rag.chunk_identity import (
+    CHUNK_PIPELINE_VERSION,
+    configured_embedding,
+    reindex_reason,
+)
 from src.log import get_db_logger
 
 log = get_db_logger()
@@ -23,13 +27,21 @@ _JOB_ACTIVE = ("pending", "running", "queued")
 # a file the server restart interrupted, or one the user cancelled.
 _FILE_NEEDS_RETRY = ("failed", "interrupted", "cancelled")
 
-# SQL form of chunk_identity.reindex_recommended(): indexed by an older chunking
-# pipeline (NULL = indexed before versions were recorded). Keep the two in step.
-_FILE_NEEDS_REINDEX = and_(
-    FileIndex.status == "indexed",
-    or_(FileIndex.pipeline_version.is_(None),
-        FileIndex.pipeline_version != CHUNK_PIPELINE_VERSION),
-)
+def _file_needs_reindex(current):
+    """SQL form of chunk_identity.reindex_recommended(): indexed by an older chunking
+    pipeline (NULL = indexed before versions were recorded), or by an embedding model
+    or dimension other than ``current`` (model, dimension); an unrecorded (NULL) model
+    or dimension flags nothing. Keep the two in step."""
+    model, dim = current
+    stale = [FileIndex.pipeline_version.is_(None),
+             FileIndex.pipeline_version != CHUNK_PIPELINE_VERSION]
+    if model:
+        stale.append(and_(FileIndex.embedding_model.isnot(None),
+                          FileIndex.embedding_model != model))
+    if dim:
+        stale.append(and_(FileIndex.embedding_dimension.isnot(None),
+                          FileIndex.embedding_dimension != int(dim)))
+    return and_(FileIndex.status == "indexed", or_(*stale))
 
 
 def _ensure_bound() -> None:
@@ -90,19 +102,20 @@ def overview(owner: Optional[str] = None) -> Dict[str, Any]:
 def folders_with_index_stats(owner: Optional[str] = None) -> List[Dict[str, Any]]:
     """Folders plus their index summaries (single join query, no N+1).
 
-    ``reindex_recommended_files`` counts the folder's indexed files whose
-    pipeline_version is not the current CHUNK_PIPELINE_VERSION — the per-folder
-    total of the per-file ``reindex_recommended`` flag, computed in SQL.
+    ``reindex_recommended_files`` counts the folder's indexed files made by an older
+    chunking pipeline or another embedding model — the per-folder total of the
+    per-file ``reindex_recommended`` flag, computed in SQL.
 
     ``owner`` limits the list to folders bound to that owner key; None lists all.
     """
     _ensure_bound()
+    needs_reindex = _file_needs_reindex(configured_embedding())
     with Session() as s:
         idx = s.query(
             FileIndex.folder_id.label("fid"),
             func.count(FileIndex.id).filter(FileIndex.status == "indexed").label("indexed"),
             func.count(FileIndex.id).filter(FileIndex.status.in_(_FILE_NEEDS_RETRY)).label("failed"),
-            func.count(FileIndex.id).filter(_FILE_NEEDS_REINDEX).label("stale"),
+            func.count(FileIndex.id).filter(needs_reindex).label("stale"),
             func.coalesce(func.sum(FileIndex.num_chunks), 0).label("chunks"),
             func.max(FileIndex.indexed_at).label("last_indexed"),
         ).group_by(FileIndex.folder_id).subquery()
@@ -122,7 +135,8 @@ def folders_with_index_stats(owner: Optional[str] = None) -> List[Dict[str, Any]
                 "total_size_bytes": int(f.total_size or 0),
                 "indexed_files": indexed or 0,
                 "failed_files": failed_n or 0,
-                # Indexed by an older chunking pipeline: a re-index is recommended
+                # Indexed by an older chunking pipeline or another embedding model:
+                # a re-index is recommended
                 "reindex_recommended_files": stale_n or 0,
                 "chunks": int(chunks or 0),
                 "vector_table": f"data_{f.id}_{f.vector_table_uuid}",
@@ -136,6 +150,7 @@ def folders_with_index_stats(owner: Optional[str] = None) -> List[Dict[str, Any]
 def files_with_index_status(folder_id: int) -> List[Dict[str, Any]]:
     """File list for a single folder plus index status (left join FileIndex)."""
     _ensure_bound()
+    current = configured_embedding()
     with Session() as s:
         rows = s.query(File, FileIndex).outerjoin(
             FileIndex, File.id == FileIndex.file_id
@@ -144,6 +159,9 @@ def files_with_index_status(folder_id: int) -> List[Dict[str, Any]]:
         out = []
         for f, ix in rows:
             err = (ix.error_message or "") if ix else ""
+            reason = reindex_reason(
+                ix.status, getattr(ix, "pipeline_version", None), ix.embedding_model,
+                getattr(ix, "embedding_dimension", None), current) if ix else None
             out.append({
                 "id": str(f.id),
                 "name": f.file_name,
@@ -153,14 +171,16 @@ def files_with_index_status(folder_id: int) -> List[Dict[str, Any]]:
                 "status": (ix.status if ix else "unindexed"),
                 "chunks": (ix.num_chunks or 0) if ix else 0,
                 "embedding_model": ix.embedding_model if ix else None,
+                "embedding_dimension": getattr(ix, "embedding_dimension", None) if ix else None,
                 "indexed_at": _iso(ix.indexed_at) if ix else None,
                 # Truncate the error message to 300 chars (full message stays in the DB; keep the list view lean)
                 "error": (err[:300] + ("…" if len(err) > 300 else "")) or None,
                 # Indexed with a caveat (e.g. pages that could not be parsed)
                 "warning": (getattr(ix, "index_warning", None) or None) if ix else None,
                 "pipeline_version": getattr(ix, "pipeline_version", None) if ix else None,
-                "reindex_recommended": reindex_recommended(
-                    ix.status if ix else None, getattr(ix, "pipeline_version", None) if ix else None),
+                "reindex_recommended": reason is not None,
+                # "embedding" (another embedding model / dimension) or "pipeline"
+                "reindex_reason": reason,
             })
         return out
 

@@ -561,6 +561,10 @@ def _build_converter():
             # rag.docling.ocr_enabled=false must really skip OCR (the model is not even loaded).
             "do_ocr": ocr_on,
         }
+        if local_models and ocr_on:
+            # The built-in OCR goes in 1.5 (advance notice, logged once per process).
+            from src.utils.deprecation import warn_once
+            warn_once("ocr")
         if artifacts_path:
             logger.info(f"[DOCLING] Using local artifacts_path: {artifacts_path}")
             pdf_kwargs["artifacts_path"] = str(artifacts_path)

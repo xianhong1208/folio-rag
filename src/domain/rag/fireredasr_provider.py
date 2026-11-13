@@ -144,6 +144,8 @@ class FireRedAsrProvider(AsrProvider):
     ) -> AsrResult:
         import tempfile
 
+        from src.utils.deprecation import warn_once
+        warn_once("asr")  # the built-in speech-to-text goes in 1.5 (logged once per process)
         with tempfile.TemporaryDirectory(prefix="fireredasr_") as td:
             tdir = Path(td)
             wav = tdir / "input16k.wav"

@@ -102,13 +102,15 @@ class IndexingService:
         content_hash: Optional[str] = None,
         index_warning: Optional[str] = None,
         pipeline_version: Optional[str] = None,
+        embedding_dimension: Optional[int] = None,
     ):
         """Record a successful index (upsert, handling reindex of an existing row).
 
         content_hash is File.content_hash at index time; it lets the next reindex
         short-circuit. index_warning is a caveat shown with the file (e.g. pages
         that could not be parsed); None clears an earlier one. pipeline_version
-        records which chunking pipeline produced the chunks.
+        records which chunking pipeline produced the chunks; embedding_model and
+        embedding_dimension which embedding model produced the vectors.
         """
         return FileIndexDB.upsert_indexed(
             file_id=file_id,
@@ -122,6 +124,7 @@ class IndexingService:
             content_hash=content_hash,
             index_warning=index_warning,
             pipeline_version=pipeline_version,
+            embedding_dimension=embedding_dimension,
         )
 
     def mark_index_failed(

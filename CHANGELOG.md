@@ -6,6 +6,29 @@ to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [1.4.2] — 2026-11-13
+
+### Security
+- **Model key settings are tied to config.yaml.** A runtime settings change (the console's Settings page or `PUT /api/admin/settings`, `rag:admin` only) could make a model key read more of the server's environment than intended. A `${VAR}` key reference set at runtime is now accepted only for a variable that config.yaml uses as a model key, for the server config.yaml uses it with; a role moved to another server loses its key unless the same change gives a new one; refused references all get one generic error. Stored settings that break the rule are skipped at startup with a warning. Resetting a key now restores config.yaml's reference (under `profile: cloud` the reset used to fail with 422). See `docs/configuration.md`.
+
+- **Dependency advisories fixed.** The dependency audit no longer accepts any advisory (`.github/pip-audit-ignore.txt` is empty).
+  - transformers 4.57.6 → 5.22.2 (`--extra local`; with huggingface-hub 0.36.2 → 1.33.0 and tokenizers 0.22.2 → 0.23.3). It drops the six accepted transformers advisories (PYSEC-2025-217, PYSEC-2026-2288, -2289, -2290, -3929, -4174). No code change was needed: CKIP word segmentation, HuggingFace embeddings, docling layout/table/OCR conversion and chunk token counts give the same output as on 4.57.6.
+  - torch in the `cuda` group 2.8.0+cu126 → 2.14.1+cu130, with torchvision 0.23.0 → 0.29.1, torchaudio 2.8.0 → 2.11.0 and triton 3.4.0 → 3.8.0 (GHSA-63cw-57p8-fm3p and the `lstm_cell`, `unpack_sequence` and `jit.script` advisories). The group now installs from PyTorch's CUDA 13.0 index, which needs an NVIDIA driver ≥ 580; PyTorch publishes 2.14 for CUDA 13.0 only.
+  - Mako 1.4.1 → 1.4.3 (via alembic; GHSA-5639-2j2p-m4mx) and soupsieve 2.9.2 → 4.1 (via beautifulsoup4; CVE-2026-126190, CVE-2026-126192), held there by `[tool.uv] constraint-dependencies`.
+
+### Added
+- **Changing the embedding model marks the files that need re-indexing.** A new embedding model (or dimension) left every folder indexed with the old one without any sign, although its vectors no longer match the queries. Each file's index record already kept the embedding model; it now also keeps the dimension (`FileIndices.embedding_dimension`, migration `20261113e0b001`, which fills it in for existing files from each folder's pgvector table). A file indexed with another model or dimension than the configured one — config.yaml or the Settings page, effective at once — is flagged **Re-index recommended** exactly like a file from an older chunking pipeline: the console's per-file badge and the folder list's **N stale** count, `reindex_recommended` in `GET /api/rag/file/{id}/index/status`, `GET /api/rag/indexed-files` and `GET /api/admin/folders/{id}/files`, and `reindex_recommended_files` in `GET /api/admin/folders`. A new `reindex_reason` (`embedding` or `pipeline`) says which, and the badge's tooltip names the model the file was indexed with. Switching back clears the flag; files whose model or dimension was never recorded are not flagged for it.
+
+### Fixed
+- **Searching a folder that was never indexed returns an empty result.** A folder's vector table is created by its first indexing run; until then an MCP search answered `internal_error` (`UndefinedTable`) and `POST /api/rag/query` (and the console's Search) answered 404 "Vector store table missing". Both now return the normal empty result: MCP with `results: []`, `low_relevance: true` and a `_hint` saying the folder has nothing indexed yet; REST with 200, `results: []`, the new `not_indexed: true` and the message "Query returned 0 results: this folder has nothing indexed yet". The missing table is recognised by PostgreSQL's SQLSTATE (42P01) and only when it is that folder's own table, so any other missing relation still fails. These searches are not recorded in the query analytics (no false knowledge gap) and are never cached, so the folder answers as soon as its first file is indexed.
+- **Large uploads no longer sit in memory.** The upload endpoints read the whole file into memory before the 100 MB check, so a 120 MB upload raised the server's memory by ~120 MB and was read to the end before it was refused. Uploads are now copied from the request's spooled part to storage in 1 MiB pieces, with the size counted (and the SHA-256 computed) on the way; the copy stops and the partial file is deleted once it crosses the limit. The single-file upload routes (REST `POST /api/folders/{id}/file` and the console's) refuse a request whose `Content-Length` is already over the limit without reading it, and cut off a streamed (chunked) body as soon as it crosses the limit. The answer is the same as before: **413** `File size exceeds limit (100.0MB)`; the batch route still reports an oversized file in `failed_uploads`. A file whose record cannot be written is now removed from disk instead of being left behind.
+
+### Deprecated
+- **The built-in OCR, the built-in speech-to-text and the `/v1` media endpoints are removed in 1.5.** Nothing changes in 1.4.x except the notice. Instead of the built-in OCR (docling's RapidOCR with local PDF/image parsing), use an OpenAI-compatible vision model: `rag.parsing.pdf` / `rag.parsing.images: cloud` with `rag.parsing.vision`, for example Qwen3-VL served by Forgeyard. Instead of FireRedASR / docling-whisper, use an OpenAI-compatible transcription endpoint: `rag.asr.provider: openai-compatible`. Instead of `POST /v1/ocr/general`, `POST /v1/transcriptions/general` and `GET /v1/models`, call those models directly. The server says so in the startup log (once for each of them the configuration uses), with one warning per process on the first local OCR setup, the first in-process transcription and the first `/v1` call, and with `Deprecation` (RFC 9745) and `Link: rel="deprecation"` headers on every `/v1` response. The details are in `docs/api.md` (and the zh-TW version) and in both READMEs.
+
+### Docs
+- **Roadmap and README rewritten.** `ROADMAP.md` and the new `ROADMAP.zh-TW.md` list what each released version brought, the agreed plan from 1.4.2 to 1.10 (each item has an issue in its GitHub milestone), what comes later and the known limitations; the Graph RAG decision gate is kept. The READMEs are shorter, with badges, a console screenshot, a quick start and deployment options. The reference material moved, in English and Traditional Chinese, to `docs/how-it-works.md`, `docs/configuration.md`, `docs/auth.md`, `docs/console.md`, `docs/api.md` and `docs/development.md`. Corrected on the way: the API docs at `/docs` are always on (there is no `ENABLE_API_DOCS`), and folders still keyed per token are those from before 1.4.1, not 1.5.
+
 ## [1.4.1] — 2026-11-09
 
 ### Changed
@@ -516,7 +539,8 @@ flags them.
   pgvector storage, per-token (`jti`) folder ownership, and the first React admin
   console.
 
-[Unreleased]: https://github.com/xianhong1208/folio-rag/compare/v1.4.1...dev
+[Unreleased]: https://github.com/xianhong1208/folio-rag/compare/v1.4.2...dev
+[1.4.2]: https://github.com/xianhong1208/folio-rag/releases/tag/v1.4.2
 [1.4.1]: https://github.com/xianhong1208/folio-rag/releases/tag/v1.4.1
 [1.4.0]: https://github.com/xianhong1208/folio-rag/releases/tag/v1.4.0
 [1.3.0]: https://github.com/xianhong1208/folio-rag/releases/tag/v1.3.0

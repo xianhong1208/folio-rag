@@ -99,6 +99,14 @@ class TestOwnerScope:
 
 
 class TestPipelineVersionAndWarning:
+    @pytest.fixture(autouse=True)
+    def configured_model_is_m(self):
+        """These rows are indexed with model "m": make it the configured one, so only
+        the pipeline rule is exercised here (the embedding rule has its own tests)."""
+        from unittest.mock import patch
+        with patch("db.admin_stats.configured_embedding", return_value=("m", None)):
+            yield
+
     def test_file_list_reports_stale_pipeline_and_parse_warning(self, itest_db, folder, file_row):
         from db import admin_stats
         from db.fileindexdb import FileIndexDB

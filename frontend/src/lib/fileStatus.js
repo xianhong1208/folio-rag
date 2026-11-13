@@ -5,10 +5,20 @@ export function isPartial(f) {
   return !!(f && f.status === 'indexed' && f.warning)
 }
 
-// Indexed by an older chunking pipeline: still searchable, but a re-index gives it
-// the current chunks (section-aligned, with breadcrumbs). The server decides.
+// Indexed by an older chunking pipeline, or by an embedding model (or dimension) other
+// than the configured one: a re-index is recommended. The server decides.
 export function needsReindex(f) {
   return !!(f && f.status === 'indexed' && f.reindex_recommended)
+}
+
+// Why, in words (the server's reindex_reason: 'embedding' or 'pipeline').
+export function reindexNote(f) {
+  if (!needsReindex(f)) return ''
+  if (f.reindex_reason === 'embedding') {
+    const was = f.embedding_model ? ` (${f.embedding_model}${f.embedding_dimension ? `, ${f.embedding_dimension} dims` : ''})` : ''
+    return `Indexed with another embedding model${was} than the one configured now: its vectors do not match new queries. Re-index it.`
+  }
+  return 'Indexed by an older chunking pipeline. Still searchable; re-index for section-aligned chunks.'
 }
 
 export function countNeedsReindex(files) {

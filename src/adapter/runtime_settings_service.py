@@ -41,17 +41,26 @@ def load_overrides_on_startup() -> int:
     # returns nothing, dropping the saved console settings on every restart.
     from db.db import get_engine
     get_engine()
+    config_model = Config.get_config_model()
+    # Which key variables config.yaml pairs with which servers: taken before any override.
+    ro.capture_startup(config_model)
     overrides = RuntimeSettingsDB.load_all()
     if not overrides:
         return 0
-    config_model = Config.get_config_model()
     applied = 0
-    for path, value in overrides.items():
+    # Keys last, so a stored key reference is checked against the stored base_url it was
+    # set for; the replay never clears a key (carry_check=False): the rows are the result.
+    for path, value in sorted(overrides.items(), key=lambda kv: kv[0] in ro.SECRET_PATHS):
         try:
-            ro.validate_and_apply(config_model, {path: value})
+            ro.validate_and_apply(config_model, {path: value}, carry_check=False)
             applied += 1
         except ValueError as e:
-            logger.warning(f"[RUNTIME] Skipping invalid override {path}={value!r}: {e}")
+            shown = ro.MASK if path in ro.SECRET_PATHS and value else value
+            logger.warning(f"[RUNTIME] Skipping invalid override {path}={shown!r}: {e}")
+    for path in ro.enforce_reference_pairing(config_model):
+        logger.warning(f"[RUNTIME] {path} cleared: its ${{...}} reference is not paired with "
+                       "the server this role now points to (config.yaml decides which). "
+                       "Enter the key again on the Settings page.")
     logger.info(f"[RUNTIME] Applied {applied}/{len(overrides)} runtime override(s) on startup")
     return applied
 
@@ -129,15 +138,20 @@ def reset_setting(path: str, updated_by: Optional[str] = None) -> bool:
     if path not in ro.EDITABLE:
         raise ValueError(f"Setting path is not editable: {path}")
     with _apply_lock:
-        yaml_value = _yaml_value(path)
+        yaml_value = _yaml_reference(path) or _yaml_value(path)
         config_model = Config.get_config_model()
         # Dry run on a copy: raises without touching the live model or the DB.
         ro.validate_and_apply(config_model.model_copy(deep=True), {path: yaml_value})
         removed = RuntimeSettingsDB.delete(path)
         if not removed:
             return False
-        ro.validate_and_apply(config_model, {path: yaml_value})
-        _rebind([path])
+        applied, _ = ro.validate_and_apply(config_model, {path: yaml_value})
+        # A key cleared because the reset moved its role to another server is stored too.
+        others = {p: v for p, v in applied.items() if p != path}
+        for p, v in others.items():
+            RuntimeSettingsDB.upsert(p, v, updated_by=updated_by)
+            _audit(p, "set", ro.MASK, None, updated_by)
+        _rebind([path, *others])
         _audit(path, "reset", None, _audit_value(path, yaml_value), updated_by)
         logger.info(f"[RUNTIME] reset {path} -> yaml default {yaml_value!r}")
         return True
@@ -147,6 +161,8 @@ def _audit_value(path: str, value: Any) -> Any:
     """Secrets are audited as the env reference they point at, or masked."""
     if path not in ro.SECRET_PATHS:
         return value
+    if value is None:
+        return None  # cleared
     ref = ro.secret_ref(path)
     return f"${{{ref}}}" if ref else ro.MASK
 
@@ -159,6 +175,27 @@ def _audit(key, action, old, new, by):
 def audit_log(limit: int = 100):
     from db.settings_audit_db import SettingsAuditDB
     return SettingsAuditDB.recent(limit)
+
+
+def _yaml_reference(path: str) -> Optional[str]:
+    """For a key config.yaml writes as a ``${VAR}`` reference: that reference, unexpanded.
+
+    Resetting a key must restore the reference, not the expanded key: under the cloud
+    profile a literal key is refused (the reset failed with 422), and anywhere else it
+    would lose track of where the key comes from.
+    """
+    if path not in ro.SECRET_PATHS or not Config.get_env_refs().get(path):
+        return None
+    import yaml
+    from src.config.profile import WHOLE_ENV_REF_RE
+    try:
+        with open(Config._config_path, "r", encoding="utf-8") as f:
+            node: Any = yaml.safe_load(f) or {}
+        for part in path.split("."):
+            node = node[part]
+    except Exception:
+        return None
+    return node if isinstance(node, str) and WHOLE_ENV_REF_RE.match(node) else None
 
 
 def _yaml_value(path: str) -> Any:

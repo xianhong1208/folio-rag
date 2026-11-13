@@ -118,6 +118,7 @@ class FileIndexDB(BaseDB):
         content_hash: Optional[str] = None,
         index_warning: Optional[str] = None,
         pipeline_version: Optional[str] = None,
+        embedding_dimension: Optional[int] = None,
     ):
         """Idempotent version of `create(... status="indexed")`, for reindex.
 
@@ -147,6 +148,7 @@ class FileIndexDB(BaseDB):
                     existing.content_hash = content_hash
                     existing.index_warning = index_warning
                     existing.pipeline_version = pipeline_version
+                    existing.embedding_dimension = embedding_dimension
                     existing.indexed_at = datetime.now(timezone.utc)
                     session.commit()
                     session.refresh(existing)
@@ -170,6 +172,7 @@ class FileIndexDB(BaseDB):
                 content_hash=content_hash,
                 index_warning=index_warning,
                 pipeline_version=pipeline_version,
+                embedding_dimension=embedding_dimension,
             )
         except Exception as e:
             cls.get_log().error(f"upsert_indexed failed for file_id={file_id}: {e}")

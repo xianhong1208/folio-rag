@@ -102,6 +102,10 @@ class FileIndex(Base):
     # NULL = indexed before versions were recorded
     pipeline_version = Column(String(16), nullable=True)
 
+    # Vector length of the embedding model that indexed this file (rag.embedding.dimension);
+    # NULL = indexed before it was recorded and not recoverable from the vector table
+    embedding_dimension = Column(Integer, nullable=True)
+
     indexed_at = Column(DateTime, default=func.now())
     updated_at = Column(DateTime, default=func.now(), onupdate=func.now())
 

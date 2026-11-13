@@ -213,6 +213,9 @@ class SearchOutcome:
     timings: Dict[str, float] = field(default_factory=dict)
     # What search(prefetch=...) returned for the rerank pool, if it ran and succeeded.
     prefetched: Any = None
+    # The folder's vector table does not exist yet: nothing was ever indexed into it
+    # (or its index was cleared). The search found nothing rather than failing.
+    not_indexed: bool = False
 
     @property
     def score_type(self) -> str:
@@ -425,6 +428,40 @@ def _row_to_node(row):
     return NodeWithScore(node=node, score=float(rank) if rank is not None else 0.0)
 
 
+# PostgreSQL SQLSTATE for "relation does not exist" (undefined_table).
+_UNDEFINED_TABLE = "42P01"
+
+
+def _exception_chain(exc: BaseException):
+    seen = set()
+    stack = [exc]
+    while stack:
+        e = stack.pop()
+        if e is None or id(e) in seen:
+            continue
+        seen.add(id(e))
+        yield e
+        stack.extend([getattr(e, "orig", None), e.__cause__, e.__context__])
+
+
+def is_missing_table_error(exc: BaseException, table: Optional[str] = None) -> bool:
+    """True when ``exc`` is PostgreSQL's "relation does not exist" (42P01).
+
+    With ``table``, only when that table is the one missing: a search on a folder
+    that was never indexed must come back empty, but a missing core table (a broken
+    install) must still fail loudly. Recognised through the driver's SQLSTATE
+    (asyncpg ``sqlstate``, psycopg2 ``pgcode``) anywhere in the exception chain.
+    """
+    undefined = any(
+        getattr(e, "sqlstate", None) == _UNDEFINED_TABLE
+        or getattr(e, "pgcode", None) == _UNDEFINED_TABLE
+        or type(e).__name__ in ("UndefinedTableError", "UndefinedTable")
+        for e in _exception_chain(exc))
+    if not undefined:
+        return False
+    return table is None or table in str(exc)
+
+
 class HybridSearcher:
     """Dense + BM25 candidate retrieval, fusion and optional rerank for one folder.
 
@@ -446,6 +483,13 @@ class HybridSearcher:
     @property
     def vector_store(self):
         return self._vector_store
+
+    def _table_name(self) -> Optional[str]:
+        from src.domain.rag.chunk_lookup import ChunkLookup
+        try:
+            return ChunkLookup._get_table_name(self._vector_store)
+        except Exception:  # noqa: BLE001 - only used to recognise its own missing table
+            return None
 
     @property
     def reranker(self):
@@ -661,8 +705,17 @@ class HybridSearcher:
         timings: Dict[str, float] = {}
         token = _STAGE_TIMINGS.set(timings)
         try:
-            fused, dense, sparse, dense_raw, sparse_raw = await self._retrieve(
-                query_text, settings, self.candidate_depth(settings))
+            try:
+                fused, dense, sparse, dense_raw, sparse_raw = await self._retrieve(
+                    query_text, settings, self.candidate_depth(settings))
+            except Exception as e:  # noqa: BLE001 - re-raised unless it is the missing table
+                if not is_missing_table_error(e, self._table_name()):
+                    raise
+                # Nothing was ever indexed into this folder: its vector table does
+                # not exist yet. That is an empty folder, not a failed search.
+                logger.info(f"Search on a folder with no index table yet: {self._table_name()}")
+                return SearchOutcome(nodes=[], fusion=settings.fusion, timings=timings,
+                                     not_indexed=True)
             pool = self.rerank_pool(fused, dense, sparse, settings) if self._reranker else fused
             # Snapshot the fused order and scores: rerank rewrites node.score in place.
             outcome = SearchOutcome(nodes=[], candidates=len(pool),

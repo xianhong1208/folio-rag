@@ -51,9 +51,53 @@ BREADCRUMB_SEP = " › "
 CHUNK_PIPELINE_VERSION = "3"
 
 
-def reindex_recommended(status: Optional[str], pipeline_version: Optional[str]) -> bool:
-    """True for an indexed file whose chunks were made by an older pipeline."""
-    return status == "indexed" and (pipeline_version or "1") != CHUNK_PIPELINE_VERSION
+# Why an indexed file should be re-indexed (``reindex_reason``):
+REINDEX_EMBEDDING = "embedding"   # its vectors came from another embedding model / dimension
+REINDEX_PIPELINE = "pipeline"     # its chunks came from an older chunking pipeline
+
+
+def configured_embedding() -> Tuple[Optional[str], Optional[int]]:
+    """(model, dimension) of the embedding model configured now (runtime settings
+    included); (None, None) when the config cannot be read, which flags nothing."""
+    try:
+        from src.config.config_manager import Config
+        emb = Config.get_config_model().rag.embedding
+        dim = getattr(emb, "dimension", None)
+        return (getattr(emb, "model", None) or None), (int(dim) if dim else None)
+    except Exception:  # noqa: BLE001 - advisory only
+        return None, None
+
+
+def reindex_reason(status: Optional[str], pipeline_version: Optional[str],
+                   embedding_model: Optional[str] = None,
+                   embedding_dimension: Optional[int] = None,
+                   current: Optional[Tuple[Optional[str], Optional[int]]] = None) -> Optional[str]:
+    """Why an indexed file should be re-indexed, or None.
+
+    ``embedding``: it was indexed with an embedding model (or dimension) other than
+    the configured one, so its vectors and the query's are not comparable. Only a
+    recorded value is compared: an unknown (NULL) model or dimension flags nothing.
+    ``pipeline``: its chunks were made by an older chunking pipeline (NULL = before
+    versions were recorded). ``current`` is (model, dimension); None reads the config.
+    """
+    if status != "indexed":
+        return None
+    model, dim = configured_embedding() if current is None else current
+    if (embedding_model and model and embedding_model != model) or (
+            embedding_dimension and dim and int(embedding_dimension) != int(dim)):
+        return REINDEX_EMBEDDING
+    if (pipeline_version or "1") != CHUNK_PIPELINE_VERSION:
+        return REINDEX_PIPELINE
+    return None
+
+
+def reindex_recommended(status: Optional[str], pipeline_version: Optional[str],
+                        embedding_model: Optional[str] = None,
+                        embedding_dimension: Optional[int] = None,
+                        current: Optional[Tuple[Optional[str], Optional[int]]] = None) -> bool:
+    """True for an indexed file that an older pipeline or another embedding model produced."""
+    return reindex_reason(status, pipeline_version, embedding_model, embedding_dimension,
+                          current) is not None
 
 
 # Postgres twin of retrieval_text(): concat_ws skips NULLs, NULLIF drops empty strings.

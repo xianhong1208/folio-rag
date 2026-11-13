@@ -35,6 +35,16 @@ logger = get_api_logger()
 
 router = APIRouter(tags=["Files"], prefix="/folders", dependencies=[Depends(authenticate_request)])
 
+def _upload_source(file: UploadFile):
+    """The upload's spooled temporary file (rewound) and its size, without reading it.
+
+    The multipart parser has already spooled the part to a temporary file; it is copied
+    to storage in chunks later, so the upload never sits in memory whole.
+    """
+    file.file.seek(0)
+    return file.file, file.size
+
+
 # When auto_index=True the indexing block includes a background job_id; otherwise enabled=false
 @router.post(
     path="/{folder_id}/file",
@@ -72,7 +82,7 @@ async def upload_file(
         result = await FolderAdapter.get_folder(id=folder_id, user_token=user_token)
         if not result:
             raise HTTPException(status_code=404, detail=f"folder {folder_id} not found")
-        file_content = await file.read()
+        file_content, file_size = _upload_source(file)
 
         tags_list = None
         if tags:
@@ -80,6 +90,7 @@ async def upload_file(
 
         file_data = {
             'file_content': file_content,
+            'file_size': file_size,
             'file_name': sanitize_filename(file.filename),
             'description': description,
             'tags': tags_list
@@ -395,9 +406,10 @@ async def upload_files(
 
         files_data = []
         for file in files:
-            file_content = await file.read()
+            file_content, file_size = _upload_source(file)
             files_data.append({
                 'file_content': file_content,
+                'file_size': file_size,
                 'file_name': sanitize_filename(file.filename),
                 'description': None,
                 'tags': None

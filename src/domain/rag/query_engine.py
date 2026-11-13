@@ -18,7 +18,9 @@ import sqlalchemy.exc
 
 from src.domain.exceptions import FolderNotFoundError
 from src.domain.rag.dto import RAGChunkMetadata, RAGSearchResult
-from src.domain.rag.hybrid_search import HybridSearcher, SearchOutcome, SearchSettings
+from src.domain.rag.hybrid_search import (
+    HybridSearcher, SearchOutcome, SearchSettings, is_missing_table_error,
+)
 from src.domain.rag.merge_plan import MergeGroup, arrange, plan_merges
 from src.log import get_api_logger
 
@@ -32,8 +34,7 @@ _MISSING_TABLE = ("Vector store table missing — folder may have been deleted "
 
 
 def _missing_table(e: Exception) -> bool:
-    err = str(e).lower()
-    return "does not exist" in err or "undefined" in err
+    return is_missing_table_error(e)
 
 
 class QueryEngine:

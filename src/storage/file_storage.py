@@ -152,6 +152,42 @@ class FileStorage:
             logger.error(f"Failed to save file {file_id} to {folder_name}: {str(e)}")
             raise IOError(f"Failed to save file: {str(e)}")
     
+    # Copy uploads in 1 MiB pieces: an upload never sits in memory whole.
+    STREAM_CHUNK = 1024 * 1024
+
+    @classmethod
+    def save_stream(cls, user_token: str, folder_name: str, file_id: str, source,
+                    max_bytes: int) -> tuple:
+        """Copy a binary file-like ``source`` to storage in chunks, enforcing ``max_bytes``.
+
+        The size limit is checked while copying: once more than ``max_bytes`` have been
+        read, the partial file is deleted and ``FileTooLargeError`` is raised.
+
+        Returns ``(relative_path, size, sha256 hex)``.
+        """
+        from db.filedb import FileTooLargeError, file_too_large_message
+        folder_path = cls._get_folder_storage_path(user_token, folder_name)
+        target = folder_path / file_id
+        digest = hashlib.sha256()
+        size = 0
+        try:
+            with open(target, 'wb') as out:
+                while True:
+                    chunk = source.read(cls.STREAM_CHUNK)
+                    if not chunk:
+                        break
+                    size += len(chunk)
+                    if size > max_bytes:
+                        raise FileTooLargeError(file_too_large_message(max_bytes))
+                    digest.update(chunk)
+                    out.write(chunk)
+        except BaseException:
+            target.unlink(missing_ok=True)
+            raise
+        relative_path = cls.relative_folder_path(user_token, folder_name) + str(file_id)
+        logger.info(f"File saved successfully: {relative_path} ({size} bytes)")
+        return relative_path, size, digest.hexdigest()
+
     @classmethod
     def read_file(cls, file_path: str) -> bytes:
         """Read a file (path relative to the project root).

@@ -58,5 +58,7 @@ class RAGQueryResult(BaseModel):
     retrieval_time_ms: Optional[float] = None
     # Best rerank score before the threshold (None: no reranker / rerank failed).
     top_score: Optional[float] = None
+    # The folder has nothing indexed yet (no vector table): an empty result, not an error.
+    not_indexed: bool = False
 
 

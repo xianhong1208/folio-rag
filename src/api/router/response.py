@@ -298,7 +298,10 @@ class FileIndexStatusResponse(BaseModel):
     pipeline_version: Optional[str] = Field(
         None, description="Chunking pipeline that produced the chunks (null = before versions were recorded)")
     reindex_recommended: bool = Field(
-        False, description="Indexed by an older chunking pipeline: re-index to get the current chunks")
+        False, description="Indexed by an older chunking pipeline or another embedding model: re-index it")
+    reindex_reason: Optional[str] = Field(
+        None, description="Why a re-index is recommended: 'embedding' (indexed with another embedding "
+                          "model or dimension than the configured one) or 'pipeline' (older chunking pipeline)")
 
 
 class IndexingMetadata(BaseModel):
@@ -453,6 +456,8 @@ class IndexedFileEntry(BaseModel):
     indexed_at: str
     status: str = Field(..., description="indexed / failed / deleted")
     embedding_model: Optional[str]
+    embedding_dimension: Optional[int] = Field(
+        None, description="Vector length of the embedding model that indexed it (null = not recorded)")
     chunk_size: Optional[int]
     chunk_overlap: Optional[int]
     warning: Optional[str] = Field(
@@ -460,7 +465,10 @@ class IndexedFileEntry(BaseModel):
     pipeline_version: Optional[str] = Field(
         None, description="Chunking pipeline that produced the chunks (null = before versions were recorded)")
     reindex_recommended: bool = Field(
-        False, description="Indexed by an older chunking pipeline: re-index to get the current chunks")
+        False, description="Indexed by an older chunking pipeline or another embedding model: re-index it")
+    reindex_reason: Optional[str] = Field(
+        None, description="Why a re-index is recommended: 'embedding' (indexed with another embedding "
+                          "model or dimension than the configured one) or 'pipeline' (older chunking pipeline)")
 
 
 class IndexedFilesResponse(BaseModel):
@@ -504,6 +512,8 @@ class QueryResponseData(BaseModel):
     results: List[RAGSearchResultDoc] = Field(default_factory=list)
     total_results: int
     retrieval_time_ms: Optional[float] = Field(None)
+    not_indexed: bool = Field(
+        False, description="True when the folder has nothing indexed yet (the result is empty, not an error)")
 
 
 class QueryResponse(BaseModel):
