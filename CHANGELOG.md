@@ -6,6 +6,8 @@ to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Fixed
+- **Large uploads no longer sit in memory.** The upload endpoints read the whole file into memory before the 100 MB check, so a 120 MB upload raised the server's memory by ~120 MB and was read to the end before it was refused. Uploads are now copied from the request's spooled part to storage in 1 MiB pieces, with the size counted (and the SHA-256 computed) on the way; the copy stops and the partial file is deleted once it crosses the limit. The single-file upload routes (REST `POST /api/folders/{id}/file` and the console's) refuse a request whose `Content-Length` is already over the limit without reading it, and cut off a streamed (chunked) body as soon as it crosses the limit. The answer is the same as before: **413** `File size exceeds limit (100.0MB)`; the batch route still reports an oversized file in `failed_uploads`. A file whose record cannot be written is now removed from disk instead of being left behind.
 ### Security
 - **Model key settings are tied to config.yaml.** A runtime settings change (the console's Settings page or `PUT /api/admin/settings`, `rag:admin` only) could make a model key read more of the server's environment than intended. A `${VAR}` key reference set at runtime is now accepted only for a variable that config.yaml uses as a model key, for the server config.yaml uses it with; a role moved to another server loses its key unless the same change gives a new one; refused references all get one generic error. Stored settings that break the rule are skipped at startup with a warning. Resetting a key now restores config.yaml's reference (under `profile: cloud` the reset used to fail with 422). See `docs/configuration.md`.
 

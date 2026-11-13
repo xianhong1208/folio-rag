@@ -12,4 +12,6 @@
 | **Media (no auth)** | `POST /v1/transcriptions/general` (audio → text, follows `rag.asr.provider`) · `POST /v1/ocr/general` (image / PDF → text, Docling OCR) · `GET /v1/models`. Unauthenticated by design; keep them on a trusted network. They are planned for removal in 1.5 (see the [roadmap](../ROADMAP.md)). |
 | **Operational** | `GET /health` (liveness) · `GET /health/detailed` (database, pgvector, connection pool, cache, revocation feed) · `GET /health/cache/stats` · `POST /health/cache/clear` · `GET /health/database/stats` |
 
+**Upload size.** A file may be at most 100 MB. Uploads are copied to disk in 1 MiB pieces and never held in memory whole. The single-file upload routes (`POST /api/folders/{id}/file` and the console's) refuse a larger request from its `Content-Length` before reading it, or as soon as a streamed body crosses the limit, with **413** `File size exceeds limit (100.0MB)`; the batch route (`POST /api/folders/{id}/files`) reports an oversized file in `failed_uploads` and keeps the others.
+
 The full OpenAPI reference is served by the running server at `/docs` (Swagger UI) and `/openapi.json`.
