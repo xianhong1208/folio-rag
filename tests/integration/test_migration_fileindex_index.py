@@ -29,12 +29,14 @@ def test_duplicate_index_dropped_and_restored(itest_db):
 
     m = DatabaseMigrator()
     eng = get_engine()
+    # Later migrations are stepped back first, and re-applied at the end.
+    assert m.downgrade(REV)
     assert m._get_current_revision() == REV
     assert _file_id_indexes(eng) == ["FileIndices_file_id_key"]
 
     assert m.downgrade("-1")
     assert "idx_fileindices_file_id" in _file_id_indexes(eng)
-    assert m.upgrade("head")
+    assert m.upgrade(REV)
     assert m._get_current_revision() == REV
     assert _file_id_indexes(eng) == ["FileIndices_file_id_key"]
 
@@ -59,3 +61,4 @@ def test_duplicate_index_dropped_and_restored(itest_db):
         _run(eng, 'ALTER TABLE "FileIndices" ADD CONSTRAINT "FileIndices_file_id_key" UNIQUE (file_id)')
         _run(eng, mod.UPGRADE_SQL)
     assert _file_id_indexes(eng) == ["FileIndices_file_id_key"]
+    assert m.upgrade("head")

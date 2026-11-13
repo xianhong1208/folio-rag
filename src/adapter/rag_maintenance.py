@@ -9,7 +9,7 @@ from __future__ import annotations
 from typing import Any, Dict, List, TYPE_CHECKING
 
 from src.adapter.db_offload import run_db
-from src.domain.rag.chunk_identity import reindex_recommended
+from src.domain.rag.chunk_identity import configured_embedding, reindex_reason
 from src.domain.rag.vector_store_manager import VectorStoreManager  # physical-table deletion is centralized here
 from src.api.router.response import DeleteFolderIndexResponse, FileIndexResult
 from src.domain.exceptions import (
@@ -24,6 +24,20 @@ if TYPE_CHECKING:
     from src.adapter.rag_context import RAGContext
 
 logger = get_adapter_logger()
+
+
+def _with_reindex_flags(rows: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    """Copies of the (cacheable) rows with ``reindex_recommended`` / ``reindex_reason``
+    computed now: they depend on the configured embedding model, which a runtime
+    settings change can switch while the list sits in the cache."""
+    current = configured_embedding()
+    out = []
+    for row in rows:
+        reason = reindex_reason(row.get("status"), row.get("pipeline_version"),
+                                row.get("embedding_model"), row.get("embedding_dimension"),
+                                current)
+        out.append({**row, "reindex_recommended": reason is not None, "reindex_reason": reason})
+    return out
 
 
 class RAGMaintenanceService:
@@ -234,7 +248,7 @@ class RAGMaintenanceService:
 
             if cached is not None:
                 logger.debug("Indexed files cache HIT: %s", cache_key)
-                return cached
+                return _with_reindex_flags(cached)
 
             index_records = await run_db(indexing_service.list_indices_for_folder, folder_id)
 
@@ -257,12 +271,11 @@ class RAGMaintenanceService:
                     "indexed_at": record.indexed_at.isoformat(),
                     "status": record.status,
                     "embedding_model": record.embedding_model,
+                    "embedding_dimension": getattr(record, "embedding_dimension", None),
                     "chunk_size": record.chunk_size,
                     "chunk_overlap": record.chunk_overlap,
                     "warning": getattr(record, "index_warning", None),
                     "pipeline_version": getattr(record, "pipeline_version", None),
-                    "reindex_recommended": reindex_recommended(
-                        record.status, getattr(record, "pipeline_version", None)),
                 })
 
             cache.set(cache_key, results, ttl=CacheTTL.FILE_LIST)
@@ -270,7 +283,7 @@ class RAGMaintenanceService:
                 "Indexed files cache MISS: %s (cached %d records)",
                 cache_key, len(results),
             )
-            return results
+            return _with_reindex_flags(results)
 
         except Exception as e:
             log_err(logger, "GET_INDEXED_FILES_FAIL", e, folder_id=folder_id)

@@ -26,7 +26,7 @@ Paste the token on the login screen. Folders created before 1.4.1 belong to the 
 | Page | What you do there |
 |------|-------------------|
 | **Overview** | The live retrieval pipeline, corpus readouts, index health, and model-service status. |
-| **Folders** | Create folders (owned by you); open one to upload files, watch per-file index status, view chunks (with the AI context line shown apart from the document text), reindex, or delete. Files indexed by an older chunking pipeline show **Re-index recommended**; the folder list counts them per folder (**N stale**) with a one-click re-index. |
+| **Folders** | Create folders (owned by you); open one to upload files, watch per-file index status, view chunks (with the AI context line shown apart from the document text), reindex, or delete. Files indexed by an older chunking pipeline, or with another embedding model than the configured one, show **Re-index recommended**; the folder list counts them per folder (**N stale**) with a one-click re-index. |
 | **Search Playground** | Run a live query against a folder and see the **per-signal retrieval trace** — Vector · BM25 · Hybrid · Rerank ranks side by side — plus an optional RAG answer. |
 | **Index Jobs** | Live stream of indexing jobs with progress; cancel a running job. |
 | **Query Analytics** | Volume, latency, zero-result rate, top queries and knowledge gaps. |
@@ -42,3 +42,7 @@ Chunking changes are versioned per file. A file indexed by an older pipeline kee
 You don't have to open every folder to find them: the folder list shows an amber **N stale** badge on each folder that holds such files (`reindex_recommended_files` in `GET /api/admin/folders`), and the re-index button in that folder's row re-indexes just those files.
 
 The current pipeline is version 3 (section-aligned chunks, with the version-3 context prompt), so every file indexed before it is marked. Until it is re-indexed, a file keeps its old chunks and is still searchable.
+
+## Re-indexing after changing the embedding model
+
+Each file also records the embedding model and dimension it was indexed with (`embedding_model`, `embedding_dimension`). When `rag.embedding.model` or `rag.embedding.dimension` changes — in config.yaml or on the Settings page — every file indexed with the old one is marked **Re-index recommended** the same way, at once, and counts towards the folder's **N stale** badge: its vectors came from the other model and do not match new queries. The badge's tooltip and the API's `reindex_reason` say which case it is (`embedding` or `pipeline`). Switching back to the old model clears the mark. Files indexed before 1.4.2 have their dimension filled in from the folder's vector table when the server starts; a file whose model or dimension was never recorded is not flagged for it.

@@ -609,6 +609,7 @@ class RAGIndexingService:
                 content_hash=getattr(file_record, "content_hash", None),
                 index_warning=index_warning,
                 pipeline_version=index_stats.get("pipeline_version"),
+                embedding_dimension=ctx.embed_dim,
             )
 
             await _run_db(ctx.indexing_service.invalidate_folder_caches, folder_id)
