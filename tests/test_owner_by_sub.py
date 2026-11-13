@@ -6,7 +6,7 @@ derives the same ``sub:<sub>`` key from any token of the same person, refuses a 
 without a ``sub``, and claims legacy folders only for a verified token.
 
 Token shapes follow what MCP Gate issues (MCP_Gate src/oauth/service.py):
-- personal access token: sub = the user's id (a UUID), client_id = mcp-center-console
+- personal access token: sub = the user's id (a UUID), client_id = mcp-gate-console
 - OAuth (authorization code / refresh): sub = the same user id, client_id = the client
 - client_credentials: sub = the client's own client_id (mcpc_…)
 """
@@ -38,7 +38,7 @@ CLIENT = "mcpc_0123456789abcdef01234567"          # generate_client_id()
 
 
 def _pat(tokens, sub=USER, **kw):
-    return tokens.make(sub=sub, client_id="mcp-center-console", **kw)
+    return tokens.make(sub=sub, client_id="mcp-gate-console", **kw)
 
 
 def _oauth(tokens, sub=USER, **kw):
