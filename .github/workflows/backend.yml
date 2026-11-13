@@ -27,20 +27,6 @@ on:
       - '.github/workflows/backend.yml'
   pull_request:
     branches: [dev, main]
-    paths:
-      - 'src/**'
-      - 'db/**'
-      - 'versions/**'
-      - 'tests/**'
-      - 'scripts/**'
-      - 'evals/**'
-      - 'vendor/**'
-      - 'config/**'
-      - 'main.py'
-      - 'app.py'
-      - 'pyproject.toml'
-      - 'uv.lock'
-      - '.github/workflows/backend.yml'
 
 permissions:
   contents: read

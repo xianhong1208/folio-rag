@@ -63,7 +63,7 @@ class AuthSettings:
 def settings_from_config(config) -> Optional[AuthSettings]:
     """Return the effective auth settings for ``config.auth``, or None when disabled.
 
-    Mirrors AnyDoc's ``resolve_auth_settings``: audience defaults to the server's own
+    Mirrors Morphyard's ``resolve_auth_settings``: audience defaults to the server's own
     MCP URL (``http://<host>:<port>/mcp``) when left empty in config.
     """
     auth = getattr(config, "auth", None)
@@ -214,7 +214,7 @@ class McpGateTokenVerifier:
 def build_auth_provider(config):
     """Return the FastMCP auth provider for ``config.auth``, or None when disabled.
 
-    Mirrors AnyDoc: a ``RemoteAuthProvider`` wrapping a ``JWTVerifier`` that validates
+    Mirrors Morphyard: a ``RemoteAuthProvider`` wrapping a ``JWTVerifier`` that validates
     RS256 tokens against the issuer's JWKS. This governs the FastMCP ``/mcp`` transport
     and publishes the RFC 9728 protected-resource metadata.
     """
