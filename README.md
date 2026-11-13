@@ -63,7 +63,8 @@ git clone https://github.com/xianhong1208/folio-rag.git
 cd folio-rag
 
 # Local models need the `local` extra, and torch comes from a dependency group:
-# always pass one of rocm-r714 | cuda | cpu with it. All-cloud: plain `uv sync`.
+# always pass one of rocm-r714 | cuda | cpu with it (cuda = CUDA 13.0, NVIDIA driver 580+).
+# All-cloud: plain `uv sync`.
 uv sync --extra local --group cuda
 
 cp .env.example .env         # set DATABASE_URL (PostgreSQL + pgvector)

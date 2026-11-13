@@ -59,7 +59,8 @@ git clone https://github.com/xianhong1208/folio-rag.git
 cd folio-rag
 
 # 本地模型需要 `local` extra,torch 則來自 dependency group:
-# 一定要一起帶 rocm-r714 | cuda | cpu 其中一個。全雲端:直接 `uv sync`。
+# 一定要一起帶 rocm-r714 | cuda | cpu 其中一個(cuda = CUDA 13.0,需要 NVIDIA driver 580 以上)。
+# 全雲端:直接 `uv sync`。
 uv sync --extra local --group cuda
 
 cp .env.example .env         # 設定 DATABASE_URL(PostgreSQL + pgvector)
