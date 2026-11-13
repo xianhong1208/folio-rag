@@ -6,6 +6,12 @@ to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Security
+- **Dependency advisories fixed.** The dependency audit no longer accepts any advisory (`.github/pip-audit-ignore.txt` is empty).
+  - transformers 4.57.6 → 5.22.2 (`--extra local`; with huggingface-hub 0.36.2 → 1.33.0 and tokenizers 0.22.2 → 0.23.3). It drops the six accepted transformers advisories (PYSEC-2025-217, PYSEC-2026-2288, -2289, -2290, -3929, -4174). No code change was needed: CKIP word segmentation, HuggingFace embeddings, docling layout/table/OCR conversion and chunk token counts give the same output as on 4.57.6.
+  - torch in the `cuda` group 2.8.0+cu126 → 2.14.1+cu130, with torchvision 0.23.0 → 0.29.1, torchaudio 2.8.0 → 2.11.0 and triton 3.4.0 → 3.8.0 (GHSA-63cw-57p8-fm3p and the `lstm_cell`, `unpack_sequence` and `jit.script` advisories). The group now installs from PyTorch's CUDA 13.0 index, which needs an NVIDIA driver ≥ 580; PyTorch publishes 2.14 for CUDA 13.0 only.
+  - Mako 1.4.1 → 1.4.3 (via alembic; GHSA-5639-2j2p-m4mx) and soupsieve 2.9.2 → 4.1 (via beautifulsoup4; CVE-2026-126190, CVE-2026-126192), held there by `[tool.uv] constraint-dependencies`.
+
 ## [1.4.1] — 2026-11-09
 
 ### Changed
