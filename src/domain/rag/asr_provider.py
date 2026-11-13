@@ -56,6 +56,8 @@ class DoclingWhisperAsrProvider(AsrProvider):
         max_tokens: Optional[int] = None, tokenizer: Optional[str] = None,
         progress_cb: Optional[Callable] = None,
     ) -> AsrResult:
+        from src.utils.deprecation import warn_once
+        warn_once("asr")  # the built-in speech-to-text goes in 1.5 (logged once per process)
         # Passing max_tokens=None through would override convert_once's default of 512 and cause a
         # None//2 TypeError inside refine; the production path always supplies a value.
         full_text, chunk_records = docling_convert_once(

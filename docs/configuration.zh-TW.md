@@ -26,9 +26,9 @@
 | `rag.retrieval.rerank_candidates` | `60` | 僅用於 `fused` 候選池:`max(3 × top_k, 此值)` 個融合候選送進 cross-encoder;可即時調整(1–200)。 |
 | `rag.retrieval.mcp_response_token_budget` | `6000` | MCP 搜尋回應的估算 token 上限;超過時省略排名最低的結果並在回應中註明。`0` = 不限制。 |
 | `rag.retrieval.min_relevance` | 隨附設定檔為 `0.9`(未設定時 `0`) | MCP 搜尋:最高 rerank 分數低於此值 → `low_relevance: true`(只標記、不刪除)。依模型而定;`0` = 關閉。 |
-| `rag.asr.provider` | `fireredasr` | 音訊轉錄:`fireredasr`（本地繁中）· `docling-whisper` · `openai-compatible`。`rag.asr.enabled: false` 時音檔會以明確訊息標為失敗(不做任何轉錄)。 |
+| `rag.asr.provider` | `fireredasr` | 音訊轉錄:`fireredasr`（本地繁中）· `docling-whisper` · `openai-compatible`。`rag.asr.enabled: false` 時音檔會以明確訊息標為失敗(不做任何轉錄)。`fireredasr` 與 `docling-whisper` **將在 1.5 移除**,請改用 `openai-compatible`([詳見](api.zh-TW.md#15-移除內建-ocr語音轉文字與-v1-媒體端點))。 |
 | `rag.retrieval.segmenter` | `ckip`(`profile: cloud` 為 `bigram`) | 關鍵字檢索的中文斷詞器:`ckip` · `jieba` · `bigram`（見[運作原理](how-it-works.zh-TW.md)的「中文斷詞」）。 |
-| `rag.docling.ocr_enabled` | `true` | 掃描 PDF 與圖片的 OCR。設 `false` 會真的關掉(重啟後生效);沒有文字層的掃描檔會以明確訊息失敗。 |
+| `rag.docling.ocr_enabled` | `true` | 掃描 PDF 與圖片的 OCR。設 `false` 會真的關掉(重啟後生效);沒有文字層的掃描檔會以明確訊息失敗。內建 OCR **將在 1.5 移除**,請改用搭配 `rag.parsing.vision` 的雲端解析([詳見](api.zh-TW.md#15-移除內建-ocr語音轉文字與-v1-媒體端點))。 |
 | `rag.contextual_retrieval.max_doc_chars` | `60000` | 每個 chunk 交給 LLM 的文件文字上限。LLM 讀的是大綱加上 chunk 所在章節,以 chunk 為中心最多 12,000 字元。 |
 | `rag.retrieval.*` | — | Top-K、相似度門檻、BM25 候選數、`hybrid_fusion`（`rrf`/`concat`）、auto-merging。可從主控台即時調,或用 **High Precision / Balanced / High Recall** 預設。 |
 | `rag.profile` | `local` | `local` · `hybrid` · `cloud` —— 見[雲端 profile](#雲端-profile)。 |

@@ -6,6 +6,9 @@ to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Deprecated
+- **The built-in OCR, the built-in speech-to-text and the `/v1` media endpoints are removed in 1.5.** Nothing changes in 1.4.x except the notice. Instead of the built-in OCR (docling's RapidOCR with local PDF/image parsing), use an OpenAI-compatible vision model: `rag.parsing.pdf` / `rag.parsing.images: cloud` with `rag.parsing.vision`, for example Qwen3-VL served by Forgeyard. Instead of FireRedASR / docling-whisper, use an OpenAI-compatible transcription endpoint: `rag.asr.provider: openai-compatible`. Instead of `POST /v1/ocr/general`, `POST /v1/transcriptions/general` and `GET /v1/models`, call those models directly. The server says so in the startup log (once for each of them the configuration uses), with one warning per process on the first local OCR setup, the first in-process transcription and the first `/v1` call, and with `Deprecation` (RFC 9745) and `Link: rel="deprecation"` headers on every `/v1` response. The details are in `docs/api.md` (and the zh-TW version) and in both READMEs.
+
 ### Docs
 - **Roadmap and README rewritten.** `ROADMAP.md` and the new `ROADMAP.zh-TW.md` list what each released version brought, the agreed plan from 1.4.2 to 1.10 (each item has an issue in its GitHub milestone), what comes later and the known limitations; the Graph RAG decision gate is kept. The READMEs are shorter, with badges, a console screenshot, a quick start and deployment options. The reference material moved, in English and Traditional Chinese, to `docs/how-it-works.md`, `docs/configuration.md`, `docs/auth.md`, `docs/console.md`, `docs/api.md` and `docs/development.md`. Corrected on the way: the API docs at `/docs` are always on (there is no `ENABLE_API_DOCS`), and folders still keyed per token are those from before 1.4.1, not 1.5.
 
