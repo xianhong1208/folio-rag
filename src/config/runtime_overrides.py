@@ -251,6 +251,33 @@ REBIND_GROUPS = ("rag.embedding", "rag.llm", "rag.contextual_llm", "rag.contextu
 # Console writes store the ${VAR} reference in the DB, never the resolved key.
 _secret_source: Dict[str, Optional[str]] = {}
 
+# Variable -> origins config.yaml sends it to (see src/config/key_references.py), taken
+# from the startup config before any runtime override is applied.
+_startup_pairs: Optional[Dict[str, set]] = None
+
+
+def capture_startup(config_model, refs: Optional[Dict[str, str]] = None) -> Dict[str, set]:
+    """Record which key variables config.yaml pairs with which servers. Called at startup
+    before the stored overrides are applied; ``refs`` defaults to Config's references."""
+    global _startup_pairs
+    from src.config.key_references import paired_origins
+    if refs is None:
+        from src.config.config_manager import Config
+        refs = Config.get_env_refs()
+    _startup_pairs = paired_origins(getattr(config_model, "rag", None), refs)
+    return _startup_pairs
+
+
+def _pairs(config_model) -> Dict[str, set]:
+    # First use without an explicit capture: the process has applied no runtime change
+    # yet, so the model in hand is still the startup config.
+    return _startup_pairs if _startup_pairs is not None else capture_startup(config_model)
+
+
+def _reset_startup_for_tests() -> None:
+    global _startup_pairs
+    _startup_pairs = None
+
 
 def secret_ref(path: str) -> Optional[str]:
     """Env-var name a secret currently comes from (console write first, then config.yaml)."""
@@ -271,18 +298,31 @@ def _effective_refs(pending: Dict[str, Optional[str]]) -> Dict[str, str]:
     return refs
 
 
-def _resolve_secret(path: str, value: Any) -> Tuple[Any, Optional[str]]:
-    """``${VAR}`` → (resolved key, "VAR"); literal → (value, None). Rejects the mask."""
+def _resolve_secret(path: str, value: Any, key_vars) -> Tuple[Any, Optional[str]]:
+    """``${VAR}`` → (resolved key, "VAR"); literal → (value, None). Rejects the mask.
+
+    Only a variable in ``key_vars`` (those config.yaml uses as a model key) is ever read;
+    any other reference, set or not, gets the same generic error, so the answer never
+    tells whether a variable exists. Which server it may go to is checked by the caller.
+    """
     if not isinstance(value, str) or not value:
         return value, None
     if value.strip() == MASK:
         raise ValueError("send a new key or an ${ENV_VAR} reference, not the masked placeholder")
-    from src.config.profile import WHOLE_ENV_REF_RE
+    from src.config.profile import ENV_REF_RE, WHOLE_ENV_REF_RE
+    from src.config.key_references import NOT_ALLOWED
     m = WHOLE_ENV_REF_RE.match(value)
     if not m:
+        if ENV_REF_RE.search(value):
+            raise ValueError(NOT_ALLOWED)  # a reference inside a longer value is never expanded
         return value, None
+    if m.group(1) not in key_vars:
+        raise ValueError(NOT_ALLOWED)
     from src.config.config_manager import expand_env_vars
-    return expand_env_vars(value.strip()), m.group(1)
+    try:
+        return expand_env_vars(value.strip()), m.group(1)
+    except ValueError:
+        raise ValueError(NOT_ALLOWED) from None
 
 
 def _resolve_parent(config_model, path: str, create: bool = True):
@@ -327,13 +367,37 @@ def get_effective(config_model, mask_secrets: bool = True) -> Dict[str, Any]:
     return out
 
 
-def validate_and_apply(config_model, patch: Dict[str, Any]) -> Tuple[Dict[str, Any], List[str]]:
+# Role -> its own api_key field (LLM roles may instead inherit rag.llm.api_key).
+ROLE_KEY_PATHS = {
+    "embedding": "rag.embedding.api_key", "llm": "rag.llm.api_key",
+    **{r: f"rag.{r}.api_key" for r in _LLM_ROLES},
+    "rerank": "rag.rerank.api_key", "asr": "rag.asr.api_key",
+    "vision": "rag.parsing.vision.api_key",
+}
+
+KEY_CLEARED = ("{path} was cleared: {role}'s base_url now points to another server, so the "
+               "key it had is not sent there. Enter the key for the new server.")
+
+
+def validate_and_apply(config_model, patch: Dict[str, Any], *, carry_check: bool = True
+                       ) -> Tuple[Dict[str, Any], List[str]]:
     """Validate the patch, then write it into the ConfigModel in place.
 
     All-or-nothing: any single validation failure -> ValueError, and nothing is written.
 
+    Model keys (see src/config/key_references.py):
+    - a ``${VAR}`` key is accepted only for a variable config.yaml uses as a model key,
+      and only while the role's server (base_url origin) is one config.yaml pairs it with;
+      any other reference gets one generic error;
+    - when a role's base_url moves to another origin and the patch gives that role no new
+      key, its own key is cleared (``applied`` holds ``None`` for it, and a warning says
+      so); a key it inherits from ``rag.llm`` makes the change fail instead.
+    ``carry_check=False`` (startup replay of stored overrides) skips the clearing: the
+    stored rows already are the result of one.
+
     Returns:
-        (applied, warnings) — the actually-written {path: value} and warnings for warn-level paths.
+        (applied, warnings) — the actually-written {path: value} and warnings for warn-level
+        paths and cleared keys.
 
     Raises:
         ValueError: Path not whitelisted / type, range or choice validation failed
@@ -345,6 +409,7 @@ def validate_and_apply(config_model, patch: Dict[str, Any]) -> Tuple[Dict[str, A
             f"Setting path(s) cannot be changed at runtime: {unknown} "
             "(see GET /api/admin/settings for the editable list)")
 
+    pairs = _pairs(config_model)
     # Validate everything first (pydantic: apply into a section copy to check types); write only if all pass
     staged = []  # [(parent, field, validated_value, path, as_written)]
     pending_refs: Dict[str, Optional[str]] = {}
@@ -354,7 +419,7 @@ def validate_and_apply(config_model, patch: Dict[str, Any]) -> Tuple[Dict[str, A
             value = _check_constraints(path, value)
             written = value
             if path in SECRET_PATHS:
-                value, pending_refs[path] = _resolve_secret(path, value)
+                value, pending_refs[path] = _resolve_secret(path, value, pairs)
             parent, field = _resolve_parent(config_model, path)
             section_cls = type(parent)
             data = parent.model_dump()
@@ -366,16 +431,55 @@ def validate_and_apply(config_model, patch: Dict[str, Any]) -> Tuple[Dict[str, A
     if errors:
         raise ValueError("Settings validation failed: " + "; ".join(errors))
 
-    # The result must still satisfy rag.profile (e.g. no in-process provider and no literal
-    # key under profile: cloud). Checked on a copy so a rejected batch changes nothing.
+    # Checked on a copy so a rejected batch changes nothing.
+    dropped: List[Tuple[str, str]] = []  # (api_key path, role)
     rag = getattr(config_model, "rag", None)
     if rag is not None and hasattr(rag, "model_copy"):
-        from src.config.profile import check_profile
+        from src.config.key_references import NOT_ALLOWED, reference_allowed, role_keys
         trial = SimpleNamespace(rag=rag.model_copy(deep=True))
         for _parent, field, value, path, _w in staged:
             t_parent, t_field = _resolve_parent(trial, path)
             setattr(t_parent, t_field, value)
-        report = check_profile(trial.rag, refs=_effective_refs(pending_refs))
+
+        before = role_keys(rag)
+        if carry_check:
+            # A key never follows its role to another server.
+            after = role_keys(trial.rag)
+            for role, a in after.items():
+                b = before.get(role)
+                moved = b is not None and b.origin is not None and a.origin != b.origin
+                if moved and a.key and a.key_path not in patch and a.key_path == ROLE_KEY_PATHS[role]:
+                    dropped.append((a.key_path, role))
+            for path, _role in dropped:
+                t_parent, t_field = _resolve_parent(trial, path)
+                setattr(t_parent, t_field, None)
+            gone = {p for p, _ in dropped}
+            for role, a in role_keys(trial.rag).items():
+                b = before.get(role)
+                moved = b is not None and b.origin is not None and a.origin != b.origin
+                if moved and a.key and a.key_path not in patch and a.key_path not in gone:
+                    errors.append(
+                        f"{ROLE_KEY_PATHS[role]}: {role}'s base_url now points to another server "
+                        f"and it would send the key it inherits from {a.key_path} there; give it "
+                        "its own api_key in the same change")
+
+        # A reference only for the server config.yaml pairs it with.
+        refs = _effective_refs(pending_refs)
+        for path, _role in dropped:
+            refs.pop(path, None)
+        # Only the keys this change sets: a key carried to another server was cleared or
+        # refused above, and at startup a carried one is settled by enforce_reference_pairing.
+        for role, a in role_keys(trial.rag).items():
+            var = refs.get(a.key_path) if a.key_path else None
+            if var and a.key_path in patch and not reference_allowed(var, a.origin, pairs):
+                errors.append(f"{a.key_path}: {NOT_ALLOWED}")
+        if errors:
+            raise ValueError("Settings validation failed: " + "; ".join(dict.fromkeys(errors)))
+
+        # The result must still satisfy rag.profile (e.g. no in-process provider and no
+        # literal key under profile: cloud).
+        from src.config.profile import check_profile
+        report = check_profile(trial.rag, refs=refs)
         if report.errors:
             raise ValueError(f"rag.profile '{rag.profile}' rejects this change: "
                              + "; ".join(report.errors))
@@ -393,7 +497,35 @@ def validate_and_apply(config_model, patch: Dict[str, Any]) -> Tuple[Dict[str, A
                 f"{path}: embedding change — vector space/dimension incompatible; "
                 "existing folders must be reindexed before retrieval works. New indexes use the new setting immediately."
             )
+    for path, role in dropped:
+        parent, field = _resolve_parent(config_model, path)
+        setattr(parent, field, None)
+        _secret_source[path] = None
+        applied[path] = None
+        warnings.append(KEY_CLEARED.format(path=path, role=role))
     return applied, warnings
+
+
+def enforce_reference_pairing(config_model) -> List[str]:
+    """Startup, after the stored overrides: clear any key that comes from a ``${VAR}``
+    reference while its role points at a server config.yaml does not pair with that
+    variable (e.g. a base_url override stored before 1.4.2). Returns the cleared paths."""
+    from src.config.key_references import reference_allowed, role_keys
+    rag = getattr(config_model, "rag", None)
+    if rag is None:
+        return []
+    pairs = _pairs(config_model)
+    refs = _effective_refs({})
+    cleared: List[str] = []
+    for role, a in role_keys(rag).items():
+        var = refs.get(a.key_path) if a.key_path else None
+        if var and not reference_allowed(var, a.origin, pairs):
+            parent, field = _resolve_parent(config_model, a.key_path, create=False)
+            if parent is not None:
+                setattr(parent, field, None)
+                _secret_source[a.key_path] = None
+                cleared.append(a.key_path)
+    return cleared
 
 
 def rebind_groups_for(paths) -> List[str]:
