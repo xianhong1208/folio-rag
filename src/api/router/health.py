@@ -163,6 +163,16 @@ async def detailed_health_check():
     if checks["revocation"].get("stale"):
         overall_healthy = False
 
+    # Backups (database.backup): the newest archive and, when the server's schedule is
+    # on, how its last round went. A failed or overdue scheduled backup degrades health.
+    try:
+        from src.backup.scheduler import status as backup_status
+        checks["backup"] = backup_status()
+    except Exception as e:  # noqa: BLE001
+        checks["backup"] = {"status": "unknown", "error": type(e).__name__}
+    if checks["backup"].get("status") == "degraded":
+        overall_healthy = False
+
     return {
         "status": "healthy" if overall_healthy else "degraded",
         "timestamp": datetime.now(timezone.utc).isoformat(),
