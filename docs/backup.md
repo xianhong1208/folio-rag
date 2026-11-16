@@ -28,10 +28,11 @@ as the database itself.
 
 ## Requirements
 
-- The PostgreSQL client tools `pg_dump` and `pg_restore`, **the same major version as the server
-  or newer** (e.g. `apt install postgresql-client-17` for a PostgreSQL 15–17 server). If they are
-  not on `PATH`, set `database.backup.pg_bin_dir` (e.g. `/usr/lib/postgresql/17/bin`). Restore with
-  a `pg_restore` at least as new as the `pg_dump` that made the archive (the manifest says which).
+- The PostgreSQL client tools `pg_dump`, `pg_restore` and `psql`, **the same major version as the
+  server or newer** (e.g. `apt install postgresql-client-17` for a PostgreSQL 15–17 server). If they
+  are not on `PATH`, set `database.backup.pg_bin_dir` (e.g. `/usr/lib/postgresql/17/bin`). A
+  `pg_dump` older than the server is refused before it runs. Restore with a `pg_restore` at least as
+  new as the `pg_dump` that made the archive (the manifest says which).
 - No superuser is needed. The role in `DATABASE_URL` must own Folio's tables (it does when Folio
   created them). To restore into a new database, the role needs `CREATEDB`, and the `vector`
   extension must exist in it: pgvector is not a trusted extension, so when the role is not a
@@ -147,7 +148,11 @@ otherwise this instance's `config/models.yaml` decides. A different segmenter on
 **Rebuild FTS** on each folder after the restore.
 
 The database is restored in one transaction (`pg_restore --single-transaction`), so a failure leaves
-nothing half-restored. The archive is unpacked and verified next to `storage/` before the database
+nothing half-restored. When `pg_restore` is newer than the server (say version 18 tools and a
+PostgreSQL 15 server), it would open with settings the server does not know, such as
+`SET transaction_timeout` (new in 17), and fail. Folio then restores through SQL instead:
+`pg_restore --file=-` piped into `psql --single-transaction -v ON_ERROR_STOP=1` (the `psql` next to
+`pg_restore`), leaving out only those opening `SET` lines for settings the server does not have. The archive is unpacked and verified next to `storage/` before the database
 is touched. The `vector` extension and the `public` schema entries of the dump are skipped (the
 first is created beforehand, the second belongs to the database owner), which is what lets a
 non-superuser restore.

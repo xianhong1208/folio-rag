@@ -73,6 +73,8 @@ class FakeDB:
             return _Result([("e5", 8, 2)])
         if "atttypmod" in sql:
             return _Result([(8,)])
+        if "server_version_num" in sql:
+            return _Result(["170001"])
         if "server_version" in sql:
             return _Result(["17.1"])
         raise AssertionError(f"unexpected SQL: {sql}")
@@ -111,8 +113,9 @@ def fake(monkeypatch):
     db = FakeDB()
     monkeypatch.setattr(S, "_engine", lambda url: db)
 
-    def fake_dump(url, out_file, snapshot=None, bin_dir=None):
+    def fake_dump(url, out_file, snapshot=None, bin_dir=None, server_major=None):
         assert snapshot == "00000003-1"
+        assert server_major == 17
         Path(out_file).write_bytes(b"PGDMP")
     monkeypatch.setattr(S.pg, "dump", fake_dump)
     monkeypatch.setattr(S.pg, "find_tool", lambda name, bin_dir=None: f"/bin/{name}")
@@ -366,8 +369,12 @@ def restore_env(tmp_path, storage, fake, monkeypatch):
     import src.utils.db_bootstrap as boot
     monkeypatch.setattr(boot, "_ensure_database_exists", lambda url, logger: calls.setdefault("db", True))
 
-    def fake_restore(url, dump_file, list_file, bin_dir=None):
+    monkeypatch.setattr(S.pg, "server_info", lambda url: (15, {"statement_timeout"}))
+    monkeypatch.setattr(S.pg, "restore_tools", lambda major, bin_dir=None: calls.setdefault("tools", major))
+
+    def fake_restore(url, dump_file, list_file, bin_dir=None, server=None):
         calls["restored"] = Path(dump_file).read_bytes()
+        calls["server"] = server
         return []
     monkeypatch.setattr(S.pg, "restore", fake_restore)
     target = tmp_path / "target" / "storage"
@@ -398,6 +405,23 @@ class TestRestore:
         assert "restored" not in restore_env.calls
         r = _restore(restore_env, force=True)
         assert restore_env.calls["dropped"] == ["Folders"] and r.restored
+
+    def test_the_server_info_is_handed_to_pg_restore(self, restore_env):
+        _restore(restore_env)
+        assert restore_env.calls["tools"] == 15
+        assert restore_env.calls["server"] == (15, {"statement_timeout"})
+
+    def test_a_missing_client_tool_stops_before_anything_is_dropped(self, restore_env, monkeypatch):
+        def no_psql(major, bin_dir=None):
+            raise S.pg.PgToolError("psql is not installed or not on PATH")
+        monkeypatch.setattr(S.pg, "restore_tools", no_psql)
+        restore_env.state["tables"] = ["Folders"]
+        (restore_env.target / "sub_x").mkdir(parents=True)
+        with pytest.raises(S.pg.PgToolError, match="psql"):
+            _restore(restore_env, force=True)
+        assert "dropped" not in restore_env.calls and "restored" not in restore_env.calls
+        assert (restore_env.target / "sub_x").is_dir()
+        assert not list(restore_env.target.parent.glob(".folio-restore-*"))
 
     def test_a_used_storage_needs_force_and_is_moved_aside(self, restore_env):
         (restore_env.target / "sub_x").mkdir(parents=True)

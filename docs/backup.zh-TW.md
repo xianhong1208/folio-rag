@@ -24,10 +24,10 @@ manifest 記錄了 Folio 版本、資料庫 migration revision、embedding 模�
 
 ## 需求
 
-- PostgreSQL 用戶端工具 `pg_dump` 與 `pg_restore`,**主版本要和伺服器相同或更新**(例如
+- PostgreSQL 用戶端工具 `pg_dump`、`pg_restore` 與 `psql`,**主版本要和伺服器相同或更新**(例如
   PostgreSQL 15–17 的伺服器用 `apt install postgresql-client-17`)。不在 `PATH` 上的話,設定
-  `database.backup.pg_bin_dir`(例如 `/usr/lib/postgresql/17/bin`)。還原時用的 `pg_restore`
-  不能比做出封存檔的 `pg_dump` 舊(manifest 有寫是哪一版)。
+  `database.backup.pg_bin_dir`(例如 `/usr/lib/postgresql/17/bin`)。比伺服器舊的 `pg_dump`
+  會在執行前就被拒絕。還原時用的 `pg_restore` 不能比做出封存檔的 `pg_dump` 舊(manifest 有寫是哪一版)。
 - 不需要 superuser。`DATABASE_URL` 的角色要擁有 Folio 的資料表(由 Folio 自己建立的表就是)。
   要還原到新的資料庫,角色需要 `CREATEDB`,而且新資料庫裡要有 `vector` extension:pgvector 不是
   trusted extension,所以角色不是 superuser 時,要先請管理員在新資料庫執行
@@ -132,6 +132,10 @@ embedding 模型的判斷:在設定頁面存過的設定會跟著資料庫回來
 `config/models.yaml` 為準。斷詞器不同只會警告:還原後請在每個資料夾執行 **Rebuild FTS**。
 
 資料庫在單一交易裡還原(`pg_restore --single-transaction`),失敗時不會留下還原到一半的狀態。
+`pg_restore` 比伺服器新時(例如 18 版工具配 PostgreSQL 15 伺服器),它一開頭會設定伺服器不認得的
+參數,例如 17 版才有的 `SET transaction_timeout`,於是失敗。這時 Folio 改走 SQL:
+`pg_restore --file=-` 接到 `psql --single-transaction -v ON_ERROR_STOP=1`(用 `pg_restore` 同目錄的
+`psql`),只拿掉開頭那幾行伺服器沒有的參數的 `SET`。
 動到資料庫之前,封存檔會先在 `storage/` 旁邊解開並驗證。dump 裡的 `vector` extension 與
 `public` schema 項目會略過(前者事先建立,後者屬於資料庫擁有者),所以非 superuser 也能還原。
 

@@ -222,6 +222,7 @@ def _snapshot_info(conn, rag_conf) -> Dict[str, Any]:
         "WHERE n.nspname = 'public' AND c.relname LIKE 'data\\_%' AND a.attname = 'embedding' "
         "AND a.atttypmod > 0"))})
     info["server_version"] = conn.execute(text("SHOW server_version")).scalar()
+    info["server_major"] = int(conn.execute(text("SHOW server_version_num")).scalar()) // 10000
     return info
 
 
@@ -321,7 +322,8 @@ def create_backup(*, db_url: str, storage_root: Path, out_dir: Optional[Path] = 
                     snapshot = conn.execute(text("SELECT pg_export_snapshot()")).scalar()
                     info = _snapshot_info(conn, rag_conf)
                     log(f"dumping the database ({len(info['folders'])} folder(s))")
-                    pg.dump(db_url, dump_file, snapshot=snapshot, bin_dir=bin_dir)
+                    pg.dump(db_url, dump_file, snapshot=snapshot, bin_dir=bin_dir,
+                            server_major=info["server_major"])
         finally:
             engine.dispose()
 
@@ -567,6 +569,9 @@ def restore_backup(archive: Path, *, db_url: str, storage_root: Path, force: boo
         raise BackupRefused("; ".join(problems) + " (pass --force to replace them: tables are dropped, "
                             "storage/ is moved aside)")
 
+    # Find the client tools before anything is dropped or moved.
+    server = pg.server_info(db_url)
+    pg.restore_tools(server[0], bin_dir)
     now = now or datetime.now(timezone.utc)
     stamp = now.strftime("%Y%m%dT%H%M%SZ")
     storage_root.parent.mkdir(parents=True, exist_ok=True)
@@ -580,7 +585,7 @@ def restore_backup(archive: Path, *, db_url: str, storage_root: Path, force: boo
             log(f"dropping {len(state['tables'])} existing table(s)")
             _drop_tables(db_url, state["tables"])
         log("restoring the database")
-        pg.restore(db_url, staging / DUMP_NAME, staging / "toc.list", bin_dir=bin_dir)
+        pg.restore(db_url, staging / DUMP_NAME, staging / "toc.list", bin_dir=bin_dir, server=server)
         if storage_root.exists():
             moved_aside = storage_root.with_name(f"{storage_root.name}.before-restore-{stamp}")
             os.replace(storage_root, moved_aside)

@@ -4,7 +4,9 @@ A folder with a vector table (one table keeps the STORED GENERATED text_search_t
 one has it detached and stamped with a COMMENT, as CKIP folders do) and a stored
 file are backed up from the integration database and restored into a second
 throwaway database; rows, vectors, sequences and the stored file must come back
-unchanged. Skipped when the PostgreSQL client tools are not installed.
+unchanged, both straight through pg_restore and through pg_restore | psql (the route
+for client tools newer than the server). Skipped when the PostgreSQL client tools are
+not installed.
 """
 
 import shutil
@@ -16,8 +18,9 @@ from sqlalchemy import create_engine, text
 from sqlalchemy.engine import make_url
 from sqlalchemy.pool import NullPool
 
-pytestmark = pytest.mark.skipif(not (shutil.which("pg_dump") and shutil.which("pg_restore")),
-                                reason="pg_dump / pg_restore are not installed")
+pytestmark = pytest.mark.skipif(
+    not (shutil.which("pg_dump") and shutil.which("pg_restore") and shutil.which("psql")),
+    reason="pg_dump / pg_restore / psql are not installed")
 
 RAG = SimpleNamespace(embedding=SimpleNamespace(model="itest-embed", dimension=3), profile="cloud",
                       retrieval=SimpleNamespace(segmenter="bigram"))
@@ -99,9 +102,19 @@ def _rows(url, table):
         eng.dispose()
 
 
-def test_backup_restore_round_trip(populated, second_db, tmp_path):
+@pytest.mark.parametrize("route", ["auto", "sql"])
+def test_backup_restore_round_trip(populated, second_db, tmp_path, monkeypatch, route):
+    """``auto`` takes whichever route the installed tools need (client tools newer than
+    the server restore through psql); ``sql`` forces the psql route on any server."""
+    from src.backup import pg
     from src.backup import service as S
     from src.backup.archive import read_manifest
+
+    if route == "sql":
+        real_major = pg.tool_major
+        server_major = pg.server_info(_url())[0]
+        monkeypatch.setattr(pg, "tool_major", lambda tool: max(real_major(tool), server_major + 1)
+                            if tool.endswith("pg_restore") else real_major(tool))
 
     out = tmp_path / "backups"
     result = S.create_backup(db_url=_url(), storage_root=populated.storage, out_dir=out, rag_conf=RAG)
