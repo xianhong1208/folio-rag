@@ -176,11 +176,21 @@ def _install_page_progress_patch() -> None:
 
 
 def _pdf_page_count(file_path: str) -> Optional[int]:
-    """Compute a PDF's total page count instantly via pymupdf (progress-bar denominator); returns None for non-PDF / open failure."""
+    """Page total for the progress bar, computed instantly without parsing.
+
+    PDFs are counted with PDFium (pdf_pages); images, which docling also runs through its
+    paged pipeline, count their frames (1, or N for a multi-page TIFF). Anything else, or
+    a file that cannot be opened, gives None and the console shows the bare stage.
+    """
+    from src.domain.rag.pdf_pages import page_count_or_none
+
+    count = page_count_or_none(file_path)
+    if count is not None:
+        return count
     try:
-        import fitz
-        with fitz.open(file_path) as doc:
-            return len(doc)
+        from PIL import Image
+        with Image.open(file_path) as im:
+            return getattr(im, "n_frames", 1) or 1
     except Exception:
         return None
 
@@ -1404,7 +1414,7 @@ def docling_convert_once(
         converter = get_converter()
 
         # Page-level progress (observer, see _install_page_progress_patch):
-        # the denominator is computed instantly via pymupdf; if it can't (non-PDF), only report
+        # the denominator is computed instantly via PDFium; if it can't (non-PDF), only report
         # done, and the frontend shows the bare stage
         if progress_cb is not None:
             _install_page_progress_patch()

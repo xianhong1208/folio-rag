@@ -158,4 +158,5 @@ token。Docker 映像檔與 compose 檔預計在 1.5 推出。
 
 ## 授權
 
-[MIT](LICENSE)
+[MIT](LICENSE)。PDF 頁面以 PDFium(`pypdfium2`,Apache-2.0 / BSD-3-Clause)轉成圖片,
+不使用 AGPL 授權的 PyMuPDF。
