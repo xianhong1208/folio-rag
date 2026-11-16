@@ -14,7 +14,7 @@ commit.
 | `config/models.yaml` | `rag.profile`, and where each model runs: `rag.embedding`, `rag.llm`, `rag.contextual_llm`, `rag.rerank`, `rag.asr`, `rag.docling`, `rag.parsing` |
 | `config/mcp.yaml` | `app.tool_prefix`, `auth.dynamic_tools` (per-folder tools), `modules.enabled` |
 | `config/retrieval.yaml` | `rag.indexing`, `rag.chunking`, `rag.contextual_retrieval`, `rag.vector_store`, `rag.retrieval` (including `segmenter`) |
-| `config/system.yaml` | `server`, `logging`, `app.name` / `title` / `description` |
+| `config/system.yaml` | `server`, `logging`, `app.name` / `title` / `description`, `metrics` ([`/metrics`](metrics.md)) |
 
 Each file is written in the shape of the merged configuration: `models.yaml` starts with `rag:`,
 `mcp.yaml` holds `app: {tool_prefix: …}`. Sections such as `rag:` open in several files, but **a
@@ -45,6 +45,7 @@ lists every variable. An empty value means "not set".
 | `VISION_BASE_URL`, `VISION_API_KEY` | `rag.parsing.vision.*` (commented out in `models.yaml`) | empty |
 | `DOCLING_DEVICE` | `rag.docling.device` | `cuda` |
 | `CKIP_DEVICE` | `rag.retrieval.ckip_device` | `cpu` |
+| `METRICS_TOKEN` | `metrics.token`: bearer token `GET /metrics` requires ([Metrics](metrics.md)) | empty (this host only) |
 
 The settings you are likely to touch:
 

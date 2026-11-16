@@ -12,7 +12,7 @@
 | `config/models.yaml` | `rag.profile`,以及各模型跑在哪:`rag.embedding`、`rag.llm`、`rag.contextual_llm`、`rag.rerank`、`rag.asr`、`rag.docling`、`rag.parsing` |
 | `config/mcp.yaml` | `app.tool_prefix`、`auth.dynamic_tools`(每個資料夾一個工具)、`modules.enabled` |
 | `config/retrieval.yaml` | `rag.indexing`、`rag.chunking`、`rag.contextual_retrieval`、`rag.vector_store`、`rag.retrieval`(含 `segmenter`) |
-| `config/system.yaml` | `server`、`logging`、`app.name` / `title` / `description` |
+| `config/system.yaml` | `server`、`logging`、`app.name` / `title` / `description`、`metrics`([`/metrics`](metrics.zh-TW.md)) |
 
 每個檔案都照合併後設定的結構寫:`models.yaml` 以 `rag:` 開頭,`mcp.yaml` 裡是 `app: {tool_prefix: …}`。
 `rag:` 這類區段可以出現在好幾個檔案,但**同一個設定只能寫在一個檔案**:同一個設定出現在兩個檔案,啟動會失敗,錯誤訊息會指出
@@ -39,6 +39,7 @@
 | `VISION_BASE_URL`、`VISION_API_KEY` | `rag.parsing.vision.*`(在 `models.yaml` 中預設註解掉) | 空 |
 | `DOCLING_DEVICE` | `rag.docling.device` | `cuda` |
 | `CKIP_DEVICE` | `rag.retrieval.ckip_device` | `cpu` |
+| `METRICS_TOKEN` | `metrics.token`:`GET /metrics` 需要的 bearer token([監控指標](metrics.zh-TW.md)) | 空白(只限本機) |
 
 你最可能會動到的設定:
 

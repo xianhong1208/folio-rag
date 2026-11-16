@@ -161,6 +161,17 @@ class LoggingConfig(BaseModel):
     backup_count: int
 
 
+class MetricsConfig(BaseModel):
+    """``GET /metrics`` in the Prometheus text format (docs/metrics.md).
+
+    On by default. ``token`` (``METRICS_TOKEN`` in .env) makes the endpoint require
+    ``Authorization: Bearer <token>`` from every client; without one only a direct
+    loopback client (same host, no proxy forwarding headers) may scrape.
+    """
+    enabled: bool = True
+    token: OptStr = Field(None, repr=False)
+
+
 # Folio defaults for the app fields whose pre-rename defaults are upgraded on load.
 _FOLIO_APP_DEFAULTS = {
     "name": "Folio",
@@ -589,6 +600,7 @@ class ConfigModel(BaseModel):
     logging: LoggingConfig
     app: AppConfig
     modules: ModulesConfig
+    metrics: MetricsConfig = Field(default_factory=MetricsConfig)
     rag: Optional[RAGConfig] = None
 
 
@@ -599,6 +611,7 @@ __all__ = [
     "ConsoleAuthConfig",
     "AuthConfig",
     "LoggingConfig",
+    "MetricsConfig",
     "AppConfig",
     "RouterConfig",
     "McpToolsConfig",

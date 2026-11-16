@@ -51,6 +51,8 @@ Folio 是一套開源、給 Model Context Protocol 用的檢索增強生成(RAG)
   資料夾評分。
 - **主控台**在 `/admin`:資料夾與檔案、顯示逐訊號軌跡的 Search Playground、索引任務、查詢分析與知識缺口、
   評測、即時設定、健康狀態與稽核紀錄。
+- **Prometheus 監控指標**在 [`/metrics`](docs/metrics.zh-TW.md):請求、搜尋各階段延遲、MCP 工具呼叫、
+  索引工作與模型端點呼叫,任何標籤都不含資料夾或使用者名稱。
 - **本機 GPU、CPU 或雲端。** 行程內模型可跑在 AMD ROCm、NVIDIA CUDA 或 CPU 上,也可以讓所有模型都走
   OpenAI 相容 API,完全不需要 torch。
 
@@ -147,6 +149,7 @@ token。Docker 映像檔與 compose 檔預計在 1.5 推出。
 | [主控台](docs/console.zh-TW.md) | 登入、兩種權限層級、每個頁面、升級或更換 embedding 模型後重新索引 |
 | [API 參考](docs/api.zh-TW.md) | MCP、REST、主控台與健康檢查端點 |
 | [PostgreSQL 維運](docs/operations-postgres.md) | 連線數預算與資料庫維護(英文) |
+| [監控指標](docs/metrics.zh-TW.md) | Prometheus `/metrics`:量測項目、保護方式、抓取設定與查詢範例 |
 | [開發](docs/development.zh-TW.md) | 架構、檢查、CI 與發布 |
 | [檢索評測](evals/README.md) | 黃金測試集、評測工具與 baseline(英文) |
 

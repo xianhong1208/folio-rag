@@ -233,6 +233,14 @@ def create_app(config: BaseModel, transport: str) -> FastAPI:
         api_logger.error(f"Failed to load health router: {e}")
         record_load_failure("router:health", e)
 
+    # Prometheus metrics (docs/metrics.md): metrics.enabled, optional bearer token.
+    try:
+        from src.api.router.metrics import include_metrics
+        include_metrics(fastapi_app, config)
+    except Exception as e:
+        api_logger.error(f"Failed to load metrics router: {e}")
+        record_load_failure("router:metrics", e)
+
     # Serves root-form / legacy well-known endpoints for MCP clients that probe them
     # (FastMCP only publishes the path-specific /.well-known/oauth-protected-resource/mcp).
     if getattr(fastapi_app.state, "auth_settings", None) is not None:
@@ -316,7 +324,10 @@ def create_app(config: BaseModel, transport: str) -> FastAPI:
     # /mcp auth is unified on FastMCP's RemoteAuthProvider (see build_auth_provider).
     # The legacy SelectiveAuthMiddleware was removed: it re-buffered the request body and
     # interfered with FastMCP's streamable-HTTP bearer auth, rejecting otherwise-valid tokens.
-    final_app = ASGIErrorBoundary(RequestIdMiddleware(app=cors_wrapped))
+    # HttpMetricsMiddleware counts every request by route template (it reads the route
+    # the router matched from the shared scope) and sees a raised error as a 500.
+    from src.middleware.http_metrics import HttpMetricsMiddleware
+    final_app = ASGIErrorBoundary(RequestIdMiddleware(app=HttpMetricsMiddleware(cors_wrapped)))
 
     auth_enabled = getattr(getattr(config, "auth", None), "enabled", False)
     if auth_enabled:

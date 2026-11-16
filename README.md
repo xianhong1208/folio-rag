@@ -58,6 +58,8 @@ an OpenAI-compatible API).
   console scores your own folders on Recall@k, MRR and nDCG@k.
 - **A console** at `/admin`: folders and files, a Search Playground with the per-signal trace, index
   jobs, query analytics and knowledge gaps, evaluation, live settings, health and an audit log.
+- **Prometheus metrics** at [`/metrics`](docs/metrics.md): requests, per-stage search latency, MCP
+  tool calls, index jobs and model endpoint calls, with no folder or user names in any label.
 - **Local GPU, CPU or cloud.** AMD ROCm, NVIDIA CUDA or CPU for in-process models, or every model
   behind an OpenAI-compatible API with no torch at all.
 
@@ -157,6 +159,7 @@ planned for 1.5.
 | [Console](docs/console.md) | signing in, the two permission tiers, each page, re-indexing after an upgrade or an embedding model change |
 | [API reference](docs/api.md) | MCP, REST, console and health endpoints |
 | [PostgreSQL operations](docs/operations-postgres.md) | connection budget and database upkeep |
+| [Metrics](docs/metrics.md) | Prometheus `/metrics`: what is measured, protecting it, scrape config and example queries |
 | [Development](docs/development.md) | architecture, checks, CI and releasing |
 | [Retrieval evaluation](evals/README.md) | the golden set, the harness and the baselines |
 

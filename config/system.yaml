@@ -1,4 +1,4 @@
-# Server, logging and the app's name.
+# Server, logging, the app's name and the /metrics endpoint.
 server:
   host: "0.0.0.0"
   port: 5039
@@ -15,3 +15,10 @@ app:
   name: "Folio"
   title: "Folio MCP Server"
   description: "Folio — hierarchical chunking + auto-merging retrieval for LLM agents"
+
+# Prometheus metrics at GET /metrics (docs/metrics.md). With METRICS_TOKEN set in .env,
+# scrapes need "Authorization: Bearer <token>"; without it only this host may scrape
+# (a direct loopback connection), everyone else gets 403.
+metrics:
+  enabled: true
+  token: "${METRICS_TOKEN:-}"
