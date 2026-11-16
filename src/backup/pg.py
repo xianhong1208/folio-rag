@@ -9,10 +9,10 @@ owner may change.
 
 Client tools newer than the server are normal (``apt install postgresql-client`` gives
 the newest major). ``pg_dump`` copes with an older server, but ``pg_restore`` opens every
-restore with a fixed list of ``SET``\ s for its own version, and ``SET transaction_timeout``
+restore with a fixed list of ``SET`` statements for its own version, and ``SET transaction_timeout``
 (new in 17) is an error on a 15 or 16 server. So when ``pg_restore`` is newer than the
 target server, the restore goes through SQL instead: ``pg_restore --file=-`` piped into
-``psql --single-transaction -v ON_ERROR_STOP=1``, dropping only those opening ``SET``\ s
+``psql --single-transaction -v ON_ERROR_STOP=1``, dropping only those opening ``SET`` statements
 that name a setting the target server does not have. A ``pg_dump`` older than the server
 is refused up front: it cannot dump a newer server.
 """
@@ -283,7 +283,7 @@ def restore(db_url: str, dump_file: Path, list_file: Path, *, bin_dir: Optional[
             ) -> List[str]:
     """Restore ``dump_file`` into the (empty) database in one transaction.
 
-    Returns the TOC lines that were skipped (and, on the SQL route, the opening ``SET``\ s
+    Returns the TOC lines that were skipped (and, on the SQL route, the opening ``SET`` statements
     that were dropped). Raises PgToolError when the restore fails; it runs in a single
     transaction, so nothing is left half-restored. ``server`` is ``server_info(db_url)``,
     read here when not given.
