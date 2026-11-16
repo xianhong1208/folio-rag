@@ -18,6 +18,7 @@ from src.log import get_api_logger
 # Rerank on what the chunk is retrieved by: prefix + breadcrumb + original text.
 from src.domain.rag.chunk_identity import node_retrieval_text
 from src.utils.http_retry import RetryPolicy, arequest_with_retry, request_with_retry
+from src.utils.metered_http import metered_async_client, metered_client
 
 if TYPE_CHECKING:
     from llama_index.core.schema import NodeWithScore
@@ -274,7 +275,7 @@ class Reranker:
         all-zero scores (which the threshold would filter into an empty result).
         """
         if self._async_client is None:
-            self._async_client = httpx.AsyncClient(timeout=self._timeout)
+            self._async_client = metered_async_client("rerank", timeout=self._timeout)
 
         response = await arequest_with_retry(
             self._async_client, "POST", self._api.url, policy=self._retry,
@@ -293,7 +294,7 @@ class Reranker:
         propagate so rerank()'s except Exception uniformly falls back to the raw
         retrieval order (scores preserved), which is the correct degradation.
         """
-        with httpx.Client(timeout=self._timeout) as client:
+        with metered_client("rerank", timeout=self._timeout) as client:
             response = request_with_retry(
                 client, "POST", self._api.url, policy=self._retry,
                 json=self._payload(query, texts), headers=self._headers(),

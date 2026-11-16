@@ -31,6 +31,7 @@ from src.domain.rag.hybrid_search import (HybridSearcher, SearchOutcome, SearchS
                                           record_stage)
 from src.domain.rag.merge_plan import (MERGE_DISABLED, MergeGroup, arrange, merge_candidates,
                                        merging_enabled, plan_merges)
+from src import metrics
 from src.log import get_api_logger
 
 logger = get_api_logger()
@@ -267,9 +268,11 @@ class _Prefetched:
 
 
 def _timing(outcome, stage: str, started: float) -> None:
+    elapsed = time.perf_counter() - started
+    metrics.observe_stage(stage, elapsed)
     timings = getattr(outcome, "timings", None)
     if isinstance(timings, dict):
-        timings[stage] = round((time.perf_counter() - started) * 1000, 1)
+        timings[stage] = round(elapsed * 1000, 1)
 
 
 def _provenance(node) -> dict:

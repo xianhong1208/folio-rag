@@ -7,12 +7,12 @@
 
 | 檔案 | 內容 |
 |---|---|
-| `config/database.yaml` | `database`:連線、連線池、資料保留天數 |
+| `config/database.yaml` | `database`:連線、連線池、資料保留天數、備份 |
 | `config/auth.yaml` | `auth`:MCP Gate 的 issuer 與 audience、scope、主控台登入、revocation feed |
 | `config/models.yaml` | `rag.profile`,以及各模型跑在哪:`rag.embedding`、`rag.llm`、`rag.contextual_llm`、`rag.rerank`、`rag.asr`、`rag.docling`、`rag.parsing` |
 | `config/mcp.yaml` | `app.tool_prefix`、`auth.dynamic_tools`(每個資料夾一個工具)、`modules.enabled` |
 | `config/retrieval.yaml` | `rag.indexing`、`rag.chunking`、`rag.contextual_retrieval`、`rag.vector_store`、`rag.retrieval`(含 `segmenter`) |
-| `config/system.yaml` | `server`、`logging`、`app.name` / `title` / `description` |
+| `config/system.yaml` | `server`、`logging`、`app.name` / `title` / `description`、`metrics`([`/metrics`](metrics.zh-TW.md)) |
 
 每個檔案都照合併後設定的結構寫:`models.yaml` 以 `rag:` 開頭,`mcp.yaml` 裡是 `app: {tool_prefix: …}`。
 `rag:` 這類區段可以出現在好幾個檔案,但**同一個設定只能寫在一個檔案**:同一個設定出現在兩個檔案,啟動會失敗,錯誤訊息會指出
@@ -39,6 +39,7 @@
 | `VISION_BASE_URL`、`VISION_API_KEY` | `rag.parsing.vision.*`(在 `models.yaml` 中預設註解掉) | 空 |
 | `DOCLING_DEVICE` | `rag.docling.device` | `cuda` |
 | `CKIP_DEVICE` | `rag.retrieval.ckip_device` | `cpu` |
+| `METRICS_TOKEN` | `metrics.token`:`GET /metrics` 需要的 bearer token([監控指標](metrics.zh-TW.md)) | 空白(只限本機) |
 
 你最可能會動到的設定:
 
@@ -47,6 +48,7 @@
 | `DATABASE_URL` | `postgresql://…/folio` | PostgreSQL DSN。需 **pgvector** 擴充。用**同步** `postgresql://`（psycopg2),不要 `+asyncpg`。 |
 | `server.port` | `5039` | HTTP + MCP 綁定 port。MCP 端點是 `/mcp`。 |
 | `FOLIO_STORAGE_ROOT` | 專案根目錄 | 放 `storage/`（上傳檔案與主控台 session 金鑰）的目錄。 |
+| `database.backup.{dir,enabled,interval_hours,keep,pg_bin_dir}` | `backups`、`false`、`24`、`7`、PATH | `main.py backup` 寫出封存檔的位置,以及伺服器自己的備份排程(預設關閉)與保留份數,見[備份與還原](backup.zh-TW.md)。 |
 | `FOLIO_INDEXING_CONCURRENCY`、`FOLIO_PER_FILE_TIMEOUT_SECONDS`、`FOLIO_JOB_TIMEOUT_SECONDS` | 取自 `rag.indexing` | 索引上限的執行期覆寫。改名前的 `RAG_*` 舊名仍可用,但會記一筆 deprecation 警告。 |
 | `auth.enabled` / `MCP_GATE_URL` / `FOLIO_AUDIENCE` | `true` / MCP Gate 位址 / 本伺服器 `/mcp` URL | 對 MCP Gate 做 OAuth 2.1 驗證(`auth.issuer`、`auth.audience`)。 |
 | `auth.console.session_hours` | `8` | 主控台 session 最長時數(token 到期時也會一併結束)。 |

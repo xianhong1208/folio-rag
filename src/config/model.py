@@ -49,6 +49,21 @@ class RetentionConfig(BaseModel):
     interval_hours: float = Field(24, gt=0, le=24 * 7)
 
 
+class BackupConfig(BaseModel):
+    """Backups made by ``main.py backup`` and by the server's backup schedule.
+
+    ``dir`` is where archives are written (relative = next to config/ and storage/).
+    ``enabled`` turns the server's own schedule on: one archive every
+    ``interval_hours``, keeping the newest ``keep`` scheduled archives. ``pg_bin_dir`` is
+    where ``pg_dump`` / ``pg_restore`` live when they are not on PATH (empty = PATH).
+    """
+    dir: str = "backups"
+    enabled: bool = False
+    interval_hours: float = Field(24, ge=1, le=24 * 31)
+    keep: int = Field(7, ge=1, le=1000)
+    pg_bin_dir: OptStr = None
+
+
 class DatabaseConfig(BaseModel):
     """Database configuration."""
     url: str = Field(repr=False)  # usually embeds the password
@@ -70,6 +85,7 @@ class DatabaseConfig(BaseModel):
     # Max PGVectorStore objects kept in the LRU cache (least recently used evicted).
     vector_store_cache_size: int = Field(64, ge=1, le=10000)
     retention: RetentionConfig = Field(default_factory=RetentionConfig)
+    backup: BackupConfig = Field(default_factory=BackupConfig)
 
 
 class DynamicToolsConfig(BaseModel):
@@ -159,6 +175,17 @@ class LoggingConfig(BaseModel):
     file: Optional[str]
     max_size: str
     backup_count: int
+
+
+class MetricsConfig(BaseModel):
+    """``GET /metrics`` in the Prometheus text format (docs/metrics.md).
+
+    On by default. ``token`` (``METRICS_TOKEN`` in .env) makes the endpoint require
+    ``Authorization: Bearer <token>`` from every client; without one only a direct
+    loopback client (same host, no proxy forwarding headers) may scrape.
+    """
+    enabled: bool = True
+    token: OptStr = Field(None, repr=False)
 
 
 # Folio defaults for the app fields whose pre-rename defaults are upgraded on load.
@@ -589,16 +616,19 @@ class ConfigModel(BaseModel):
     logging: LoggingConfig
     app: AppConfig
     modules: ModulesConfig
+    metrics: MetricsConfig = Field(default_factory=MetricsConfig)
     rag: Optional[RAGConfig] = None
 
 
 __all__ = [
     "ServerConfig",
+    "BackupConfig",
     "DatabaseConfig",
     "DynamicToolsConfig",
     "ConsoleAuthConfig",
     "AuthConfig",
     "LoggingConfig",
+    "MetricsConfig",
     "AppConfig",
     "RouterConfig",
     "McpToolsConfig",

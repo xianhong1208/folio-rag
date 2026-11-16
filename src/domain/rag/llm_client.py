@@ -8,6 +8,8 @@ One factory instead of a per-call-site switch, so every role gets the same rules
 * ``openai-compatible`` / ``vllm`` / ``ollama`` require ``base_url`` and accept a missing
   key (self-hosted servers usually ignore it).
 * ``azure`` uses the Azure client (``base_url`` is the resource endpoint).
+* ``metrics_role`` (``llm``, ``contextual_llm``, ``vision``) counts and times every request
+  in ``/metrics`` (src/utils/metered_http.py); None for probes.
 * ``timeout`` and ``max_retries`` come from the role config. The OpenAI SDK retries
   429 / 408 / 409 / 5xx and connection errors with exponential backoff and honours
   ``Retry-After``, so no second retry layer is stacked on top.
@@ -34,7 +36,14 @@ def _timeout_and_retries(cfg) -> dict:
             "max_retries": DEFAULT_MAX_RETRIES if retries is None else int(retries)}
 
 
-def create_openai_client(cfg: Any):
+def _http_client(metrics_role: Optional[str]) -> dict:
+    if not metrics_role:
+        return {}
+    from src.utils.metered_http import metered_client
+    return {"http_client": metered_client(metrics_role, openai=True)}
+
+
+def create_openai_client(cfg: Any, metrics_role: Optional[str] = None):
     """Build a sync OpenAI (or AzureOpenAI) client for an LLM / vision role config."""
     from openai import OpenAI
 
@@ -56,18 +65,21 @@ def create_openai_client(cfg: Any):
             api_version=getattr(cfg, "api_version", None) or "2024-12-01-preview",
             azure_endpoint=endpoint,
             **_timeout_and_retries(cfg),
+            **_http_client(metrics_role),
         )
 
     if provider == "openai":
         api_key = api_key or os.environ.get("OPENAI_API_KEY")
         if not api_key:
             raise ValueError("OpenAI api_key is required (set api_key: \"${OPENAI_API_KEY}\")")
-        return OpenAI(api_key=api_key, base_url=base_url, **_timeout_and_retries(cfg))
+        return OpenAI(api_key=api_key, base_url=base_url, **_timeout_and_retries(cfg),
+                      **_http_client(metrics_role))
 
     if provider in ("openai-compatible", "vllm", "ollama"):
         if not base_url:
             raise ValueError(f"{provider} requires base_url (e.g., http://localhost:8000/v1)")
-        return OpenAI(api_key=api_key or "not-needed", base_url=base_url, **_timeout_and_retries(cfg))
+        return OpenAI(api_key=api_key or "not-needed", base_url=base_url, **_timeout_and_retries(cfg),
+                      **_http_client(metrics_role))
 
     raise ValueError(
         f"Unsupported LLM provider: '{provider}'. Supported: {', '.join(SUPPORTED_PROVIDERS)}"

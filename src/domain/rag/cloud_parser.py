@@ -337,7 +337,8 @@ class CloudDocumentParser:
     def _default_client(self):
         from src.domain.rag.llm_client import create_openai_client
         # Retries are done per page here (with the failure policy), not inside the SDK.
-        return create_openai_client(self.vision.model_copy(update={"max_retries": 0}))
+        return create_openai_client(self.vision.model_copy(update={"max_retries": 0}),
+                                    metrics_role="vision")
 
     # -- one page ------------------------------------------------------------
     def _user_text(self, page_no: int, total: int, path: List[str], prev_tail: Optional[str]) -> str:

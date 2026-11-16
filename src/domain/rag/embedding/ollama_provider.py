@@ -5,6 +5,7 @@ from llama_index.embeddings.openai_like import OpenAILikeEmbedding
 from .base import IEmbeddingProvider
 from src.log import get_api_logger
 from typing import Optional
+from src.utils.metered_http import openai_sdk_clients
 logger = get_api_logger()
 
 
@@ -53,6 +54,7 @@ class OllamaEmbeddingProvider(IEmbeddingProvider):
                 api_key=api_key,
                 api_base=base_url,
                 **(tuning or {}),  # timeout / max_retries / dimensions
+                **openai_sdk_clients("embedding"),  # counted in /metrics
             )
             logger.info(
                 f"Ollama embedding provider initialized: {model_name} at {base_url} (dim={dimension})"
