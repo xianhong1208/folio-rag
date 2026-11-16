@@ -177,4 +177,5 @@ English; the console is English only by decision. Run the checks in
 
 ## Licence
 
-[MIT](LICENSE)
+[MIT](LICENSE). PDF pages are rendered with PDFium (`pypdfium2`, Apache-2.0 / BSD-3-Clause), not
+the AGPL-licensed PyMuPDF.

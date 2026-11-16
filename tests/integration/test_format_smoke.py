@@ -181,15 +181,12 @@ def test_chunk_records_carry_headings_md(samples, converter):
 
 def test_chunk_records_carry_page_no_pdf(samples, converter):
     """PDF through the real chunker -> the record's page_no is not None (prov chain)."""
-    import fitz
     from docling.chunking import HierarchicalChunker
     from src.domain.rag.docling_loader import _refine_chunks_for_token_budget
+    from tests.pdf_fixtures import make_pdf
 
     pdf_path = samples / "t.pdf"
-    with fitz.open() as pdf:
-        page = pdf.new_page()
-        page.insert_text((72, 72), "SENTINEL provenance text for citations")
-        pdf.save(str(pdf_path))
+    make_pdf(pdf_path, ["SENTINEL provenance text for citations"])
 
     doc = converter.convert(str(pdf_path)).document
     chunks = list(HierarchicalChunker().chunk(doc))

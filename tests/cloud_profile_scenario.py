@@ -117,15 +117,13 @@ def main(workdir: str, mode: str) -> dict:
         # ---- index-time work
         if mode == "full":
             import docx
-            import fitz
             from PIL import Image
+            from tests.pdf_fixtures import make_pdf
             d = docx.Document()
             d.add_heading("Travel Policy", 1)
             d.add_paragraph("Trips must be approved by a manager before booking.")
             d.save("policy.docx")
-            pdf = fitz.open()
-            pdf.new_page().insert_text((72, 72), "scanned")
-            pdf.save("scan.pdf")
+            make_pdf("scan.pdf", ["scanned"])
             Image.new("RGB", (64, 64), "white").save("photo.png")
             files = [("policy.docx", "policy.docx"), ("scan.pdf", "scan.pdf"), ("photo.png", "photo.png")]
             if shutil.which("ffmpeg"):
