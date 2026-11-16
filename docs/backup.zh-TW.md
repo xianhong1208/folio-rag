@@ -146,3 +146,34 @@ embedding 模型的判斷:在設定頁面存過的設定會跟著資料庫回來
 在舊機器備份、複製封存檔、準備新機器(相同或更新的 Folio、相同的 embedding 模型與維度、一個裝好
 pgvector 的空資料庫),執行 `main.py restore`,再啟動 Folio。只要新機器驗證的是同一個 MCP Gate
 issuer、同一個 audience 的 token,原本的 token 都能繼續用。
+
+## 匯出與匯入單一資料夾
+
+`main.py export-folder` 把一個資料夾寫成封存檔;`main.py import-folder` 把它加到同一個或另一個
+Folio,成為一個**新的**資料夾。可以用來把資料夾搬到另一台、給別人一份,或單獨留一份副本。
+
+```bash
+uv run python main.py export-folder --id 3                     # 用 id(GET /api/admin/folders 會列出)
+uv run python main.py export-folder --owner <sub> --name docs  # 或用擁有者與名稱
+uv run python main.py import-folder backups/folio-folder-docs-<time>.tar --owner <sub>
+uv run python main.py import-folder <archive> --owner <sub> --check       # 只驗證
+```
+
+`folio-folder-<名稱>-<UTC 時間>.tar`(沒有 `--output` / `--dir` 時寫到 `database.backup.dir`)
+裡有 `folder.json`(資料夾、檔案紀錄與索引紀錄)、`chunks.jsonl`(每個 chunk 的文字、metadata、
+向量與關鍵字向量,原樣保存)、`files/` 下的檔案,以及記錄 Folio 版本、embedding 模型與維度、
+斷詞器、數量與每個項目 SHA-256 的 manifest。封存檔裡不會寫是誰的資料夾。匯出在單一交易中讀取,
+資料夾有索引工作在跑時會拒絕。
+
+`--owner` 是新資料夾的擁有者:那個人的 MCP Gate 使用者 id(token 的 `sub`),開放模式
+(`auth.enabled: false`)則是 `console`。資料夾沿用原本的名稱,該擁有者已經有同名資料夾時改成
+`<名稱>-2`、`-3`……;也可以用 `--name` 指定。每個檔案都會拿到新的 id,所以副本可以和原本的資料夾
+並存;chunk 會改指向新的檔案與資料夾,不需要重新 embedding,搜尋結果和原本一樣。
+
+向量只能配同一個 embedding 模型與維度使用。這個 Folio 用的是別的模型時,匯入會被拒絕;這時用
+`--files-only` 只匯入資料夾與檔案、不含索引,再到 console 按 **Index** 用這個 Folio 的模型建立索引。
+斷詞器不同只會警告:請對該資料夾執行 **Rebuild FTS**。比這個 Folio 新的版本匯出的封存檔會被拒絕。
+
+匯入會先檢查每個項目,資料庫部分在單一交易裡寫入,並在交易提交前把檔案放到定位,所以匯入失敗
+不會留下資料夾。Folio 執行中也可以匯入;執行中的伺服器快取的資料夾清單會在三分鐘內出現新資料夾。
+只匯入你信任的封存檔。

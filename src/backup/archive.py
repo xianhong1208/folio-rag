@@ -1,4 +1,9 @@
-"""The backup archive: an uncompressed tar with a manifest, a database dump and storage/.
+"""Folio's archives: an uncompressed tar with a manifest that lists every entry's SHA-256.
+
+Two layouts share this code: the whole-instance backup (:data:`BACKUP`) and the
+one-folder export (:data:`FOLDER_EXPORT`, see :mod:`src.backup.folder`).
+
+The backup archive: a manifest, a database dump and storage/.
 
 Layout (``folio-backup-<UTC time>.tar``)::
 
@@ -21,9 +26,10 @@ import json
 import os
 import re
 import tarfile
+from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path, PurePosixPath
-from typing import Any, BinaryIO, Dict, Optional
+from typing import Any, BinaryIO, Dict, FrozenSet, Optional, Tuple
 
 FORMAT = "folio-backup"
 FORMAT_VERSION = 1
@@ -45,6 +51,26 @@ class ArchiveError(Exception):
     """The archive is unreadable, incomplete or has been tampered with."""
 
 
+@dataclass(frozen=True)
+class Layout:
+    """What one kind of archive may hold.
+
+    ``names``: the fixed entries besides manifest.json; ``prefixes``: directories whose
+    files are allowed (``<prefix><relative path>``); ``required``: entries the manifest
+    must list; ``what``: how messages name it.
+    """
+    format: str
+    format_version: int
+    names: FrozenSet[str]
+    prefixes: Tuple[str, ...]
+    required: FrozenSet[str]
+    what: str
+
+
+BACKUP = Layout(FORMAT, FORMAT_VERSION, frozenset({DUMP_NAME}), (STORAGE_PREFIX,),
+                frozenset({DUMP_NAME}), "Folio backup")
+
+
 def archive_name(now: Optional[datetime] = None) -> str:
     now = now or datetime.now(timezone.utc)
     return f"folio-backup-{now.astimezone(timezone.utc).strftime(_TIME_FORMAT)}.tar"
@@ -58,10 +84,11 @@ def archive_time(name: str) -> Optional[datetime]:
     return datetime.strptime(m.group(1), _TIME_FORMAT).replace(tzinfo=timezone.utc)
 
 
-def safe_member_path(name: Any) -> str:
+def safe_member_path(name: Any, layout: Layout = BACKUP) -> str:
     """Validate an entry name and return it; raise ArchiveError for anything unsafe.
 
-    Allowed: ``manifest.json``, ``database.dump`` and ``storage/<relative path>``.
+    Allowed: ``manifest.json``, the layout's fixed names (``database.dump``) and files
+    under its prefixes (``storage/<relative path>``).
     """
     if not isinstance(name, str) or not name or "\x00" in name or "\\" in name:
         raise ArchiveError(f"unsafe entry name in archive: {name!r}")
@@ -70,9 +97,9 @@ def safe_member_path(name: Any) -> str:
     parts = name.split("/")
     if any(p in ("", ".", "..") for p in parts):
         raise ArchiveError(f"path traversal or empty path segment in archive: {name!r}")
-    if name in (MANIFEST_NAME, DUMP_NAME):
+    if name == MANIFEST_NAME or name in layout.names:
         return name
-    if name.startswith(STORAGE_PREFIX) and len(parts) >= 2:
+    if any(name.startswith(prefix) for prefix in layout.prefixes) and len(parts) >= 2:
         return name
     raise ArchiveError(f"unexpected entry in archive: {name!r}")
 
@@ -111,8 +138,9 @@ class _FixedSize:
 class ArchiveWriter:
     """Write an archive to ``<path>.partial`` and rename it into place on commit."""
 
-    def __init__(self, path: Path):
+    def __init__(self, path: Path, layout: Layout = BACKUP):
         self.path = Path(path)
+        self.layout = layout
         self.partial = self.path.with_name(self.path.name + ".partial")
         self.checksums: Dict[str, str] = {}
         self.sizes: Dict[str, int] = {}
@@ -128,7 +156,7 @@ class ArchiveWriter:
         The size is taken once (fstat) and exactly that many bytes are written (see
         _FixedSize), so a file that changes while it is read never breaks the tar.
         """
-        arcname = safe_member_path(arcname)
+        arcname = safe_member_path(arcname, self.layout)
         st = os.fstat(f.fileno())
         info = tarfile.TarInfo(arcname)
         info.size = st.st_size
@@ -165,24 +193,24 @@ class ArchiveWriter:
             pass
 
 
-def validate_manifest(m: Any) -> Dict[str, Any]:
+def validate_manifest(m: Any, layout: Layout = BACKUP) -> Dict[str, Any]:
     """Check the manifest's shape; raise ArchiveError when it is not one Folio can read."""
     if not isinstance(m, dict):
         raise ArchiveError("manifest.json is not an object")
-    if m.get("format") != FORMAT:
-        raise ArchiveError("manifest.json is not a Folio backup manifest")
+    if m.get("format") != layout.format:
+        raise ArchiveError(f"manifest.json is not a {layout.what} manifest")
     version = m.get("format_version")
     if not isinstance(version, int) or isinstance(version, bool) or version < 1:
         raise ArchiveError("manifest.json has no valid format_version")
-    if version > FORMAT_VERSION:
+    if version > layout.format_version:
         raise ArchiveError(
-            f"this archive uses backup format {version}; this Folio reads format "
-            f"{FORMAT_VERSION} or older. Restore it with a newer Folio.")
+            f"this archive uses {layout.what} format {version}; this Folio reads format "
+            f"{layout.format_version} or older. Use a newer Folio.")
     checksums = m.get("checksums")
-    if not isinstance(checksums, dict) or DUMP_NAME not in checksums:
-        raise ArchiveError("manifest.json lists no checksums for the database dump")
+    if not isinstance(checksums, dict) or not layout.required <= set(checksums):
+        raise ArchiveError(f"manifest.json lists no checksums for {', '.join(sorted(layout.required))}")
     for name, digest in checksums.items():
-        safe_member_path(name)
+        safe_member_path(name, layout)
         if name == MANIFEST_NAME:
             raise ArchiveError("manifest.json cannot list its own checksum")
         if not isinstance(digest, str) or not _HEX64.match(digest):
@@ -196,7 +224,7 @@ def validate_manifest(m: Any) -> Dict[str, Any]:
     return m
 
 
-def read_manifest(path: Path) -> Dict[str, Any]:
+def read_manifest(path: Path, layout: Layout = BACKUP) -> Dict[str, Any]:
     """Read and validate an archive's manifest (raises ArchiveError)."""
     try:
         with tarfile.open(path, "r:") as tar:
@@ -207,7 +235,7 @@ def read_manifest(path: Path) -> Dict[str, Any]:
                         raise ArchiveError("the archive holds manifest.json twice")
                     found = member
             if found is None:
-                raise ArchiveError("the archive has no manifest.json (not a Folio backup)")
+                raise ArchiveError(f"the archive has no manifest.json (not a {layout.what})")
             if not found.isfile() or found.size > MAX_MANIFEST_BYTES:
                 raise ArchiveError("manifest.json is not a regular file of a sane size")
             f = tar.extractfile(found)
@@ -218,11 +246,11 @@ def read_manifest(path: Path) -> Dict[str, Any]:
         m = json.loads(raw.decode("utf-8"))
     except (UnicodeDecodeError, json.JSONDecodeError) as e:
         raise ArchiveError(f"manifest.json is not valid JSON: {e}") from e
-    return validate_manifest(m)
+    return validate_manifest(m, layout)
 
 
 def verify_and_extract(path: Path, manifest: Dict[str, Any],
-                       dest: Optional[Path] = None) -> Dict[str, int]:
+                       dest: Optional[Path] = None, layout: Layout = BACKUP) -> Dict[str, int]:
     """Check every entry against the manifest; with ``dest``, also extract them there.
 
     Returns {"entries": n, "bytes": total}. Raises ArchiveError on an unsafe or unlisted
@@ -235,7 +263,7 @@ def verify_and_extract(path: Path, manifest: Dict[str, Any],
     try:
         with tarfile.open(path, "r:") as tar:
             for member in tar:
-                name = safe_member_path(member.name)
+                name = safe_member_path(member.name, layout)
                 if not member.isfile():
                     raise ArchiveError(f"{name!r} is not a regular file (links and devices are refused)")
                 if name in seen:
