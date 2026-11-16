@@ -173,12 +173,12 @@ def _override(overrides: Dict[str, Any], key: str) -> Tuple[bool, Any]:
     return True, value
 
 
-def _snapshot_info(conn, rag_conf) -> Dict[str, Any]:
-    """What the snapshot holds: revision, folders, files, indexed models, settings."""
-    info: Dict[str, Any] = {"alembic_revision": None}
-    if _has_table(conn, "alembic_version"):
-        info["alembic_revision"] = conn.execute(text("SELECT version_num FROM alembic_version")).scalar()
+def effective_settings(conn, rag_conf) -> Dict[str, Any]:
+    """The embedding model / dimension and the segmenter this database's Folio runs with.
 
+    Values saved on the Settings page (RuntimeSettings) win over ``rag_conf``.
+    """
+    info: Dict[str, Any] = {}
     overrides: Dict[str, Any] = {}
     if _has_table(conn, "RuntimeSettings"):
         for key, value in conn.execute(text(
@@ -196,6 +196,16 @@ def _snapshot_info(conn, rag_conf) -> Dict[str, Any]:
     has_s, seg = _override(overrides, "rag.retrieval.segmenter")
     info["segmenter"] = {"name": seg if has_s else _configured_segmenter(rag_conf),
                          "from_runtime_settings": has_s}
+    return info
+
+
+def _snapshot_info(conn, rag_conf) -> Dict[str, Any]:
+    """What the snapshot holds: revision, folders, files, indexed models, settings."""
+    info: Dict[str, Any] = {"alembic_revision": None}
+    if _has_table(conn, "alembic_version"):
+        info["alembic_revision"] = conn.execute(text("SELECT version_num FROM alembic_version")).scalar()
+
+    info.update(effective_settings(conn, rag_conf))
 
     folders = conn.execute(text(
         'SELECT id, name, vector_table_uuid FROM "Folders" ORDER BY id')).mappings().all()

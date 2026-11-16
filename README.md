@@ -60,7 +60,8 @@ an OpenAI-compatible API).
   jobs, query analytics and knowledge gaps, evaluation, live settings, health and an audit log.
 - **Backup and restore in one command.** `main.py backup` archives the database, every folder's
   vectors and the stored files together, with a manifest that `main.py restore` checks; the server
-  can also back up on a schedule.
+  can also back up on a schedule. `main.py export-folder` / `import-folder` move one folder, with its
+  files and index, to another Folio or keep a copy of it.
 - **Local GPU, CPU or cloud.** AMD ROCm, NVIDIA CUDA or CPU for in-process models, or every model
   behind an OpenAI-compatible API with no torch at all.
 
@@ -159,7 +160,7 @@ planned for 1.5.
 | [Authentication](docs/auth.md) | folder ownership by MCP Gate user, and the token revocation feed |
 | [Console](docs/console.md) | signing in, the two permission tiers, each page, re-indexing after an upgrade or an embedding model change |
 | [API reference](docs/api.md) | MCP, REST, console and health endpoints |
-| [Backup and restore](docs/backup.md) | `main.py backup` / `restore`, scheduled backups, moving to another machine |
+| [Backup and restore](docs/backup.md) | `main.py backup` / `restore`, scheduled backups, moving to another machine, exporting and importing one folder |
 | [PostgreSQL operations](docs/operations-postgres.md) | connection budget and database upkeep |
 | [Development](docs/development.md) | architecture, checks, CI and releasing |
 | [Retrieval evaluation](evals/README.md) | the golden set, the harness and the baselines |

@@ -6,6 +6,7 @@
 the database (every table, including each folder's pgvector table `data_<id>_<uuid>` with its
 vectors and indexes), the files under `storage/`, and a manifest. `main.py restore` puts an archive
 back into an empty database and `storage/`. The server can also make a backup on a schedule.
+For a single folder, see [Exporting and importing one folder](#exporting-and-importing-one-folder).
 
 ## What an archive holds
 
@@ -165,3 +166,39 @@ Back up on the old machine, copy the archive, set up the new one (same or newer 
 embedding model and dimension, an empty database with pgvector), run `main.py restore`, then start
 Folio. Tokens keep working if the new instance verifies tokens from the same MCP Gate issuer with
 the same audience.
+
+## Exporting and importing one folder
+
+`main.py export-folder` writes one folder to an archive; `main.py import-folder` adds it to the same
+or another Folio as a **new** folder. Use it to move a folder to another instance, to give someone
+a copy, or to keep a copy of one folder.
+
+```bash
+uv run python main.py export-folder --id 3                     # by id (GET /api/admin/folders lists them)
+uv run python main.py export-folder --owner <sub> --name docs  # or by owner and name
+uv run python main.py import-folder backups/folio-folder-docs-<time>.tar --owner <sub>
+uv run python main.py import-folder <archive> --owner <sub> --check       # verify only
+```
+
+`folio-folder-<name>-<UTC time>.tar` (written to `database.backup.dir` unless `--output` / `--dir`
+say otherwise) holds `folder.json` (the folder, its file records and index records), `chunks.jsonl`
+(every chunk with its text, metadata, vector and keyword vector, as stored), the stored files under
+`files/`, and a manifest with the Folio version, the embedding model and dimension, the segmenter,
+the counts and a SHA-256 for every entry. It does not say whose folder it was. The export reads
+everything in one transaction and is refused while an index job runs on the folder.
+
+`--owner` is who gets the new folder: the person's MCP Gate user id (the token's `sub`), or `console`
+in open mode (`auth.enabled: false`). The folder keeps its name, or becomes `<name>-2`, `-3`, … when
+that owner already has one; `--name` picks another. Every file gets a new id, so a copy can sit next
+to the original, and the chunks are pointed at the new files and folder: nothing is embedded again,
+and searches return what they returned before.
+
+The vectors are only usable with the same embedding model and dimension. When this Folio uses
+another one, the import is refused; `--files-only` then imports the folder and its files without
+the index, and **Index** in the console builds it with this Folio's model. A different segmenter
+only warns: run **Rebuild FTS** on the folder. An export from a newer Folio is refused.
+
+The import checks every entry first, writes the database part in one transaction and moves the files
+into place before it commits, so a failed import leaves no folder behind. It can run while Folio is
+running; the folder list a running server keeps in its cache shows the new folder within three
+minutes. Only import archives you trust.
