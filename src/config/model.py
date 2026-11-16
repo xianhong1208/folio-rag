@@ -149,6 +149,10 @@ class AuthConfig(BaseModel):
 
     # -- MCP Gate (OAuth 2.1 authorization server) --
     issuer: Optional[str] = None  # MCP Gate base URL (RS256 JWKS issuer); required when enabled
+    # Where this server reaches MCP Gate when that differs from `issuer` (Docker Compose: the
+    # service name, http://mcp-gate:4568). The JWKS, the revocation feed and the discovery
+    # documents are fetched from it; tokens must still carry iss == issuer. Empty = issuer.
+    internal_url: OptStr = None
     audience: Optional[str] = None  # Resource id; empty -> defaults to <server base>/mcp
     required_scopes: List[str] = []  # Scopes every token must carry (empty = none required)
 
@@ -337,7 +341,8 @@ class RAGRetrievalConfig(BaseModel):
     # bigram (no dependency). Unset = the profile's default: ckip, or bigram under
     # profile: cloud (which loads no in-process model; explicit ckip is rejected there).
     # Changing it flags existing folders for Rebuild FTS (no re-embedding needed).
-    segmenter: Optional[Literal["ckip", "jieba", "bigram"]] = None
+    # An empty value (FOLIO_SEGMENTER unset in config/retrieval.yaml) means unset.
+    segmenter: Annotated[Optional[Literal["ckip", "jieba", "bigram"]], BeforeValidator(_blank_to_none)] = None
     # Device for the CKIP segmenter: cpu | cuda | cuda:N | auto (cuda:0 when available).
     ckip_device: str = "cpu"
     # "rrf" = Reciprocal Rank Fusion (BM25 affects ordering); "concat" = llama_index native

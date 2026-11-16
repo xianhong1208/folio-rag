@@ -36,6 +36,7 @@ lists every variable. An empty value means "not set".
 | `DATABASE_PORT` | `database.port` (used only when the URL has no port) | empty |
 | `MCP_GATE_URL` | `auth.issuer` | `http://localhost:4568` |
 | `FOLIO_AUDIENCE` | `auth.audience` | `http://127.0.0.1:5039/mcp` |
+| `MCP_GATE_INTERNAL_URL` | `auth.internal_url`: where Folio fetches MCP Gate's keys and revocation feed when the issuer address does not work from here (Docker Compose: `http://mcp-gate:4568`); tokens are still checked against `auth.issuer` | empty (= the issuer) |
 | `FOLIO_REVOCATION_ENABLED`, `FOLIO_REVOCATION_CLIENT_ID`, `FOLIO_REVOCATION_CLIENT_SECRET` | `auth.revocation.*` | `false`, empty, empty |
 | `EMBEDDING_BASE_URL`, `EMBEDDING_API_KEY` | `rag.embedding.*` | `http://localhost:7075/v1`, `not-needed` |
 | `LLM_BASE_URL`, `LLM_API_KEY` | `rag.llm.*` | `http://localhost:5052/v1`, `not-needed` |
@@ -45,7 +46,13 @@ lists every variable. An empty value means "not set".
 | `VISION_BASE_URL`, `VISION_API_KEY` | `rag.parsing.vision.*` (commented out in `models.yaml`) | empty |
 | `DOCLING_DEVICE` | `rag.docling.device` | `cuda` |
 | `CKIP_DEVICE` | `rag.retrieval.ckip_device` | `cpu` |
+| `FOLIO_SEGMENTER` | `rag.retrieval.segmenter` | empty (= the profile's default; the Docker image sets `jieba`) |
 | `METRICS_TOKEN` | `metrics.token`: bearer token `GET /metrics` requires ([Metrics](metrics.md)) | empty (this host only) |
+
+Read by `main.py` itself: `FOLIO_CONFIG_DIR` (the default of `--config-dir`, `config`), `FOLIO_LOG_DIR`
+(where the log files go, `logs`; set but empty = the console only, as in the Docker image) and
+`NO_COLOR` (no colour codes on the console). The Docker image's own `models.yaml` reads a few more
+(model names, the reranker API): see [Deploying Folio](deploy.md).
 
 The settings you are likely to touch:
 

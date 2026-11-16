@@ -225,16 +225,32 @@ class OpenAICompatibleAsrProvider(AsrProvider):
         return AsrResult(text="\n".join(t for t in texts if t), chunks=records)
 
 
+class DisabledAsrProvider(AsrProvider):
+    """``rag.asr.enabled: false``: nothing is transcribed, so an incomplete endpoint (no base_url,
+    as the cloud profile's default speech-to-text section has) is not an error."""
+
+    def available(self) -> bool:
+        return False
+
+    def transcribe(self, *, audio_path: str, file_name: str, max_tokens: Optional[int] = None,
+                   tokenizer: Optional[str] = None, progress_cb: Optional[Callable] = None) -> AsrResult:
+        raise RuntimeError(f"Speech-to-text is disabled (rag.asr.enabled=false): '{file_name}' was not transcribed")
+
+
 def create_asr_provider(asr_cfg: "Optional[AsrConfig]") -> AsrProvider:
     """Factory: build a provider based on config `rag.asr.provider`.
 
     - None (config unset) → default docling-whisper (backward compatible)
+    - enabled: false → DisabledAsrProvider, whatever the rest says (the cloud profile's default
+      section has no base_url; validating it made every indexing and query fail)
     - openai-compatible missing base_url → immediate ValueError (fails at startup rather than
       surfacing only on the first transcription)
     - unknown provider → ValueError listing the available values
     """
     if asr_cfg is None:
         return DoclingWhisperAsrProvider()
+    if not getattr(asr_cfg, "enabled", True):
+        return DisabledAsrProvider()
 
     provider = asr_cfg.provider
     if provider == "docling-whisper":

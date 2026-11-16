@@ -28,7 +28,7 @@ class TestOwnerKey:
             owner_key_from_bearer("opaque")
 
 
-_SETTINGS = SimpleNamespace(audience="http://rs/mcp", issuer="http://as",
+_SETTINGS = SimpleNamespace(audience="http://rs/mcp", issuer="http://as", fetch_base="http://as",
                             required_scopes=["rag:read"])
 
 

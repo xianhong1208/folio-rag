@@ -94,7 +94,8 @@ def setup_logger(
         "error": lambda record: record["level"].name in ["ERROR", "CRITICAL"],
     }
 
-    for module in LOG_MODULES:
+    # An empty log_base_dir (FOLIO_LOG_DIR="") writes no files: the console only.
+    for module in (LOG_MODULES if log_base_dir else ()):
         module_log_dir = os.path.join(log_base_dir, module)
         os.makedirs(module_log_dir, exist_ok=True)
 
@@ -111,13 +112,14 @@ def setup_logger(
                 )
             )
 
-    # Console: colored output to stderr, kept separate from uvicorn's stdout.
+    # Console: colored output to stderr, kept separate from uvicorn's stdout. NO_COLOR
+    # (https://no-color.org, set in the Docker image) turns the colour codes off.
     logger.add(
         sys.stderr,
         level=console_level,
         format=_format_console_log,
         filter=lambda record: record["extra"].get("module") in LOG_MODULES,
-        colorize=True
+        colorize=not os.environ.get("NO_COLOR"),
     )
 
 

@@ -3,6 +3,9 @@
 auth:
   enabled: true
   issuer: "${MCP_GATE_URL:-http://localhost:4568}"        # MCP Gate base URL (JWKS issuer)
+  # Where this server reaches MCP Gate, if not at the issuer URL (Docker Compose: the service
+  # name). Keys and the revocation feed are fetched from it; tokens must still say iss = issuer.
+  internal_url: "${MCP_GATE_INTERNAL_URL:-}"
   # Must equal the token's aud: how MCP Gate registered this server.
   audience: "${FOLIO_AUDIENCE:-http://127.0.0.1:5039/mcp}"
   required_scopes: []                        # scopes every token must carry (empty = none)

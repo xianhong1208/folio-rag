@@ -47,6 +47,16 @@ class TestFactory:
         assert p._segment_seconds == 120 and p._language == "zh"
         assert p.url == "http://stt:8000/v1/audio/transcriptions"
 
+    def test_disabled_needs_no_endpoint(self):
+        """enabled: false (the cloud profile's default section, without base_url) builds a provider
+        that transcribes nothing, instead of failing every indexing job and query."""
+        from src.config.model import RAGConfig  # noqa: F401  (the profile default is built there)
+        from src.domain.rag.asr_provider import DisabledAsrProvider
+        p = create_asr_provider(AsrConfig(enabled=False, provider="openai-compatible"))
+        assert isinstance(p, DisabledAsrProvider) and p.available() is False
+        with pytest.raises(RuntimeError, match="disabled"):
+            p.transcribe(audio_path="a.wav", file_name="a.wav")
+
     def test_fireredasr_routes_to_provider(self):
         from src.domain.rag.fireredasr_provider import FireRedAsrProvider
         p = create_asr_provider(AsrConfig(provider="fireredasr"))

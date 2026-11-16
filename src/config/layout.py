@@ -63,6 +63,7 @@ ENV_SETTINGS: Dict[str, EnvSetting] = {
     "database.port": EnvSetting("DATABASE_PORT", "", True),
     "auth.issuer": EnvSetting("MCP_GATE_URL", "http://localhost:4568"),
     "auth.audience": EnvSetting("FOLIO_AUDIENCE", "http://127.0.0.1:5039/mcp"),
+    "auth.internal_url": EnvSetting("MCP_GATE_INTERNAL_URL", "", True),
     "auth.revocation.enabled": EnvSetting("FOLIO_REVOCATION_ENABLED", "false"),
     "auth.revocation.client_id": EnvSetting("FOLIO_REVOCATION_CLIENT_ID", ""),
     "auth.revocation.client_secret": EnvSetting("FOLIO_REVOCATION_CLIENT_SECRET", ""),
@@ -80,6 +81,7 @@ ENV_SETTINGS: Dict[str, EnvSetting] = {
     "rag.parsing.vision.api_key": EnvSetting("VISION_API_KEY", "", True),
     "rag.docling.device": EnvSetting("DOCLING_DEVICE", "cuda"),
     "rag.retrieval.ckip_device": EnvSetting("CKIP_DEVICE", "cpu"),
+    "rag.retrieval.segmenter": EnvSetting("FOLIO_SEGMENTER", "", True),
     "metrics.token": EnvSetting("METRICS_TOKEN", "", True),
 }
 

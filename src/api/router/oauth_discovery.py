@@ -88,8 +88,9 @@ def protected_resource_metadata(settings: AuthSettings) -> dict:
 
 
 async def fetch_issuer_document(settings: AuthSettings, well_known: str) -> dict:
-    """Fetch `<issuer>/.well-known/<name>` from MCP Gate with a short cache."""
-    url = f"{settings.issuer}/.well-known/{well_known}"
+    """Fetch `<issuer>/.well-known/<name>` from MCP Gate with a short cache (at
+    ``auth.internal_url`` when set; the document itself names the public issuer)."""
+    url = f"{settings.fetch_base}/.well-known/{well_known}"
     cached = _cache.get(url)
     if cached and cached[0] > time.monotonic():
         return cached[1]
