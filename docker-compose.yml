@@ -1,0 +1,96 @@
+# Folio with Docker Compose: Folio (the cloud-profile image) + PostgreSQL with pgvector, and optionally MCP Gate.
+#
+#   cp .env.example .env        # set POSTGRES_PASSWORD, the model endpoints and MCP Gate (the "Docker" section)
+#   docker compose pull
+#   docker compose up -d
+#
+# With MCP Gate in the same stack (the authorization server that issues Folio's tokens): also set
+# COMPOSE_PROFILES=mcp-gate and MCP_GATE_INTERNAL_URL=http://mcp-gate:4568 in .env, then `docker compose up -d`.
+#
+# Then open http://localhost:5039 (the console). docs/deploy.md has the details: model endpoints, matching the issuer
+# and the audience with MCP Gate, a reverse proxy with HTTPS, backups and upgrades.
+#
+# Secrets never go in this file: .env (git-ignored) holds them.
+
+services:
+  folio:
+    # The official image; FOLIO_VERSION pins a release (for example 1.5.0), FOLIO_IMAGE names another image.
+    image: ${FOLIO_IMAGE:-tonyhuang1101/folio:${FOLIO_VERSION:-latest}}
+    # To build this checkout instead: uncomment `build`, set FOLIO_IMAGE=folio:local, `docker compose up -d --build`.
+    # build: .
+    restart: unless-stopped
+    init: true
+    ports:
+      # Publish on 127.0.0.1 only ("127.0.0.1:5039:5039") when a reverse proxy on this host is the only client.
+      - "${FOLIO_PORT:-5039}:5039"
+    # .env reaches the container as is: model endpoints and keys, and METRICS_TOKEN to scrape /metrics from the host
+    # or another container (docs/deploy.md, "Metrics")
+    env_file:
+      - path: .env
+        required: false
+    environment:
+      # The database service below. Set POSTGRES_PASSWORD in .env; a DATABASE_URL in .env is not used here.
+      DATABASE_URL: postgresql://folio:${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env}@db:5432/folio
+      # MCP Gate's issuer, exactly as it is written into every token (`iss`), and this server's audience, exactly as
+      # MCP Gate registered it (`aud`). Both are compared as exact strings: scheme, host, port and path.
+      MCP_GATE_URL: ${MCP_GATE_URL:-http://localhost:${MCP_GATE_PORT:-4568}}
+      FOLIO_AUDIENCE: ${FOLIO_AUDIENCE:-http://localhost:${FOLIO_PORT:-5039}/mcp}
+      # Where Folio itself reaches MCP Gate when the issuer is not reachable from inside this container
+      # (with the mcp-gate profile: http://mcp-gate:4568). Empty = MCP_GATE_URL.
+      MCP_GATE_INTERNAL_URL: ${MCP_GATE_INTERNAL_URL:-}
+    extra_hosts:
+      # Model servers on this machine (vLLM, Forgeyard) are reached as host.docker.internal
+      - "host.docker.internal:host-gateway"
+    volumes:
+      # Uploaded files. Back it up together with the database: one without the other is not a backup.
+      - folio-storage:/app/storage
+      # Your own config directory instead of the built-in files (docs/deploy.md, "Configuration"):
+      # - ./config:/app/config:ro
+    depends_on:
+      db:
+        condition: service_healthy
+
+  db:
+    image: pgvector/pgvector:pg16
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: folio
+      POSTGRES_DB: folio
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env}
+    volumes:
+      - folio-db:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U folio -d folio"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+
+  # Optional: MCP Gate, the OAuth 2.1 authorization server whose tokens Folio verifies. `--profile mcp-gate` or
+  # COMPOSE_PROFILES=mcp-gate. Its own settings are listed here on purpose: it does not read Folio's .env.
+  mcp-gate:
+    profiles: ["mcp-gate"]
+    image: ${MCP_GATE_IMAGE:-tonyhuang1101/mcp-gate:1.4.0}
+    restart: unless-stopped
+    init: true
+    ports:
+      - "${MCP_GATE_PORT:-4568}:4568"
+    environment:
+      # The same address as MCP_GATE_URL above: MCP Gate writes it into every token as `iss`.
+      OAUTH_ISSUER: ${MCP_GATE_URL:-http://localhost:${MCP_GATE_PORT:-4568}}
+      # Folio fetches the signing keys at http://mcp-gate:4568 (MCP_GATE_INTERNAL_URL), a host name MCP Gate
+      # refuses unless it is allowed.
+      ALLOWED_HOSTS: mcp-gate
+      # The owner account created on first start. Left empty, the log prints a setup token instead
+      # (`docker compose logs mcp-gate`); open the issuer address and paste it.
+      ADMIN_EMAIL: ${MCP_GATE_ADMIN_EMAIL:-}
+      ADMIN_PASSWORD: ${MCP_GATE_ADMIN_PASSWORD:-}
+    volumes:
+      # Two volumes on purpose: the database alone cannot decrypt the signing keys it stores. Back up both.
+      - mcp-gate-data:/app/data
+      - mcp-gate-secrets:/app/secrets
+
+volumes:
+  folio-storage:
+  folio-db:
+  mcp-gate-data:
+  mcp-gate-secrets:

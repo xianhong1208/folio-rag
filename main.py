@@ -108,14 +108,42 @@ def run_migration_command(action: str, message: str = None, revision: str = "-1"
         return False
 
 
+def default_config_dir() -> str:
+    """--config-dir's default: FOLIO_CONFIG_DIR, else ``config`` (relative to the working
+    directory, which it must stay inside)."""
+    return (_os.environ.get("FOLIO_CONFIG_DIR") or "").strip() or "config"
+
+
+def log_directory() -> str:
+    """Where the log files go: FOLIO_LOG_DIR, else ``logs``. Set but empty = no files, the
+    console only (the Docker image's default: ``docker logs`` has everything)."""
+    value = _os.environ.get("FOLIO_LOG_DIR")
+    return "logs" if value is None else value.strip()
+
+
+def storage_matches_database(db_url: str, database_was_new: bool, logger) -> bool:
+    """Run the startup storage check (src/storage/consistency.py); False = refuse to start."""
+    from src.storage.consistency import StorageMismatchError, check_storage_matches_database
+    from src.storage.file_storage import FileStorage
+    try:
+        check_storage_matches_database(db_url, database_was_new=database_was_new,
+                                       storage_root=FileStorage.STORAGE_ROOT,
+                                       resolve=FileStorage.resolve_path, logger=logger)
+    except StorageMismatchError as e:
+        logger.error(f"❌ {e}")
+        return False
+    return True
+
+
 def main():
     parser = argparse.ArgumentParser(
         description="Folio MCP Server",
         formatter_class=argparse.ArgumentDefaultsHelpFormatter,
     )
-    parser.add_argument("--config-dir", type=str, default="config",
+    parser.add_argument("--config-dir", type=str, default=default_config_dir(),
                         help="Directory holding the six config files (database.yaml, auth.yaml, "
-                             "models.yaml, mcp.yaml, retrieval.yaml, system.yaml)")
+                             "models.yaml, mcp.yaml, retrieval.yaml, system.yaml); "
+                             "env FOLIO_CONFIG_DIR sets the default")
     parser.add_argument("--host", type=str)
     parser.add_argument("--port", type=int)
     parser.add_argument("--log-level", type=str,
@@ -147,7 +175,7 @@ def main():
         log_level = str(getattr(log_conf, "level", "INFO")).upper()
         if args.log_level:
             log_level = args.log_level.upper()
-        log_dir = getattr(log_conf, "log_dir", "logs")
+        log_dir = log_directory()
 
         # logging.max_size / backup_count: rotate at that size, keep that many old files.
         setup_logger(console_level=log_level, file_level="DEBUG", log_base_dir=log_dir,
@@ -193,6 +221,15 @@ def main():
             except Exception as e:
                 logger.warning(f"⚠️ Vector dim startup check failed (continuing): {e}")
 
+            # The database and the storage directory (uploads) must belong together: refuse to
+            # start when either one is missing, instead of looking healthy without the data.
+            # A new database next to old uploads is refused before migrating it, so that a restart
+            # does not find a migrated, empty database and carry on.
+            from src.storage.consistency import database_is_new
+            database_was_new = database_is_new(db_url)
+            if database_was_new and not storage_matches_database(db_url, True, logger):
+                sys.exit(1)
+
             # Auto-migrate to align the schema with head.
             logger.info("🔄 Running auto migration...")
             success = run_migration_command("auto")
@@ -201,6 +238,10 @@ def main():
             else:
                 logger.error("❌ Auto migration failed — aborting startup")
                 logger.error("   Use --no-migrate to skip migration if this is intentional")
+                sys.exit(1)
+
+            # An existing database whose uploads are missing from the storage directory
+            if not database_was_new and not storage_matches_database(db_url, False, logger):
                 sys.exit(1)
         else:
             logger.warning("⚠️ Skipping bootstrap + migration (--no-migrate)")

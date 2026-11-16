@@ -43,7 +43,8 @@ def initialize_auth_system(config):
         f"jwks: {settings.jwks_uri})"
     )
 
-    _init_revocation(config, settings.issuer)
+    # The feed is polled at the address this server reaches MCP Gate by (auth.internal_url)
+    _init_revocation(config, settings.fetch_base)
 
     verifier = McpGateTokenVerifier(settings)
     set_token_verifier(verifier)

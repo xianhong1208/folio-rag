@@ -30,6 +30,7 @@
 | `DATABASE_PORT` | `database.port`(只在 URL 沒寫 port 時使用) | 空 |
 | `MCP_GATE_URL` | `auth.issuer` | `http://localhost:4568` |
 | `FOLIO_AUDIENCE` | `auth.audience` | `http://127.0.0.1:5039/mcp` |
+| `MCP_GATE_INTERNAL_URL` | `auth.internal_url`：issuer 位址在這裡連不到時，Folio 改從這個位址抓 MCP Gate 的金鑰與撤銷清單（Docker Compose：`http://mcp-gate:4568`）；權杖仍拿 `auth.issuer` 比對 | 空(= issuer) |
 | `FOLIO_REVOCATION_ENABLED`、`FOLIO_REVOCATION_CLIENT_ID`、`FOLIO_REVOCATION_CLIENT_SECRET` | `auth.revocation.*` | `false`、空、空 |
 | `EMBEDDING_BASE_URL`、`EMBEDDING_API_KEY` | `rag.embedding.*` | `http://localhost:7075/v1`、`not-needed` |
 | `LLM_BASE_URL`、`LLM_API_KEY` | `rag.llm.*` | `http://localhost:5052/v1`、`not-needed` |
@@ -39,6 +40,11 @@
 | `VISION_BASE_URL`、`VISION_API_KEY` | `rag.parsing.vision.*`(在 `models.yaml` 中預設註解掉) | 空 |
 | `DOCLING_DEVICE` | `rag.docling.device` | `cuda` |
 | `CKIP_DEVICE` | `rag.retrieval.ckip_device` | `cpu` |
+| `FOLIO_SEGMENTER` | `rag.retrieval.segmenter` | 空(= profile 的預設；Docker 映像檔設為 `jieba`) |
+
+`main.py` 自己讀的變數：`FOLIO_CONFIG_DIR`（`--config-dir` 的預設值，`config`）、`FOLIO_LOG_DIR`（日誌檔
+目錄，`logs`；設了但為空 = 只輸出到主控台，Docker 映像檔就是這樣）與 `NO_COLOR`（主控台輸出不帶顏色碼）。
+Docker 映像檔自己的 `models.yaml` 還會讀幾個變數（模型名稱、重排序 API），見[部署 Folio](deploy.zh-TW.md)。
 
 你最可能會動到的設定:
 

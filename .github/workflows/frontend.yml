@@ -1,6 +1,7 @@
 name: Console CI
 
-# Build and test the admin console SPA on every change under frontend/.
+# Build and test the admin console SPA on every change under frontend/, and check that the committed
+# build (static/console, which the server and the Docker image serve as is) equals a fresh one.
 on:
   push:
     paths: ['frontend/**', '.github/workflows/frontend.yml']
@@ -22,3 +23,11 @@ jobs:
       - run: npm ci
       - run: npm test
       - run: npm run build
+      - name: The committed static/console equals this build
+        working-directory: .
+        run: |
+          if [ -n "$(git status --porcelain -- static/console)" ]; then
+            git status --short -- static/console
+            echo "::error::static/console is out of date: run 'npm run build' in frontend/ and commit static/console"
+            exit 1
+          fi

@@ -63,7 +63,19 @@ an OpenAI-compatible API).
 
 ## Installation
 
-You need:
+**With Docker** (the lightweight cloud-profile image, `tonyhuang1101/folio`, plus PostgreSQL with
+pgvector; every model is an OpenAI-compatible endpoint such as Forgeyard or vLLM):
+
+```bash
+git clone https://github.com/xianhong1208/folio-rag.git && cd folio-rag
+cp .env.example .env      # POSTGRES_PASSWORD, the model endpoints and names, MCP Gate: the "Docker" section
+docker compose up -d      # add COMPOSE_PROFILES=mcp-gate to .env to run MCP Gate in the same stack
+```
+
+The [deploy guide](docs/deploy.md) covers the image, the model endpoints, matching the issuer and
+the audience with MCP Gate, a reverse proxy with HTTPS, backups and upgrades.
+
+**From source** (needed for the in-process models of the `local` and `hybrid` profiles). You need:
 
 - Python 3.12 and [uv](https://docs.astral.sh/uv/);
 - **PostgreSQL** with the **[pgvector](https://github.com/pgvector/pgvector)** extension;
@@ -142,16 +154,20 @@ its source file and heading.
 | `hybrid` | The same, for a mix of self-hosted and cloud endpoints; API keys written literally in the config files are warned about | as `local` |
 | `cloud` | Every role is an HTTP endpoint and keys must be `${ENV}` references; no torch and no model downloads | `uv sync` |
 
-Set it with `rag.profile`; see [Cloud profile](docs/configuration.md#cloud-profile). Keep the
-console and the unauthenticated `/v1` media endpoints on a trusted network or behind a reverse
-proxy with HTTPS; `/mcp` and `/api/rag/*` need a valid token. A Docker image and compose file are
-planned for 1.5.
+Set it with `rag.profile`; see [Cloud profile](docs/configuration.md#cloud-profile). The **Docker
+image** is the `cloud` profile, with a compose file for PostgreSQL + pgvector and an optional MCP
+Gate; the in-process models need an install from source. Keep the console and the unauthenticated
+`/v1` media endpoints on a trusted network or behind a reverse proxy with HTTPS; `/mcp` and
+`/api/rag/*` need a valid token. The [deploy guide](docs/deploy.md) has nginx and Caddy examples,
+backups and upgrades. The database and `storage/` (the uploads) belong together: startup refuses
+when one of them is missing, [rather than starting without the data](docs/deploy.md#when-one-piece-is-missing).
 
 ## Documentation
 
 | | |
 |---|---|
 | [How it works](docs/how-it-works.md) | the pipeline, retrieval in detail (BM25, segmentation, reranking, latency, relevance cutoff), measuring retrieval, every feature in detail |
+| [Deploying Folio](docs/deploy.md) | the Docker image and compose file, model endpoints (Forgeyard, vLLM), the issuer and audience with MCP Gate, a reverse proxy with HTTPS, backups, upgrades |
 | [Configuration](docs/configuration.md) | the six config files and `.env`, every setting you are likely to touch, the cloud profile, upgrading from 1.4 |
 | [Authentication](docs/auth.md) | folder ownership by MCP Gate user, and the token revocation feed |
 | [Console](docs/console.md) | signing in, the two permission tiers, each page, re-indexing after an upgrade or an embedding model change |

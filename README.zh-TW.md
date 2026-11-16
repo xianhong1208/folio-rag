@@ -56,7 +56,19 @@ Folio 是一套開源、給 Model Context Protocol 用的檢索增強生成(RAG)
 
 ## 安裝
 
-需要:
+**用 Docker**（輕量的雲端 profile 映像檔 `tonyhuang1101/folio`，加上 PostgreSQL 與 pgvector；所有模型都是
+OpenAI 相容端點，例如 Forgeyard 或 vLLM）：
+
+```bash
+git clone https://github.com/xianhong1208/folio-rag.git && cd folio-rag
+cp .env.example .env      # POSTGRES_PASSWORD、模型端點與名稱、MCP Gate：見「Docker」一節
+docker compose up -d      # 在 .env 加上 COMPOSE_PROFILES=mcp-gate，就會在同一個 stack 跑 MCP Gate
+```
+
+[部署指南](docs/deploy.zh-TW.md)說明映像檔、模型端點、issuer 與 audience 如何和 MCP Gate 對齊、反向代理與
+HTTPS、備份和升級。
+
+**從原始碼安裝**（`local` 與 `hybrid` profile 的程序內模型需要這種方式）。你需要：
 
 - Python 3.12 與 [uv](https://docs.astral.sh/uv/);
 - 裝了 **[pgvector](https://github.com/pgvector/pgvector)** 擴充的 **PostgreSQL**;
@@ -135,13 +147,16 @@ Folio_product-docs  mode="search"  query="how do I rotate the signing key?"
 
 用 `rag.profile` 設定,詳見[雲端 profile](docs/configuration.zh-TW.md#雲端-profile)。主控台與不需驗證的
 `/v1` 媒體端點請只開放在可信任的網路,或放在有 HTTPS 的反向代理後面;`/mcp` 與 `/api/rag/*` 需要有效的
-token。Docker 映像檔與 compose 檔預計在 1.5 推出。
+token。**Docker 映像檔**就是 `cloud` profile,附 PostgreSQL + pgvector 與選用 MCP Gate 的 compose 檔;
+程序內模型則需要從原始碼安裝。[部署指南](docs/deploy.zh-TW.md)有 nginx 與 Caddy 範例、備份和升級。資料庫和 `storage/`(上傳檔)是同一套資料:
+少了其中一個,啟動時會[拒絕啟動](docs/deploy.zh-TW.md#少了其中一部分時),不會在沒有資料的情況下跑起來。
 
 ## 文件
 
 | | |
 |---|---|
 | [運作原理](docs/how-it-works.zh-TW.md) | 檢索管線、檢索細節(BM25、斷詞、重排、延遲、相關度門檻)、量測檢索品質、每項功能的細節 |
+| [部署 Folio](docs/deploy.zh-TW.md) | Docker 映像檔與 compose 檔、模型端點(Forgeyard、vLLM)、issuer 與 audience 如何和 MCP Gate 對齊、反向代理與 HTTPS、備份、升級 |
 | [設定](docs/configuration.zh-TW.md) | 六個設定檔與 `.env`、常用的每個設定、雲端 profile、從 1.4 升級 |
 | [驗證](docs/auth.zh-TW.md) | 依 MCP Gate 使用者的資料夾歸屬,以及 token 撤銷 feed |
 | [主控台](docs/console.zh-TW.md) | 登入、兩種權限層級、每個頁面、升級或更換 embedding 模型後重新索引 |
