@@ -1,6 +1,6 @@
 """Cloud PDF / image parsing (src/domain/rag/cloud_parser.py).
 
-PDFs and images are generated locally (PyMuPDF / Pillow); the vision model is a scripted
+PDFs and images are generated locally (tests/pdf_fixtures.py / Pillow); the vision model is a scripted
 stub client, plus one round trip through the real OpenAI client against the in-process
 fake server. No network, no keys.
 """
@@ -26,6 +26,7 @@ from src.domain.rag.cloud_parser import (
 )
 from src.domain.rag.usage_budget import BudgetExceeded, DailyBudget
 from tests.fake_model_server import FakeModelServer
+from tests.pdf_fixtures import encrypt_pdf, make_pdf
 
 
 class _WordTok:
@@ -41,14 +42,7 @@ def _word_tokenizer(monkeypatch):
 
 
 def _pdf(path, pages):
-    import fitz
-    doc = fitz.open()
-    for text in pages:
-        page = doc.new_page()
-        page.insert_text((72, 72), text)
-    doc.save(str(path))
-    doc.close()
-    return str(path)
+    return make_pdf(path, pages)
 
 
 class _Status(Exception):
@@ -310,11 +304,7 @@ class TestParse:
         bad.write_bytes(b"not a pdf")
         with pytest.raises(CloudParseError, match="cannot open"):
             _parser(_StubVision({})).parse_to_markdown(str(bad), "x.pdf")
-        import fitz
-        doc = fitz.open()
-        doc.new_page().insert_text((72, 72), "secret")
-        enc = tmp_path / "e.pdf"
-        doc.save(str(enc), encryption=fitz.PDF_ENCRYPT_AES_256, user_pw="u", owner_pw="o")
+        enc = encrypt_pdf(_pdf(tmp_path / "plain.pdf", ["secret"]), tmp_path / "e.pdf")
         with pytest.raises(CloudParseError, match="password-protected"):
             _parser(_StubVision({})).parse_to_markdown(str(enc), "e.pdf")
 

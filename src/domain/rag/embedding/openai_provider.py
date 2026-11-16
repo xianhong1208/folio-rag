@@ -6,6 +6,7 @@ from typing import Optional
 from llama_index.embeddings.openai_like import OpenAILikeEmbedding
 from .base import IEmbeddingProvider
 from src.log import get_api_logger
+from src.utils.metered_http import openai_sdk_clients
 
 logger = get_api_logger()
 
@@ -74,6 +75,7 @@ class OpenAIEmbeddingProvider(IEmbeddingProvider):
                 api_key=api_key or "missing",
                 api_base=self._base_url,
                 **(tuning or {}),  # timeout / max_retries / dimensions
+                **openai_sdk_clients("embedding"),  # counted in /metrics
             )
             logger.info(
                 f"OpenAI-compatible embedding provider initialized: {model_name} at "

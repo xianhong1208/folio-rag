@@ -136,6 +136,12 @@ def storage_matches_database(db_url: str, database_was_new: bool, logger) -> boo
 
 
 def main():
+    # `main.py backup ...` / `main.py restore ...` (docs/backup.md): the same entry point
+    # as the server, so a packaged binary has them too.
+    if len(sys.argv) > 1 and sys.argv[1] in ("backup", "restore", "export-folder", "import-folder"):
+        from src.backup.cli import main as backup_main
+        sys.exit(backup_main(sys.argv[1:]))
+
     parser = argparse.ArgumentParser(
         description="Folio MCP Server",
         formatter_class=argparse.ArgumentDefaultsHelpFormatter,

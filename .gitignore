@@ -75,6 +75,8 @@ config/_itest/
 # File storage (keep directory structure but ignore actual files)
 storage/*
 !storage/.gitkeep
+# Backup archives (main.py backup, database.backup.dir)
+backups/
 data/*
 
 # docling

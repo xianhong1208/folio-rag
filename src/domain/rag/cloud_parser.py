@@ -46,6 +46,7 @@ from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional, Tuple
 
 from src.log import get_api_logger
+from src.domain.rag import pdf_pages
 from src.domain.rag.usage_budget import BUDGET
 from src.utils.http_retry import RETRYABLE_STATUS, RetryPolicy, compute_delay
 
@@ -121,11 +122,10 @@ class _PageSource:
     def __init__(self, path: str, kind: str, dpi: int):
         self.path, self.kind, self.dpi = path, kind, dpi
         if kind == "pdf":
-            import fitz  # PyMuPDF: page rendering only, no model
-            with fitz.open(path, filetype="pdf") as d:
-                if d.needs_pass:
-                    raise CloudParseError("PDF is password-protected — decrypt it before uploading")
-                self.count = len(d)
+            try:
+                self.count = pdf_pages.page_count(path)  # PDFium: page rendering only, no model
+            except pdf_pages.PdfPasswordError:
+                raise CloudParseError("PDF is password-protected — decrypt it before uploading") from None
         else:
             from PIL import Image
             with Image.open(path) as im:
@@ -133,9 +133,7 @@ class _PageSource:
 
     def render(self, page_no: int) -> bytes:
         if self.kind == "pdf":
-            import fitz
-            with fitz.open(self.path, filetype="pdf") as d:
-                return d[page_no - 1].get_pixmap(dpi=self.dpi).tobytes("png")
+            return pdf_pages.render_png(self.path, page_no, self.dpi)
         from PIL import Image
         with Image.open(self.path) as im:
             if self.count > 1:
@@ -339,7 +337,8 @@ class CloudDocumentParser:
     def _default_client(self):
         from src.domain.rag.llm_client import create_openai_client
         # Retries are done per page here (with the failure policy), not inside the SDK.
-        return create_openai_client(self.vision.model_copy(update={"max_retries": 0}))
+        return create_openai_client(self.vision.model_copy(update={"max_retries": 0}),
+                                    metrics_role="vision")
 
     # -- one page ------------------------------------------------------------
     def _user_text(self, page_no: int, total: int, path: List[str], prev_tail: Optional[str]) -> str:

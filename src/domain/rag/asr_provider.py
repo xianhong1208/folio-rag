@@ -36,6 +36,7 @@ from src.log import get_api_logger
 from src.domain.rag.asr_base import AsrProvider, AsrResult  # noqa: F401  (re-export)
 from src.domain.rag.docling_loader import docling_convert_once
 from src.utils.http_retry import RetryPolicy, join_endpoint, request_with_retry
+from src.utils.metered_http import metered_client
 
 if TYPE_CHECKING:
     from src.config.model import AsrConfig
@@ -201,7 +202,7 @@ class OpenAICompatibleAsrProvider(AsrProvider):
             logger.info(f"[ASR] cloud transcribe: {file_name} → {self.url} ({total} segment(s))")
             done = 0
 
-            with httpx.Client(headers=headers, timeout=self._timeout) as client:
+            with metered_client("asr", headers=headers, timeout=self._timeout) as client:
                 def run(i_seg):
                     i, (path, start, end, speech) = i_seg
                     name = file_name if total == 1 else f"{Path(file_name).stem}_{i:04d}.wav"

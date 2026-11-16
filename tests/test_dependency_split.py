@@ -47,3 +47,12 @@ def test_local_extra_carries_the_model_stack():
     local = {_name(d) for d in _project()["optional-dependencies"]["local"]}
     assert {"docling", "llama-index-embeddings-huggingface", "fireredasr",
             "transformers", "ckip-transformers"} <= local
+
+
+def test_core_renders_pdfs_with_pypdfium2_not_agpl_pymupdf():
+    # Folio is MIT: PDF page counts and rendering use PDFium (Apache-2.0 / BSD-3-Clause),
+    # declared directly so the cloud profile does not rely on docling's transitive copy.
+    # PyMuPDF is AGPL-3.0 and must not come back.
+    core = {_name(d) for d in _project()["dependencies"]}
+    assert "pypdfium2" in core
+    assert not core & {"pymupdf", "fitz", "pymupdfb"}

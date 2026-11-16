@@ -270,6 +270,17 @@ def get_engine():
 _async_engine = None
 
 
+def existing_engine_pools() -> dict:
+    """{"sync": pool, "async": pool} for the shared engines already created (never
+    creates one; a scrape of /metrics must not open database connections)."""
+    pools = {}
+    if _engine is not None:
+        pools["sync"] = _engine.pool
+    if _async_engine is not None:
+        pools["async"] = _async_engine.pool
+    return pools
+
+
 def get_async_engine():
     """Return the shared SQLAlchemy async engine (asyncpg driver), created lazily.
 

@@ -6,6 +6,7 @@ from typing import Optional
 from llama_index.embeddings.azure_openai import AzureOpenAIEmbedding
 from .base import IEmbeddingProvider
 from src.log import get_api_logger
+from src.utils.metered_http import openai_sdk_clients
 
 logger = get_api_logger()
 
@@ -73,6 +74,7 @@ class AzureOpenAIEmbeddingProvider(IEmbeddingProvider):
                 azure_endpoint=azure_endpoint,
                 api_version=api_version,
                 **(tuning or {}),  # timeout / max_retries / dimensions
+                **openai_sdk_clients("embedding"),  # counted in /metrics
             )
             logger.info(
                 f"Azure OpenAI embedding provider initialized: "

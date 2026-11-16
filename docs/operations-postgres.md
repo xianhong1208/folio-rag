@@ -65,6 +65,11 @@ library does not have, so restore the step-3 copy of the data directory with the
 
 ## Backups
 
+`uv run python main.py backup` is the supported way: one archive with a consistent `pg_dump` of the
+database (every `data_*` table included), `storage/` and a manifest that `main.py restore` checks,
+plus an optional schedule in the server. See [Backup and restore](backup.md). The options below
+are for those who already back up the whole PostgreSQL cluster.
+
 - Physical: `pgBackRest` (full + incremental, WAL archiving, point-in-time
   recovery) or, at minimum, a scheduled `pg_basebackup` of the whole cluster.
   Physical backups include every per-folder vector table and their HNSW indexes.
