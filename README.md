@@ -58,6 +58,9 @@ an OpenAI-compatible API).
   console scores your own folders on Recall@k, MRR and nDCG@k.
 - **A console** at `/admin`: folders and files, a Search Playground with the per-signal trace, index
   jobs, query analytics and knowledge gaps, evaluation, live settings, health and an audit log.
+- **Backup and restore in one command.** `main.py backup` archives the database, every folder's
+  vectors and the stored files together, with a manifest that `main.py restore` checks; the server
+  can also back up on a schedule.
 - **Local GPU, CPU or cloud.** AMD ROCm, NVIDIA CUDA or CPU for in-process models, or every model
   behind an OpenAI-compatible API with no torch at all.
 
@@ -156,6 +159,7 @@ planned for 1.5.
 | [Authentication](docs/auth.md) | folder ownership by MCP Gate user, and the token revocation feed |
 | [Console](docs/console.md) | signing in, the two permission tiers, each page, re-indexing after an upgrade or an embedding model change |
 | [API reference](docs/api.md) | MCP, REST, console and health endpoints |
+| [Backup and restore](docs/backup.md) | `main.py backup` / `restore`, scheduled backups, moving to another machine |
 | [PostgreSQL operations](docs/operations-postgres.md) | connection budget and database upkeep |
 | [Development](docs/development.md) | architecture, checks, CI and releasing |
 | [Retrieval evaluation](evals/README.md) | the golden set, the harness and the baselines |

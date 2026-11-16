@@ -9,7 +9,7 @@ commit.
 
 | File | Holds |
 |---|---|
-| `config/database.yaml` | `database`: connection, pools, retention |
+| `config/database.yaml` | `database`: connection, pools, retention, backups |
 | `config/auth.yaml` | `auth`: MCP Gate issuer and audience, scopes, console sign-in, revocation feed |
 | `config/models.yaml` | `rag.profile`, and where each model runs: `rag.embedding`, `rag.llm`, `rag.contextual_llm`, `rag.rerank`, `rag.asr`, `rag.docling`, `rag.parsing` |
 | `config/mcp.yaml` | `app.tool_prefix`, `auth.dynamic_tools` (per-folder tools), `modules.enabled` |
@@ -53,6 +53,7 @@ The settings you are likely to touch:
 | `DATABASE_URL` | `postgresql://…/folio` | PostgreSQL DSN. Requires the **pgvector** extension. Use **sync** `postgresql://` (psycopg2), not `+asyncpg`. |
 | `server.port` | `5039` | HTTP + MCP bind port. The MCP endpoint is `/mcp`. |
 | `FOLIO_STORAGE_ROOT` | the project root | Directory that holds `storage/` (uploaded files and the console session secret). |
+| `database.backup.{dir,enabled,interval_hours,keep,pg_bin_dir}` | `backups`, `false`, `24`, `7`, PATH | Where `main.py backup` writes archives, and the server's own backup schedule (off by default) with how many archives it keeps — see [Backup and restore](backup.md). |
 | `FOLIO_INDEXING_CONCURRENCY`, `FOLIO_PER_FILE_TIMEOUT_SECONDS`, `FOLIO_JOB_TIMEOUT_SECONDS` | from `rag.indexing` | Runtime overrides for the indexing limits. The pre-rename `RAG_*` names still work and log a deprecation warning. |
 | `auth.enabled` / `MCP_GATE_URL` / `FOLIO_AUDIENCE` | `true` / MCP Gate URL / this server's `/mcp` URL | OAuth 2.1 verification against MCP Gate (`auth.issuer`, `auth.audience`). |
 | `auth.console.session_hours` | `8` | Longest a console session lasts (it also ends when the token expires). |

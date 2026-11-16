@@ -109,6 +109,12 @@ def run_migration_command(action: str, message: str = None, revision: str = "-1"
 
 
 def main():
+    # `main.py backup ...` / `main.py restore ...` (docs/backup.md): the same entry point
+    # as the server, so a packaged binary has them too.
+    if len(sys.argv) > 1 and sys.argv[1] in ("backup", "restore"):
+        from src.backup.cli import main as backup_main
+        sys.exit(backup_main(sys.argv[1:]))
+
     parser = argparse.ArgumentParser(
         description="Folio MCP Server",
         formatter_class=argparse.ArgumentDefaultsHelpFormatter,
