@@ -400,7 +400,7 @@ def _answer_llm():
     from src.domain.rag.context_generator import ContextGenerator
     from src.domain.rag.llm_client import model_name, role_llm
     llm_cfg = role_llm("llm")
-    client = ContextGenerator._create_sync_client(llm_cfg)
+    client = ContextGenerator._create_sync_client(llm_cfg, metrics_role="llm")
     return client, model_name(llm_cfg)
 
 

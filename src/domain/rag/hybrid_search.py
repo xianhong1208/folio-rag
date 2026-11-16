@@ -23,6 +23,7 @@ import time
 from dataclasses import dataclass, field, replace
 from typing import Any, Awaitable, Callable, Dict, List, Optional, Sequence, Tuple
 
+from src import metrics
 from src.log import get_api_logger
 
 logger = get_api_logger()
@@ -704,6 +705,7 @@ class HybridSearcher:
         """
         timings: Dict[str, float] = {}
         token = _STAGE_TIMINGS.set(timings)
+        started = time.perf_counter()
         try:
             try:
                 fused, dense, sparse, dense_raw, sparse_raw = await self._retrieve(
@@ -755,6 +757,9 @@ class HybridSearcher:
             return outcome
         finally:
             _STAGE_TIMINGS.reset(token)
+            # A snapshot: auto-merge adds its merge / expand stages to the same dict later
+            # and reports them itself (auto_merging._timing).
+            metrics.observe_search(dict(timings), time.perf_counter() - started)
 
 
 class _ScoredView:

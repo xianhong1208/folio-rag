@@ -62,6 +62,8 @@ an OpenAI-compatible API).
   vectors and the stored files together, with a manifest that `main.py restore` checks; the server
   can also back up on a schedule. `main.py export-folder` / `import-folder` move one folder, with its
   files and index, to another Folio or keep a copy of it.
+- **Prometheus metrics** at [`/metrics`](docs/metrics.md): requests, per-stage search latency, MCP
+  tool calls, index jobs and model endpoint calls, with no folder or user names in any label.
 - **Local GPU, CPU or cloud.** AMD ROCm, NVIDIA CUDA or CPU for in-process models, or every model
   behind an OpenAI-compatible API with no torch at all.
 
@@ -162,6 +164,7 @@ planned for 1.5.
 | [API reference](docs/api.md) | MCP, REST, console and health endpoints |
 | [Backup and restore](docs/backup.md) | `main.py backup` / `restore`, scheduled backups, moving to another machine, exporting and importing one folder |
 | [PostgreSQL operations](docs/operations-postgres.md) | connection budget and database upkeep |
+| [Metrics](docs/metrics.md) | Prometheus `/metrics`: what is measured, protecting it, scrape config and example queries |
 | [Development](docs/development.md) | architecture, checks, CI and releasing |
 | [Retrieval evaluation](evals/README.md) | the golden set, the harness and the baselines |
 

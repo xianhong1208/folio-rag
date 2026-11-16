@@ -31,6 +31,7 @@ from mcp.types import Annotations, TextContent
 from collections import Counter
 
 from db.filedb import FileDB
+from src import metrics
 from src.adapter.rag import get_rag_adapter
 from src.config.config_manager import Config
 from src.domain.exceptions import (
@@ -441,6 +442,9 @@ async def _query(
                 attached_bytes = sum(len(f.data) for f in resource_files if hasattr(f, "data"))
 
         elapsed_ms = (time.perf_counter() - start) * 1000
+        metrics.observe_mcp_call(
+            mode, "invalid_request" if isinstance(response, dict) and response.get("error") else "ok",
+            elapsed_ms / 1000)
 
         # Box summary for this tool call
         logger.info(_format_summary_box(
@@ -458,6 +462,7 @@ async def _query(
     except InvalidTokenError as exc:
         error_msg = f"AUTH_FAIL: {exc}"
         elapsed_ms = (time.perf_counter() - start) * 1000
+        metrics.observe_mcp_call(mode, "unauthorized", elapsed_ms / 1000)
         # Still show the box when there is no token, but mark it as an error
         logger.warning(_format_summary_box(
             mode=mode, folder_name=folder_name, token=token or "(missing)",
@@ -469,6 +474,7 @@ async def _query(
     except UnauthorizedAccessError as exc:
         error_msg = f"ACL_DENY: {exc}"
         elapsed_ms = (time.perf_counter() - start) * 1000
+        metrics.observe_mcp_call(mode, "forbidden", elapsed_ms / 1000)
         logger.warning(_format_summary_box(
             mode=mode, folder_name=folder_name, token=token or "",
             response={}, attached_files=0, attached_bytes=0,
@@ -479,6 +485,7 @@ async def _query(
     except Exception as exc:
         error_msg = f"{type(exc).__name__}: {exc}"
         elapsed_ms = (time.perf_counter() - start) * 1000
+        metrics.observe_mcp_call(mode, "error", elapsed_ms / 1000)
         logger.error(_format_summary_box(
             mode=mode, folder_name=folder_name, token=token or "",
             response={}, attached_files=0, attached_bytes=0,

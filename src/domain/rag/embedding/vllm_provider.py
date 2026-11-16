@@ -5,6 +5,7 @@ from typing import Optional
 from llama_index.embeddings.openai_like import OpenAILikeEmbedding
 from .base import IEmbeddingProvider
 from src.log import get_api_logger
+from src.utils.metered_http import openai_sdk_clients
 logger = get_api_logger()
 
 
@@ -54,6 +55,7 @@ class VLLMEmbeddingProvider(IEmbeddingProvider):
                 api_key=self._api_key,
                 api_base=self._base_url,
                 **(tuning or {}),  # timeout / max_retries / dimensions
+                **openai_sdk_clients("embedding"),  # counted in /metrics
             )
             logger.info(
                 f"vLLM embedding provider initialized: {self._model_name} at {self._base_url} (dim={self._dimension})"

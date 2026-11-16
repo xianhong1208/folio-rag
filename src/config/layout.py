@@ -27,7 +27,7 @@ FILE_SECTIONS: Dict[str, Tuple[str, ...]] = {
     "mcp.yaml": ("app.tool_prefix", "auth.dynamic_tools", "modules"),
     "retrieval.yaml": ("rag.enabled", "rag.chunking", "rag.indexing",
                        "rag.contextual_retrieval", "rag.vector_store", "rag.retrieval"),
-    "system.yaml": ("server", "logging", "app"),
+    "system.yaml": ("server", "logging", "app", "metrics"),
 }
 
 CONFIG_FILES: Tuple[str, ...] = tuple(FILE_SECTIONS)
@@ -80,6 +80,7 @@ ENV_SETTINGS: Dict[str, EnvSetting] = {
     "rag.parsing.vision.api_key": EnvSetting("VISION_API_KEY", "", True),
     "rag.docling.device": EnvSetting("DOCLING_DEVICE", "cuda"),
     "rag.retrieval.ckip_device": EnvSetting("CKIP_DEVICE", "cpu"),
+    "metrics.token": EnvSetting("METRICS_TOKEN", "", True),
 }
 
 
