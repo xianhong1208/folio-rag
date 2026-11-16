@@ -18,3 +18,11 @@ database:
     index_jobs_days: 30            # finished indexing jobs
     query_logs_days: 90            # query analytics
     settings_audit_days: 365       # settings change history
+  # Backups: `uv run python main.py backup` writes one archive (database + storage/);
+  # `main.py restore <archive>` puts it back. See docs/backup.md.
+  backup:
+    dir: "backups"                 # where archives go (relative = next to config/)
+    enabled: false                 # true = the server also makes one every interval_hours
+    interval_hours: 24
+    keep: 7                        # scheduled archives kept (the oldest are deleted)
+    pg_bin_dir: ""                 # where pg_dump / pg_restore are; empty = PATH

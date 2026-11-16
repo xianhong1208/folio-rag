@@ -117,6 +117,13 @@ def create_app(config: BaseModel, transport: str) -> FastAPI:
                 retention_task = retention_scheduler.start()
             except Exception as e:
                 api_logger.warning(f"Startup retention scheduler failed (continuing): {e}")
+            # database.backup.enabled: one archive every interval_hours (src/backup/scheduler.py).
+            backup_task = None
+            try:
+                from src.backup import scheduler as backup_scheduler
+                backup_task = backup_scheduler.start()
+            except Exception as e:
+                api_logger.warning(f"Startup backup schedule failed (continuing): {e}")
             try:
                 # MCP Gate revocation-feed poller (no-op unless auth.revocation.enabled).
                 async with revocation_lifespan():
@@ -124,6 +131,8 @@ def create_app(config: BaseModel, transport: str) -> FastAPI:
             finally:
                 if retention_task is not None:
                     retention_task.cancel()
+                if backup_task is not None:
+                    backup_task.cancel()
                 # MCP searches answer before their QueryLog row is written.
                 try:
                     from src.adapter.rag_query import flush_query_logs
