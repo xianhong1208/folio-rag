@@ -39,8 +39,9 @@ as the database itself.
   extension must exist in it: pgvector is not a trusted extension, so when the role is not a
   superuser an administrator runs `CREATE EXTENSION vector;` in the new database first. The restore
   says so when it is missing.
-- In Docker, the image needs the client tools and the backup directory should be a volume, like
-  `storage/`.
+- In Docker this is all in place: the image has the PostgreSQL 17 client tools on `PATH`, and its
+  `database.backup.dir` (`/app/backups`) is the `folio-backups` volume in `docker-compose.yml`. See
+  [Deploying with Docker](deploy.md#backups) for the `docker compose exec` / `run` commands.
 
 ## Making a backup
 
@@ -83,13 +84,15 @@ Only one backup writes into a directory at a time.
 database:
   backup:
     dir: "backups"          # relative = next to config/ and storage/
-    enabled: true           # the server makes one every interval_hours
-    interval_hours: 24
-    keep: 7                 # the newest 7 timestamped archives are kept
+    enabled: true           # the server makes one every interval_hours (FOLIO_BACKUP_ENABLED)
+    interval_hours: 24      # FOLIO_BACKUP_INTERVAL_HOURS
+    keep: 7                 # the newest 7 timestamped archives are kept (FOLIO_BACKUP_KEEP)
     pg_bin_dir: ""          # where pg_dump / pg_restore are; empty = PATH
 ```
 
-With `enabled: true` the server runs the backups itself, on its own event loop. The next one is due
+The committed `config/database.yaml` reads `enabled`, `interval_hours` and `keep` from
+`FOLIO_BACKUP_ENABLED` (default `false`), `FOLIO_BACKUP_INTERVAL_HOURS` (24) and `FOLIO_BACKUP_KEEP`
+(7), so `.env` can switch the schedule on, in Docker too. With `enabled: true` the server runs the backups itself, on its own event loop. The next one is due
 `interval_hours` after the newest archive in `dir`, whoever made it, so a restart neither skips nor
 repeats one; the first comes two minutes after start-up when `dir` is empty. While an index job
 runs it waits and tries again every 10 minutes; after 6 hours it backs up anyway and records the
@@ -141,7 +144,7 @@ What it checks, and refuses on, before it changes anything:
 | The archive comes from a newer Folio (an unknown migration revision or a higher version) | `--allow-mismatch` |
 | The vectors were made with another embedding model or dimension than this Folio uses | `--allow-mismatch` (then re-index every folder) |
 | The database already has tables | `--force`: they are dropped |
-| `storage/` already holds folders | `--force`: it is moved aside to `storage.before-restore-<time>`, never deleted |
+| `storage/` already holds folders | `--force`: what it holds is moved aside to `storage/.folio-work/before-restore-<time>/`, never deleted |
 | Another connection to the database is open | never: stop Folio first |
 
 For the embedding model, settings saved on the Settings page come back with the database and win;
@@ -153,8 +156,10 @@ nothing half-restored. When `pg_restore` is newer than the server (say version 1
 PostgreSQL 15 server), it would open with settings the server does not know, such as
 `SET transaction_timeout` (new in 17), and fail. Folio then restores through SQL instead:
 `pg_restore --file=-` piped into `psql --single-transaction -v ON_ERROR_STOP=1` (the `psql` next to
-`pg_restore`), leaving out only those opening `SET` lines for settings the server does not have. The archive is unpacked and verified next to `storage/` before the database
-is touched. The `vector` extension and the `public` schema entries of the dump are skipped (the
+`pg_restore`), leaving out only those opening `SET` lines for settings the server does not have. The archive is unpacked and verified inside `storage/`
+(`storage/.folio-work/restore-<time>`) before the database is touched. `storage/` itself is never
+renamed or replaced (in Docker it is a volume's mount point): its entries are moved aside and the
+restored ones moved in, all on one filesystem; if a move fails, the moves made so far are undone. The `vector` extension and the `public` schema entries of the dump are skipped (the
 first is created beforehand, the second belongs to the database owner), which is what lets a
 non-superuser restore.
 

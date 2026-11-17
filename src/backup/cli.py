@@ -41,7 +41,7 @@ def _parser() -> argparse.ArgumentParser:
                    help="only verify the archive and compare it with this Folio; change nothing")
     r.add_argument("--force", action="store_true",
                    help="replace a database that has tables (dropped) and a storage/ that has files "
-                        "(moved aside to storage.before-restore-<time>)")
+                        "(moved aside to storage/.folio-work/before-restore-<time>)")
     r.add_argument("--allow-mismatch", action="store_true",
                    help="restore although the archive comes from a newer Folio or another embedding "
                         "model / dimension")

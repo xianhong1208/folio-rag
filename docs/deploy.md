@@ -283,7 +283,42 @@ With `METRICS_TOKEN` set, every scrape needs it as a bearer token, from loopback
 
 The database and `storage/` belong together: the database holds the folders, the chunks and the
 vectors, and `storage/` the uploaded files they were made from. Back them up together, at the same
-moment, and restore them together. With compose:
+moment, and restore them together. The image does both in one command
+([Backup and restore](backup.md) has the details):
+
+```bash
+docker compose exec folio python main.py backup                 # → the folio-backups volume (/app/backups)
+docker compose exec folio ls -l /app/backups
+docker compose cp folio:/app/backups/folio-backup-<time>.tar .  # a copy off the machine
+```
+
+`main.py backup` writes one archive (`folio-backup-<UTC time>.tar`: a `pg_dump` of the database, the
+files under `storage/` and a manifest with checksums) into `/app/backups`, the image's
+`database.backup.dir`, which compose keeps in its own volume, `folio-backups`. It runs while Folio
+runs. The image has the PostgreSQL 17 client tools, newer than the bundled pg16 server, which is fine.
+Keep copies of the archives somewhere else too: the volume is on the same disk as the data.
+
+**Scheduled backups:** set `FOLIO_BACKUP_ENABLED=true` in `.env` (and `docker compose up -d`). Folio
+then writes one archive every `FOLIO_BACKUP_INTERVAL_HOURS` (24) into the same volume and keeps the
+newest `FOLIO_BACKUP_KEEP` (7); the first comes two minutes after the start when there is none yet.
+`/health/detailed` shows the newest archive and the last result.
+
+**Restore** needs Folio stopped (it refuses while anything else is connected to the database), so
+run it in a one-off container with the same volumes:
+
+```bash
+docker compose stop folio
+docker compose cp folio-backup-<time>.tar folio:/app/backups/   # only if the archive is not in the volume yet
+docker compose run --rm --no-deps folio python main.py restore /app/backups/folio-backup-<time>.tar --force
+docker compose start folio
+```
+
+`--force` replaces a database that already has tables and a `storage/` that already holds folders
+(into a fresh stack it is not needed). The previous files are not deleted: they are moved to
+`storage/.folio-work/before-restore-<time>/` in the storage volume; remove that directory once the
+restored instance looks right. `restore --check <archive>` only verifies an archive.
+
+**Without the command**, the same by hand:
 
 ```bash
 docker compose stop folio                                       # nothing writes while you copy
@@ -321,12 +356,11 @@ when one of them is missing, rather than starting healthy without the data:
 | `POSTGRES_PASSWORD` changed in `.env` after the first start | Refuses: `password authentication failed`. PostgreSQL keeps the password its volume was created with; set the old one back (or change it inside PostgreSQL with `ALTER USER`). |
 | `EMBEDDING_MODEL` or `EMBEDDING_DIMENSION` changed | Starts; the files indexed with the old model are marked **Re-index recommended** in the console, and a dimension mismatch is also logged at startup for each folder table. |
 | `storage/.console_session_secret` is missing | Starts with a new one: console users sign in again. Nothing else depends on it. |
+| The `folio-backups` volume is not mounted (an override or a `docker run` without it) | The image declares `/app/backups` a volume, so Docker gives it an anonymous one: archives survive the container, but under a random name (`docker volume ls`). Mount `folio-backups` (or your own path) to keep them where you expect. |
+| `database.backup.dir` points at a directory Folio cannot write | `main.py backup` and the schedule refuse with "cannot write to the backup directory …", nothing else changes. |
 
 With the `mcp-gate` profile, MCP Gate refuses to start when its `mcp-gate-secrets` volume does not
 match `mcp-gate-data`. `scripts/docker_smoke.sh` checks each of these cases against the real image.
-
-A `folio backup` / `folio restore` command that does this in one step, and scheduled backups, are
-separate work on the [roadmap](../ROADMAP.md).
 
 ## Upgrades
 

@@ -122,8 +122,25 @@ class TestImageConfig:
         assert "--locked" in sync and "--no-dev" in sync and "--no-default-groups" in sync
         assert "--extra jieba" in sync and "--extra local" not in sync and "--group" not in sync
         assert "COPY docker/config/models.yaml config/models.yaml" in text
-        assert re.search(r"^USER folio$", text, re.M) and 'VOLUME ["/app/storage"]' in text
+        assert re.search(r"^USER folio$", text, re.M) and 'VOLUME ["/app/storage", "/app/backups"]' in text
         assert "HEALTHCHECK" in text and 'FOLIO_LOG_DIR=""' in text
+
+    def test_cex47_the_image_can_back_up_and_restore(self):
+        """CEX-47 -- PostgreSQL client tools at least as new as the bundled server, on PATH; the backup
+        directory (database.backup.dir = backups, i.e. /app/backups) is writable by the image's user and
+        kept in its own compose volume."""
+        text = (REPO / "Dockerfile").read_text(encoding="utf-8")
+        runtime = text.split("FROM python:3.12-slim-trixie\n")[-1]
+        client = re.search(r"postgresql-client-(\d+)", runtime)
+        compose = yaml.safe_load((REPO / "docker-compose.yml").read_text(encoding="utf-8"))
+        server = int(re.search(r"pg(\d+)$", compose["services"]["db"]["image"]).group(1))
+        assert client and int(client.group(1)) >= server
+        assert f"/usr/lib/postgresql/{client.group(1)}/bin" in re.search(r"ENV PATH=(\S+)", runtime).group(1)
+        assert re.search(r"chown folio:folio [^\n]*/app/backups", runtime)
+        assert "folio-backups:/app/backups" in compose["services"]["folio"]["volumes"]
+        assert "folio-backups" in compose["volumes"]
+        raw = (REPO / "config" / "database.yaml").read_text(encoding="utf-8")
+        assert 'dir: "backups"' in raw
 
     def test_compose_holds_no_secret(self):
         compose = yaml.safe_load((REPO / "docker-compose.yml").read_text(encoding="utf-8"))

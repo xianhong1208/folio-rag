@@ -61,6 +61,9 @@ class EnvSetting(NamedTuple):
 ENV_SETTINGS: Dict[str, EnvSetting] = {
     "database.url": EnvSetting("DATABASE_URL", "postgresql://postgres:CHANGE_ME@localhost:5432/folio"),
     "database.port": EnvSetting("DATABASE_PORT", "", True),
+    "database.backup.enabled": EnvSetting("FOLIO_BACKUP_ENABLED", "false"),
+    "database.backup.interval_hours": EnvSetting("FOLIO_BACKUP_INTERVAL_HOURS", "24"),
+    "database.backup.keep": EnvSetting("FOLIO_BACKUP_KEEP", "7"),
     "auth.issuer": EnvSetting("MCP_GATE_URL", "http://localhost:4568"),
     "auth.audience": EnvSetting("FOLIO_AUDIENCE", "http://127.0.0.1:5039/mcp"),
     "auth.internal_url": EnvSetting("MCP_GATE_INTERNAL_URL", "", True),

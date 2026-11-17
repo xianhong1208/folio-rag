@@ -10,6 +10,9 @@
 # models (rag.profile local / hybrid) run Folio from source instead (README, Installation).
 #
 #   /app/storage  a VOLUME: uploaded files and the console's session secret. Back it up together with the database.
+#   /app/backups  a VOLUME: archives of `main.py backup` and of the backup schedule (database.backup.dir = backups).
+#                 The PostgreSQL client tools are installed for them (Debian's postgresql-client-17: newer than the
+#                 bundled pg16 server is fine).
 #   /app/config   the six config files, baked in (docker/config/models.yaml is the cloud models.yaml). To change them,
 #                 mount your own directory over /app/config, or anywhere under /app and point FOLIO_CONFIG_DIR at it.
 # Logs go to the console only (`docker logs`). Migrations run on every start, as with `python main.py`.
@@ -51,16 +54,17 @@ LABEL org.opencontainers.image.title="Folio" \
       org.opencontainers.image.version="$VERSION" \
       org.opencontainers.image.revision="$REVISION"
 
-# libpq5: psycopg2 at run time. INSTALL_FFMPEG=true adds ffmpeg, which audio transcription needs (it resamples and
+# libpq5: psycopg2 at run time. postgresql-client-17: pg_dump / pg_restore / psql for main.py backup / restore and
+# the backup schedule (at least the server's major version; their directory goes on PATH below). INSTALL_FFMPEG=true adds ffmpeg, which audio transcription needs (it resamples and
 # splits audio before uploading it); the published image leaves it out to stay small.
 ARG INSTALL_FFMPEG=false
 RUN apt-get update \
- && apt-get install -y --no-install-recommends libpq5 \
+ && apt-get install -y --no-install-recommends libpq5 postgresql-client-17 \
  && if [ "$INSTALL_FFMPEG" = true ]; then apt-get install -y --no-install-recommends ffmpeg; fi \
  && rm -rf /var/lib/apt/lists/* \
  && useradd --uid 10001 --user-group --create-home --home-dir /home/folio --shell /usr/sbin/nologin folio \
- && mkdir -p /app/storage /app/reports \
- && chown folio:folio /app/storage /app/reports
+ && mkdir -p /app/storage /app/reports /app/backups \
+ && chown folio:folio /app/storage /app/reports /app/backups
 
 WORKDIR /app
 COPY --from=deps /app/.venv /app/.venv
@@ -78,7 +82,7 @@ COPY scripts/rag_eval.py scripts/rag_eval.py
 # FOLIO_LOG_DIR empty: console only, `docker logs` has everything. NO_COLOR: no colour codes in that log.
 # FOLIO_SEGMENTER: jieba for Chinese keyword search (bigram is the other model-free choice).
 # The container always listens on 5039; publish it on any host port.
-ENV PATH=/app/.venv/bin:$PATH \
+ENV PATH=/app/.venv/bin:/usr/lib/postgresql/17/bin:$PATH \
     PYTHONUNBUFFERED=1 \
     PYTHONDONTWRITEBYTECODE=1 \
     FOLIO_LOG_DIR="" \
@@ -87,7 +91,7 @@ ENV PATH=/app/.venv/bin:$PATH \
     HOME=/home/folio
 
 USER folio
-VOLUME ["/app/storage"]
+VOLUME ["/app/storage", "/app/backups"]
 EXPOSE 5039
 HEALTHCHECK --interval=30s --timeout=5s --start-period=60s --retries=3 \
   CMD ["python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:5039/health', timeout=4)"]

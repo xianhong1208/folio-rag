@@ -403,7 +403,7 @@ class TestRestore:
         assert r.restored and r.moved_aside is None and r.warnings[-1].startswith("1 file(s)")
         assert restore_env.calls["restored"] == b"PGDMP" and "dropped" not in restore_env.calls
         assert (restore_env.target / "sub_u/docs/f1").read_bytes() == b"file one"
-        assert not list(restore_env.target.parent.glob(".folio-restore-*"))
+        assert not list(restore_env.target.glob(".folio-work/restore-*"))
 
     def test_check_only_changes_nothing(self, restore_env):
         r = _restore(restore_env, check_only=True)
@@ -432,7 +432,7 @@ class TestRestore:
             _restore(restore_env, force=True)
         assert "dropped" not in restore_env.calls and "restored" not in restore_env.calls
         assert (restore_env.target / "sub_x").is_dir()
-        assert not list(restore_env.target.parent.glob(".folio-restore-*"))
+        assert not list(restore_env.target.glob(".folio-work/restore-*"))
 
     def test_a_used_storage_needs_force_and_is_moved_aside(self, restore_env):
         (restore_env.target / "sub_x").mkdir(parents=True)
@@ -440,6 +440,7 @@ class TestRestore:
         with pytest.raises(S.BackupRefused, match="storage/ already holds"):
             _restore(restore_env)
         r = _restore(restore_env, force=True)
+        assert r.moved_aside == restore_env.target / ".folio-work" / "before-restore-20261114T040000Z"
         assert (r.moved_aside / "sub_x" / "old").read_text() == "old"
         assert (restore_env.target / "sub_u/docs/f1").exists() and not (restore_env.target / "sub_x").exists()
 
@@ -473,8 +474,9 @@ class TestRestore:
         restore_env.archive.write_bytes(bytes(data))
         with pytest.raises(A.ArchiveError, match="checksum mismatch"):
             _restore(restore_env)
-        assert "restored" not in restore_env.calls and not restore_env.target.exists()
-        assert not list(restore_env.target.parent.glob(".folio-restore-*"))
+        assert "restored" not in restore_env.calls
+        assert [p.name for p in restore_env.target.iterdir()] == [".folio-work"]
+        assert not list(restore_env.target.glob(".folio-work/restore-*"))
 
     def test_chunk_counts_are_compared(self, restore_env, monkeypatch):
         monkeypatch.setattr(S, "_restored_counts", lambda url: [{"id": 1, "name": "docs", "chunks": 4}])
@@ -490,3 +492,92 @@ class TestQuietLogger:
         q.warning("b")
         q.error("c")
         assert seen == ["b", "c"]
+
+
+
+class TestRestoreInPlace:
+    """restore swaps storage/'s contents inside storage/ (Docker: a volume's mount point whose parent is
+    not writable)."""
+
+    def test_cex41_storage_itself_is_never_renamed(self, restore_env, monkeypatch):
+        """CEX-41 -- storage/ behaves like a mount point: renaming it fails (EBUSY). The restore
+        still works and storage/ is the same directory afterwards."""
+        import errno
+        target = restore_env.target
+        (target / "sub_x").mkdir(parents=True)
+        (target / "sub_x" / "old").write_text("old")
+        inode = target.stat().st_ino
+        real = S.os.replace
+
+        def replace(src, dst):
+            if Path(src) == target or Path(dst) == target:
+                raise OSError(errno.EBUSY, "Device or resource busy", str(src))
+            return real(src, dst)
+        monkeypatch.setattr(S.os, "replace", replace)
+        r = _restore(restore_env, force=True)
+        assert r.restored and target.stat().st_ino == inode
+        assert (target / "sub_u/docs/f1").read_bytes() == b"file one" and not (target / "sub_x").exists()
+        assert (r.moved_aside / "sub_x" / "old").read_text() == "old"
+        assert sorted(p.name for p in target.parent.iterdir()) == ["storage"]  # nothing beside it
+
+    def test_cex42_the_archive_is_unpacked_inside_storage(self, restore_env, monkeypatch):
+        """CEX-42 -- staging under storage/.folio-work (writable, same filesystem), removed afterwards."""
+        seen = {}
+        real = S.pg.restore
+
+        def spy(url, dump_file, list_file, bin_dir=None, server=None):
+            seen["dump"] = Path(dump_file)
+            return real(url, dump_file, list_file, bin_dir=bin_dir, server=server)
+        monkeypatch.setattr(S.pg, "restore", spy)
+        _restore(restore_env)
+        assert seen["dump"].parent == restore_env.target / ".folio-work" / "restore-20261114T040000Z"
+        assert not seen["dump"].parent.exists()
+
+    def test_cex43_a_failed_swap_puts_storage_back(self, restore_env, monkeypatch):
+        """CEX-43 -- a move that fails half way: the previous contents are back, nothing restored stays."""
+        target = restore_env.target
+        (target / "sub_x").mkdir(parents=True)
+        (target / "sub_x" / "old").write_text("old")
+        (target / ".console_session_secret").write_text("mine")
+        real = S.os.replace
+
+        def replace(src, dst):
+            if Path(dst) == target / "sub_u":
+                raise OSError(28, "No space left on device")
+            return real(src, dst)
+        monkeypatch.setattr(S.os, "replace", replace)
+        with pytest.raises(OSError, match="No space"):
+            _restore(restore_env, force=True)
+        assert (target / "sub_x" / "old").read_text() == "old"
+        assert (target / ".console_session_secret").read_text() == "mine"
+        assert sorted(p.name for p in target.iterdir()) == [".console_session_secret", ".folio-work", "sub_x"]
+        assert list((target / ".folio-work").iterdir()) == []
+
+    def test_cex44_folio_work_stays_in_place(self, restore_env):
+        """CEX-44 -- the console's pending exports in storage/.folio-work survive a restore."""
+        pending = restore_env.target / ".folio-work" / "console" / "export-1"
+        pending.mkdir(parents=True)
+        (pending / "a.tar").write_bytes(b"tar")
+        r = _restore(restore_env)
+        assert (pending / "a.tar").read_bytes() == b"tar" and r.moved_aside is None
+        assert (restore_env.target / "sub_u/docs/f1").exists()
+
+    def test_cex45_a_missing_storage_directory_is_created(self, restore_env):
+        """CEX-45 -- piece missing: no storage/ at all (a fresh volume path); the restore creates it."""
+        assert not restore_env.target.exists()
+        assert _restore(restore_env).restored
+        assert (restore_env.target / "sub_u/docs/f1").read_bytes() == b"file one"
+
+
+def test_cex46_an_unwritable_backup_directory_is_a_clear_refusal(tmp_path, storage, fake, monkeypatch):
+    """CEX-46 -- piece missing: no writable backup directory (Docker without the folio-backups volume
+    and a read-only /app); a refusal that says where to point database.backup.dir, not a traceback."""
+    real = S.os.open
+
+    def no_write(path, *a, **k):
+        if str(path).endswith(S._LOCK_NAME):
+            raise PermissionError(13, "Permission denied", str(path))
+        return real(path, *a, **k)
+    monkeypatch.setattr(S.os, "open", no_write)
+    with pytest.raises(S.BackupRefused, match="cannot write to the backup directory.*folio-backups"):
+        _backup(tmp_path, storage)
