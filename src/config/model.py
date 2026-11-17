@@ -56,12 +56,16 @@ class BackupConfig(BaseModel):
     ``enabled`` turns the server's own schedule on: one archive every
     ``interval_hours``, keeping the newest ``keep`` scheduled archives. ``pg_bin_dir`` is
     where ``pg_dump`` / ``pg_restore`` live when they are not on PATH (empty = PATH).
+    ``folder_import_max_mb`` caps a folder archive uploaded in the console.
     """
     dir: str = "backups"
     enabled: bool = False
     interval_hours: float = Field(24, ge=1, le=24 * 31)
     keep: int = Field(7, ge=1, le=1000)
     pg_bin_dir: OptStr = None
+    # Largest folder archive the console accepts for an import (the upload is streamed
+    # to a temporary file and refused as soon as it passes this).
+    folder_import_max_mb: int = Field(2048, ge=1, le=1024 * 1024)
 
 
 class DatabaseConfig(BaseModel):

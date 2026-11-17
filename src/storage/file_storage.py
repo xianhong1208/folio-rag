@@ -3,6 +3,14 @@
 Storage layout: storage/{owner_dir}/{folder_name}/{file_id}, where ``owner_dir`` is
 derived from the folder's owner key by :func:`owner_dir_name` (``sub:<sub>`` ->
 ``sub_<sub>``; a legacy per-token key is used as-is).
+
+``storage/.folio-work/`` (:data:`WORK_DIR_NAME`) is Folio's own scratch space: folder
+imports unpack there and the console keeps its exports and uploads there. It sits inside
+storage/ so that it is writable wherever storage/ is (the Docker image runs as an
+unprivileged user and only the storage volume is writable) and on the same filesystem,
+so an imported folder's files are moved into place instead of copied. It is never an
+owner directory (those cannot start with ``.``), backups leave it out, and the startup
+storage check ignores it.
 """
 
 import hashlib
@@ -14,6 +22,16 @@ from src.log import get_api_logger
 from src.utils.runtime_paths import resolve_base_dir
 
 logger = get_api_logger()
+
+# Folio's scratch directory inside storage/ (see the module docstring).
+WORK_DIR_NAME = ".folio-work"
+
+
+def work_root(storage_root: Path) -> Path:
+    """``<storage_root>/.folio-work``, created (mode 700) when missing."""
+    d = Path(storage_root) / WORK_DIR_NAME
+    d.mkdir(mode=0o700, parents=True, exist_ok=True)
+    return d
 
 
 def _resolve_storage_root() -> Path:

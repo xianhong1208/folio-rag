@@ -13,7 +13,7 @@ manifest。`main.py restore` 則把封存檔還原到空的資料庫與 `storage
 | 項目 | 內容 |
 |---|---|
 | `database.dump` | Folio 資料庫的 `pg_dump --format=custom`(已壓縮) |
-| `storage/…` | `storage/` 底下的每個檔案:上傳的檔案與主控台的 session 密鑰 |
+| `storage/…` | `storage/` 底下的每個檔案:上傳的檔案與主控台的 session 密鑰(不含 Folio 的工作目錄 `storage/.folio-work/`) |
 | `manifest.json` | 封存檔的來源資訊(見下),以及其他每個項目的 SHA-256 |
 
 manifest 記錄了 Folio 版本、資料庫 migration revision、embedding 模型與維度(以及是否被設定頁面
@@ -174,6 +174,36 @@ uv run python main.py import-folder <archive> --owner <sub> --check       # 只�
 `--files-only` 只匯入資料夾與檔案、不含索引,再到 console 按 **Index** 用這個 Folio 的模型建立索引。
 斷詞器不同只會警告:請對該資料夾執行 **Rebuild FTS**。比這個 Folio 新的版本匯出的封存檔會被拒絕。
 
-匯入會先檢查每個項目,資料庫部分在單一交易裡寫入,並在交易提交前把檔案放到定位,所以匯入失敗
+匯入會解開到 `storage/.folio-work/`(在 `storage/` 裡,和資料夾在同一個磁碟上),先檢查每個項目,資料庫部分在單一交易裡寫入,並在交易提交前把檔案放到定位,所以匯入失敗
 不會留下資料夾。Folio 執行中也可以匯入;執行中的伺服器快取的資料夾清單會在三分鐘內出現新資料夾。
 只匯入你信任的封存檔。
+
+### 在 console 裡
+
+**Folders** 頁面上,資料夾那一列(以及資料夾自己的頁面)的 **Export** 按鈕會下載同一種封存檔;
+**Import** 則把封存檔匯入。規則和命令列相同,差別在於:
+
+- 只能匯出自己的資料夾,匯入的資料夾一定**屬於你**(目前登入的人;開放模式為 `console`)。請求裡的
+  任何內容都不能指定別的擁有者。
+- embedding 模型或維度不同時會拒絕並說明原因,同時提供 **Import files only, then index** 按鈕;
+  console 會接著用這個 Folio 的模型為新資料夾建立索引。事先勾選 **Files only** 效果相同。
+- 資料夾有索引工作在跑時匯出會被拒絕(409),請在 **Jobs** 等它跑完。
+- 伺服器先寫好封存檔,瀏覽器再下載一次;沒人下載的匯出一小時後刪除。
+- 上傳的檔案會串流寫到 `storage/.folio-work/console/` 下的暫存檔(Folio 在 `storage/` 裡的工作目錄,
+  所以只要 `storage/` 可寫入就能用,例如 Docker 的 volume;備份不會包含它),一超過
+  `database.backup.folder_import_max_mb`(預設 2048 MB)就拒絕。資料夾更大時請調高它,
+  Folio 前面的反向代理也要一起調(例如 nginx 的 `client_max_body_size`)。不論結果如何,暫存檔都會刪除。
+
+腳本可以用 `Authorization: Bearer <token>` 呼叫同樣的端點:
+
+```bash
+curl -s -X POST -H "Authorization: Bearer $TOKEN" http://127.0.0.1:5039/api/admin/manage/folders/3/export
+# → {"data": {"download_url": "/api/admin/manage/exports/<id>", "file_name": "folio-folder-docs-….tar", …}}
+curl -s -H "Authorization: Bearer $TOKEN" -o docs.tar http://127.0.0.1:5039/api/admin/manage/exports/<id>
+curl -s -X POST -H "Authorization: Bearer $TOKEN" -H "Content-Type: application/x-tar" \
+     --data-binary @docs.tar "http://127.0.0.1:5039/api/admin/manage/folders/import?name=docs-copy"
+```
+
+匯入的另一個參數是 `files_only=true`。拒絕時回傳 `{"detail": {"error": <code>, "error_description": …}}`,
+code 為 `index_job_running`(409)、`embedding_mismatch`(409)、`newer_version`(409)、
+`damaged_archive`(400)、`too_large`(413)或 `empty_upload`(400)。

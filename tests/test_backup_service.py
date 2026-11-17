@@ -147,6 +147,17 @@ class TestCreateBackup:
         assert any("pg_export_snapshot" in s for s in fake.sql)
         assert not list((tmp_path / "b").glob(".folio-backup-*"))  # temp dir cleaned
 
+    def test_cex35_the_scratch_directory_is_left_out(self, tmp_path, storage, fake):
+        """CEX-35 -- storage/.folio-work (exports, uploads, import staging) is never backed up."""
+        work = storage / ".folio-work" / "console" / "export-x"
+        work.mkdir(parents=True)
+        (work / "a.tar").write_bytes(b"tar")
+        (storage / ".folio-work" / "import-1").mkdir()
+        (storage / ".folio-work" / "import-1" / "folder.json").write_text("{}")
+        m = A.read_manifest(_backup(tmp_path, storage).path)
+        assert not any(".folio-work" in k for k in m["checksums"])
+        assert "storage/sub_u/docs/f1" in m["checksums"]
+
     def test_runtime_settings_win_over_the_config(self, tmp_path, storage, fake):
         fake.overrides = {"rag.embedding.model": {"value": "bge-m3"}, "rag.embedding.dimension": {"value": 1024},
                           "rag.retrieval.segmenter": {"value": "jieba"}}
@@ -435,6 +446,7 @@ class TestRestore:
     def test_housekeeping_files_alone_do_not_need_force(self, restore_env):
         restore_env.target.mkdir(parents=True)
         (restore_env.target / ".console_session_secret").write_text("new instance")
+        (restore_env.target / ".folio-work" / "console").mkdir(parents=True)  # CEX-36
         r = _restore(restore_env)
         assert r.moved_aside is not None
         assert (restore_env.target / ".console_session_secret").read_text() == "s"

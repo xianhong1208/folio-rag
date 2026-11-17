@@ -30,12 +30,14 @@ class StorageMismatchError(RuntimeError):
 
 def uploaded_files(storage_root: Path) -> list[Path]:
     """Uploaded files under ``storage_root`` (``<owner>/<folder>/<file id>``). Files directly in the
-    root (the console session secret and similar) do not count: a new install has them too."""
+    root (the console session secret and similar) and Folio's scratch directory
+    (``.folio-work``: exports, uploads, import staging) do not count: a new install has them too."""
+    from src.storage.file_storage import WORK_DIR_NAME
     if not storage_root.is_dir():
         return []
     found = []
     for owner in storage_root.iterdir():
-        if not owner.is_dir():
+        if not owner.is_dir() or owner.name == WORK_DIR_NAME:
             continue
         for path in owner.rglob("*"):
             if path.is_file():

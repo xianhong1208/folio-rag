@@ -114,6 +114,7 @@ def test_load_config_rejects_an_invalid_config(monkeypatch):
 
 
 def test_load_config(monkeypatch):
+    monkeypatch.delenv("FOLIO_LOG_DIR", raising=False)
     from src.config.config_manager import Config
     import src.log as log
     calls = {}
@@ -123,3 +124,16 @@ def test_load_config(monkeypatch):
     monkeypatch.setattr(log, "setup_logger", lambda **kw: calls.setdefault("log", kw))
     assert cli._load_config("cfg") == "MODEL"
     assert calls["dir"] == "cfg" and calls["log"]["console_level"] == "ERROR" and calls["log"]["log_base_dir"] == "lg"
+
+
+@pytest.mark.parametrize("env_value, expected", [("", ""), ("  /var/log/folio ", "/var/log/folio"), (None, "lg")])
+def test_cex39_the_log_directory_follows_folio_log_dir(monkeypatch, env_value, expected):
+    """CEX-39 -- like the server: FOLIO_LOG_DIR="" (the Docker image) writes no log files, so the
+    commands work where the working directory is not writable."""
+    if env_value is None:
+        monkeypatch.delenv("FOLIO_LOG_DIR", raising=False)
+    else:
+        monkeypatch.setenv("FOLIO_LOG_DIR", env_value)
+    assert cli._log_dir(SimpleNamespace(log_dir="lg")) == expected
+    monkeypatch.delenv("FOLIO_LOG_DIR", raising=False)
+    assert cli._log_dir(None) == "logs"

@@ -38,6 +38,12 @@ class TestUploadedFiles:
         (tmp_path / "sub_u1" / "empty-folder").mkdir(parents=True)
         assert uploaded_files(tmp_path) == []
 
+    def test_cex37_the_scratch_directory_does_not_count(self, tmp_path):
+        """CEX-37 -- a pending export or import staging under .folio-work is not an upload."""
+        _upload(tmp_path, ".folio-work/console/export-1/folio-folder-docs.tar")
+        _upload(tmp_path, ".folio-work/import-x/files/0f1e")
+        assert uploaded_files(tmp_path) == []
+
     def test_an_upload_counts(self, tmp_path):
         path = _upload(tmp_path)
         assert uploaded_files(tmp_path) == [path]

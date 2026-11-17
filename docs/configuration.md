@@ -62,6 +62,7 @@ The settings you are likely to touch:
 | `server.port` | `5039` | HTTP + MCP bind port. The MCP endpoint is `/mcp`. |
 | `FOLIO_STORAGE_ROOT` | the project root | Directory that holds `storage/` (uploaded files and the console session secret). |
 | `database.backup.{dir,enabled,interval_hours,keep,pg_bin_dir}` | `backups`, `false`, `24`, `7`, PATH | Where `main.py backup` writes archives, and the server's own backup schedule (off by default) with how many archives it keeps — see [Backup and restore](backup.md). |
+| `database.backup.folder_import_max_mb` | `2048` | Largest folder archive the console's **Import** accepts (MB); the upload is streamed and refused with 413 as soon as it passes this — see [In the console](backup.md#in-the-console). |
 | `FOLIO_INDEXING_CONCURRENCY`, `FOLIO_PER_FILE_TIMEOUT_SECONDS`, `FOLIO_JOB_TIMEOUT_SECONDS` | from `rag.indexing` | Runtime overrides for the indexing limits. The pre-rename `RAG_*` names still work and log a deprecation warning. |
 | `auth.enabled` / `MCP_GATE_URL` / `FOLIO_AUDIENCE` | `true` / MCP Gate URL / this server's `/mcp` URL | OAuth 2.1 verification against MCP Gate (`auth.issuer`, `auth.audience`). |
 | `auth.console.session_hours` | `8` | Longest a console session lasts (it also ends when the token expires). |

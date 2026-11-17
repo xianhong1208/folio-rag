@@ -51,6 +51,16 @@ export async function upload(path, formData) {
   try { return await res.json() } catch { return null }
 }
 
+// POST a file as the raw request body (a folder archive); the CSRF header still applies.
+export async function uploadRaw(path, file, contentType = 'application/x-tar') {
+  const res = await fetch(API_BASE + path, {
+    method: 'POST', body: file, credentials: 'same-origin',
+    headers: { ...requestHeaders('POST', { json: false }), 'Content-Type': contentType },
+  })
+  if (!res.ok) throw await toError(res)
+  try { return await res.json() } catch { return null }
+}
+
 // POST a request and consume a Server-Sent Events stream, invoking onEvent(obj)
 // once per `data:` frame. Resolves when the stream ends; rejects on HTTP error
 // or an aborted signal. Frames are JSON; malformed frames are skipped.

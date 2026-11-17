@@ -41,7 +41,7 @@ from src.backup.archive import (DUMP_NAME, FORMAT, FORMAT_VERSION, STORAGE_PREFI
 JOB_STALE_AFTER = timedelta(minutes=15)
 ACTIVE_JOB_STATUSES = ("pending", "running")
 # Files a fresh Folio writes under storage/ on its own; they do not make storage/ "in use".
-STORAGE_HOUSEKEEPING = {".console_session_secret", ".console_ended_sessions"}
+STORAGE_HOUSEKEEPING = {".console_session_secret", ".console_ended_sessions", ".folio-work"}
 _LOCK_NAME = ".folio-backup.lock"
 _MAX_LISTED = 100
 
@@ -261,14 +261,18 @@ def _arcname_for_db_path(file_path: str, storage_root: Path) -> Optional[str]:
 
 def _add_storage(writer: ArchiveWriter, storage_root: Path, warnings: List[str],
                  exclude: Optional[Path] = None) -> Tuple[int, int]:
-    """Archive every regular file under storage_root (``exclude``: the archive directory,
-    when someone put it inside storage/)."""
+    """Archive every regular file under storage_root, except Folio's scratch directory
+    (``storage/.folio-work``) and ``exclude`` (the archive directory, when someone put it
+    inside storage/)."""
+    from src.storage.file_storage import WORK_DIR_NAME
     count = size = 0
     if not storage_root.is_dir():
         return 0, 0
-    skip = exclude.resolve() if exclude is not None else None
+    skip = {(storage_root / WORK_DIR_NAME).resolve()}
+    if exclude is not None:
+        skip.add(exclude.resolve())
     for dirpath, dirnames, filenames in os.walk(storage_root, followlinks=False):
-        if skip is not None and Path(dirpath).resolve() == skip:
+        if Path(dirpath).resolve() in skip:
             dirnames[:] = []
             continue
         dirnames.sort()

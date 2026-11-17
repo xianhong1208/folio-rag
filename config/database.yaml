@@ -26,3 +26,4 @@ database:
     interval_hours: 24
     keep: 7                        # scheduled archives kept (the oldest are deleted)
     pg_bin_dir: ""                 # where pg_dump / pg_restore are; empty = PATH
+    folder_import_max_mb: 2048     # largest folder archive the console imports (MB)

@@ -353,3 +353,71 @@ class TestImportChecks:
         path.write_bytes(bytes(data))
         with pytest.raises(A.ArchiveError, match="checksum mismatch"):
             self._import(path, tmp_path, check_only=True)
+
+
+class TestConsoleHooks:
+    """What the console (src/api/router/admin_folder_archive.py) relies on."""
+
+    def test_cex28_problems_carry_codes_without_the_cli_hint(self):
+        """CEX-28"""
+        m = _manifest(indexed_embeddings=[{"model": "bge", "dimension": 8}], alembic_revision="rev9",
+                      folio_version="9.0.0")
+        problems, _ = F.check_compatibility(m, target=TARGET, revisions=["rev1"], version="1.4.2",
+                                            files_only=False)
+        assert [c for c, _ in problems] == ["newer_version", "embedding_mismatch"]
+        assert not any("--files-only" in msg for _, msg in problems)
+        assert F.check_compatibility(_manifest(), target=TARGET, revisions=["rev1", "rev2"], version="1.4.2",
+                                     files_only=False) == ([], [])
+
+    def test_cex29_refused_import_says_which_problem(self, tmp_path, monkeypatch):
+        """CEX-29"""
+        monkeypatch.setattr(S, "_engine", lambda url: _FakeConn())
+        path = _export(tmp_path, indexed_embeddings=[{"model": "bge", "dimension": 8}])
+        with pytest.raises(F.FolderRefused) as e:
+            TestImportChecks()._import(path, tmp_path)
+        assert e.value.code == "embedding_mismatch" and "--files-only" in str(e.value)
+        assert len(e.value.reasons) == 1 and "--files-only" not in e.value.reasons[0]
+        (tmp_path / "n").mkdir()
+        path2 = _export(tmp_path / "n", folio_version="9.0.0")
+        with pytest.raises(F.FolderRefused) as e:
+            TestImportChecks()._import(path2, tmp_path)
+        assert e.value.code == "newer_version"
+
+    def test_cex30_owner_key_is_used_as_given(self, tmp_path, monkeypatch):
+        """CEX-30 -- the console passes its session's owner key; it is not re-resolved."""
+        monkeypatch.setattr(S, "_engine", lambda url: _FakeConn())
+        path = _export(tmp_path)
+        r = F.import_folder(path, db_url="postgresql://u@h/d", storage_root=tmp_path / "storage",
+                            owner_key="sub:sha256:" + "a" * 64, rag_conf=TestImportChecks.RAG,
+                            revisions=["rev1", "rev2"], version="1.4.2", check_only=True)
+        assert r.owner == "sub:sha256:" + "a" * 64
+        with pytest.raises(F.FolderRefused, match="not a usable owner"):
+            F.import_folder(path, db_url="postgresql://u@h/d", storage_root=tmp_path / "storage",
+                            owner_key="../x", rag_conf=TestImportChecks.RAG, revisions=["rev1", "rev2"],
+                            version="1.4.2", check_only=True)
+
+    def test_cex31_refused_defaults(self):
+        """CEX-31"""
+        e = F.FolderRefused("no tables")
+        assert e.code == "refused" and e.reasons == ["no tables"] and str(e) == "no tables"
+
+
+def test_cex38_import_unpacks_inside_the_storage_root(tmp_path, monkeypatch):
+    """CEX-38 -- the staging directory is under storage/.folio-work (writable wherever storage/ is,
+    and on its filesystem), and it is removed when the import fails."""
+    monkeypatch.setattr(S, "_engine", lambda url: _FakeConn())
+    path = _export(tmp_path)
+    seen = {}
+
+    def fake_extract(archive, manifest, dest=None, layout=None):
+        seen["dest"] = Path(dest)
+        assert Path(dest).is_dir()
+        raise A.ArchiveError("stop here")
+    monkeypatch.setattr(F, "verify_and_extract", fake_extract)
+    with pytest.raises(A.ArchiveError):
+        TestImportChecks()._import(path, tmp_path)
+    storage = tmp_path / "storage"
+    assert seen["dest"].parent == storage / ".folio-work"
+    assert seen["dest"].name.startswith("import-")
+    assert not seen["dest"].exists()
+    assert oct((storage / ".folio-work").stat().st_mode & 0o777) == "0o700"

@@ -80,9 +80,18 @@ def _load_config(config_dir: str):
         raise RuntimeError(f"the configuration in {config_dir}/ is invalid (see the error above)")
     log_conf = Config.get_logging_config()
     # Details go to the log files; the terminal only gets this command's own lines.
-    setup_logger(console_level="ERROR", file_level="DEBUG",
-                 log_base_dir=getattr(log_conf, "log_dir", "logs") if log_conf else "logs")
+    setup_logger(console_level="ERROR", file_level="DEBUG", log_base_dir=_log_dir(log_conf))
     return model
+
+
+def _log_dir(log_conf) -> str:
+    """Where the log files go, as for the server (main.py): FOLIO_LOG_DIR when set (empty =
+    no files: the Docker image, whose working directory is not writable), else ``logs``."""
+    import os
+    value = os.environ.get("FOLIO_LOG_DIR")
+    if value is not None:
+        return value.strip()
+    return (getattr(log_conf, "log_dir", None) if log_conf else None) or "logs"
 
 
 def _backup(args) -> int:
