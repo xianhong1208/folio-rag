@@ -36,6 +36,9 @@ to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - **`profile: cloud` without an `rag.asr` section could not index or search.** The profile's default speech-to-text section is disabled and has no endpoint, and building the indexer still demanded one (`rag.asr.provider=openai-compatible requires base_url`), so every indexing job and query failed. A disabled `rag.asr` now needs no endpoint. Found by the Docker smoke test.
 - **Upgrade notices now reach the log files.** The error about an old `config/config.yaml` left behind, the warnings about removed sections (`rag.answer_llm`, `rag.eval_llm`) and the `[PROFILE]` warnings were logged while the configuration was loading, before the log files were set up from it, so they appeared only in the terminal. They still do, and are now logged again, once, in `logs/server/` as soon as logging is set up.
 
+### Documentation
+- README's Licence section lists the third-party licences of optional parts (CKIP is GPL-3.0, NVIDIA's CUDA libraries) and of the Docker image.
+
 ## [1.4.2] — 2026-11-13
 
 ### Security

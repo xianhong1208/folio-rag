@@ -182,3 +182,12 @@ token。**Docker 映像檔**就是 `cloud` profile,附 PostgreSQL + pgvector 與
 
 [MIT](LICENSE)。PDF 頁面以 PDFium(`pypdfium2`,Apache-2.0 / BSD-3-Clause)轉成圖片,
 不使用 AGPL 授權的 PyMuPDF。
+
+### 第三方授權
+
+Folio 本身的程式碼是 MIT。部分選用元件使用其他授權;若要再散布包含它們的安裝或映像,請先確認:
+
+- `--extra local`:`ckip-transformers` 以及它下載的 CKIP 模型是 **GPL-3.0**。改用 `jieba`(MIT)或
+  `bigram` 分詞器即可避開;發布的 Docker 映像不包含它。
+- `--group cuda`:PyTorch 的 CUDA 版本會安裝 NVIDIA 的 CUDA 函式庫,依 NVIDIA 自己的授權條款。
+- Docker 映像另含 PostgreSQL 用戶端工具(PostgreSQL License)與 Debian 套件,各依其授權。

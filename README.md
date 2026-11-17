@@ -195,3 +195,14 @@ English; the console is English only by decision. Run the checks in
 
 [MIT](LICENSE). PDF pages are rendered with PDFium (`pypdfium2`, Apache-2.0 / BSD-3-Clause), not
 the AGPL-licensed PyMuPDF.
+
+### Third-party licences
+
+Folio's own code is MIT. Some optional parts carry other licences; check them before you
+redistribute an install or an image that includes them:
+
+- `--extra local`: `ckip-transformers` and the CKIP models it downloads are **GPL-3.0**. The
+  `jieba` (MIT) and `bigram` segmenters avoid it; the published Docker image does not include it.
+- `--group cuda`: PyTorch's CUDA wheels install NVIDIA's CUDA libraries, under NVIDIA's own licence.
+- The Docker image adds PostgreSQL's client tools (PostgreSQL Licence) and Debian packages, each
+  under its own licence.
