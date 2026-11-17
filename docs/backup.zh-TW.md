@@ -32,7 +32,9 @@ manifest 記錄了 Folio 版本、資料庫 migration revision、embedding 模�
   要還原到新的資料庫,角色需要 `CREATEDB`,而且新資料庫裡要有 `vector` extension:pgvector 不是
   trusted extension,所以角色不是 superuser 時,要先請管理員在新資料庫執行
   `CREATE EXTENSION vector;`。缺少時,還原會直接告訴你。
-- 用 Docker 時,映像檔裡要有用戶端工具,備份目錄也要像 `storage/` 一樣掛成 volume。
+- 用 Docker 時這些都已備好:映像檔內含 PostgreSQL 17 用戶端工具(在 `PATH` 上),它的 `database.backup.dir`
+  (`/app/backups`)就是 `docker-compose.yml` 裡的 `folio-backups` volume。`docker compose exec` / `run` 的指令見
+  [用 Docker 部署](deploy.zh-TW.md#備份)。
 
 ## 備份
 
@@ -72,12 +74,14 @@ Folio 運作中也可以備份。結束代碼:`0` 已寫出、`1` 失敗(例如�
 database:
   backup:
     dir: "backups"          # 相對路徑 = 在 config/ 與 storage/ 旁邊
-    enabled: true           # 伺服器每 interval_hours 小時備份一次
-    interval_hours: 24
-    keep: 7                 # 保留最新的 7 份帶時間戳記的封存檔
+    enabled: true           # 伺服器每 interval_hours 小時備份一次(FOLIO_BACKUP_ENABLED)
+    interval_hours: 24      # FOLIO_BACKUP_INTERVAL_HOURS
+    keep: 7                 # 保留最新的 7 份帶時間戳記的封存檔(FOLIO_BACKUP_KEEP)
     pg_bin_dir: ""          # pg_dump / pg_restore 所在目錄;空白 = PATH
 ```
 
+提交的 `config/database.yaml` 從 `FOLIO_BACKUP_ENABLED`(預設 `false`)、`FOLIO_BACKUP_INTERVAL_HOURS`(24)與
+`FOLIO_BACKUP_KEEP`(7)讀取 `enabled`、`interval_hours` 與 `keep`,所以用 `.env` 就能開啟排程,Docker 也一樣。
 `enabled: true` 時,伺服器在自己的 event loop 上執行備份。下一次備份的時間是 `dir` 裡最新封存檔
 (不論是誰做的)的 `interval_hours` 小時之後,所以重啟不會漏掉也不會重複;`dir` 是空的時候,
 第一次會在啟動兩分鐘後執行。有索引工作在跑時會等待,每 10 分鐘再試一次;等了 6 小時仍在跑,
@@ -125,7 +129,7 @@ database:
 | 封存檔來自較新的 Folio(不認得的 migration revision 或較高的版本) | `--allow-mismatch` |
 | 向量是用和這個 Folio 不同的 embedding 模型或維度做的 | `--allow-mismatch`(之後要重新索引每個資料夾) |
 | 資料庫已經有資料表 | `--force`:那些表會被刪除 |
-| `storage/` 裡已經有資料夾 | `--force`:會被移到 `storage.before-restore-<時間>`,不會刪除 |
+| `storage/` 裡已經有資料夾 | `--force`:裡面的內容會被移到 `storage/.folio-work/before-restore-<時間>/`,不會刪除 |
 | 還有其他連線連著資料庫 | 一律拒絕:請先停止 Folio |
 
 embedding 模型的判斷:在設定頁面存過的設定會跟著資料庫回來並優先;否則以這個 Folio 的
@@ -136,7 +140,9 @@ embedding 模型的判斷:在設定頁面存過的設定會跟著資料庫回來
 參數,例如 17 版才有的 `SET transaction_timeout`,於是失敗。這時 Folio 改走 SQL:
 `pg_restore --file=-` 接到 `psql --single-transaction -v ON_ERROR_STOP=1`(用 `pg_restore` 同目錄的
 `psql`),只拿掉開頭那幾行伺服器沒有的參數的 `SET`。
-動到資料庫之前,封存檔會先在 `storage/` 旁邊解開並驗證。dump 裡的 `vector` extension 與
+動到資料庫之前,封存檔會先在 `storage/` 裡(`storage/.folio-work/restore-<時間>`)解開並驗證。`storage/` 本身
+不會被改名或取代(在 Docker 裡它是 volume 的掛載點):原本的項目先移開,再把還原的項目移進來,全部在同一個
+檔案系統上;任何一次移動失敗,已做的移動都會復原。dump 裡的 `vector` extension 與
 `public` schema 項目會略過(前者事先建立,後者屬於資料庫擁有者),所以非 superuser 也能還原。
 
 只還原你信任的封存檔:`pg_restore` 會執行 dump 裡的 SQL。

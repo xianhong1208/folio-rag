@@ -116,8 +116,13 @@ def current_version() -> str:
 
 @contextmanager
 def _exclusive(directory: Path) -> Iterator[None]:
-    directory.mkdir(parents=True, exist_ok=True)
-    fd = os.open(directory / _LOCK_NAME, os.O_CREAT | os.O_RDWR, 0o600)
+    try:
+        directory.mkdir(parents=True, exist_ok=True)
+        fd = os.open(directory / _LOCK_NAME, os.O_CREAT | os.O_RDWR, 0o600)
+    except PermissionError as e:
+        raise BackupRefused(
+            f"cannot write to the backup directory {directory}: {e.strerror}. Set database.backup.dir to a "
+            "writable directory (Docker: the folio-backups volume at /app/backups, see docs/deploy.md)") from e
     try:
         try:
             fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
@@ -548,7 +553,13 @@ def restore_backup(archive: Path, *, db_url: str, storage_root: Path, force: boo
     Refuses (BackupRefused) on a version/model mismatch unless ``allow_mismatch``, on a
     database that already has tables or a storage/ that already has folders unless
     ``force``, and always while other connections to the database are open (a running Folio). With ``force`` the
-    existing tables are dropped and the existing storage/ is moved aside, never deleted.
+    existing tables are dropped and what storage/ held is moved aside, never deleted.
+
+    Everything happens inside storage/: the archive is unpacked into
+    ``storage/.folio-work/restore-<time>`` and the previous contents go to
+    ``storage/.folio-work/before-restore-<time>``. storage/ itself is never renamed (in
+    Docker it is a volume's mount point, and its parent is not writable); its contents
+    are swapped entry by entry on one filesystem (see :func:`_swap_storage_contents`).
     """
     archive = Path(archive)
     manifest = read_manifest(archive)
@@ -586,11 +597,12 @@ def restore_backup(archive: Path, *, db_url: str, storage_root: Path, force: boo
     # Find the client tools before anything is dropped or moved.
     server = pg.server_info(db_url)
     pg.restore_tools(server[0], bin_dir)
+    from src.storage.file_storage import work_root
     now = now or datetime.now(timezone.utc)
     stamp = now.strftime("%Y%m%dT%H%M%SZ")
-    storage_root.parent.mkdir(parents=True, exist_ok=True)
-    staging = storage_root.parent / f".folio-restore-{stamp}"
-    staging.mkdir()
+    work = work_root(storage_root)
+    staging = work / f"restore-{stamp}"
+    staging.mkdir(mode=0o700)
     moved_aside = None
     try:
         log("verifying and unpacking the archive")
@@ -600,14 +612,9 @@ def restore_backup(archive: Path, *, db_url: str, storage_root: Path, force: boo
             _drop_tables(db_url, state["tables"])
         log("restoring the database")
         pg.restore(db_url, staging / DUMP_NAME, staging / "toc.list", bin_dir=bin_dir, server=server)
-        if storage_root.exists():
-            moved_aside = storage_root.with_name(f"{storage_root.name}.before-restore-{stamp}")
-            os.replace(storage_root, moved_aside)
-        restored_storage = staging / STORAGE_PREFIX.rstrip("/")
-        if restored_storage.is_dir():
-            os.replace(restored_storage, storage_root)
-        else:
-            storage_root.mkdir(parents=True, exist_ok=True)
+        log("putting the files in place")
+        moved_aside = _swap_storage_contents(storage_root, staging / STORAGE_PREFIX.rstrip("/"),
+                                             work / f"before-restore-{stamp}")
     finally:
         shutil.rmtree(staging, ignore_errors=True)
     if moved_aside is not None:
@@ -620,6 +627,50 @@ def restore_backup(archive: Path, *, db_url: str, storage_root: Path, force: boo
                             f"{expected[f['id']]}")
     return RestoreResult(manifest=manifest, restored=True, warnings=warnings,
                          moved_aside=moved_aside, folders=folders)
+
+
+def _swap_storage_contents(storage_root: Path, restored: Path, aside: Path) -> Optional[Path]:
+    """Replace what ``storage_root`` holds with what ``restored`` holds, keeping the directory
+    itself (it may be a mount point) and its ``.folio-work``.
+
+    Every entry is moved with ``os.replace`` on one filesystem (``restored`` and ``aside``
+    are under ``storage_root/.folio-work``): the previous entries into ``aside``, then the
+    restored ones into place. If a move fails, the moves done so far are undone and the
+    error is raised, so storage/ is left as it was. Returns ``aside`` when anything was
+    moved there.
+    """
+    from src.storage.file_storage import WORK_DIR_NAME
+    storage_root.mkdir(parents=True, exist_ok=True)
+    old = sorted(p.name for p in storage_root.iterdir() if p.name != WORK_DIR_NAME)
+    new = sorted(p.name for p in restored.iterdir() if p.name != WORK_DIR_NAME) if restored.is_dir() else []
+    moved_out: List[str] = []
+    moved_in: List[str] = []
+    try:
+        if old:
+            aside.mkdir(mode=0o700)
+            for name in old:
+                os.replace(storage_root / name, aside / name)
+                moved_out.append(name)
+        for name in new:
+            os.replace(restored / name, storage_root / name)
+            moved_in.append(name)
+    except BaseException:
+        for name in reversed(moved_in):
+            try:
+                os.replace(storage_root / name, restored / name)
+            except OSError:  # pragma: no cover - best effort; the original error is raised
+                pass
+        for name in reversed(moved_out):
+            try:
+                os.replace(aside / name, storage_root / name)
+            except OSError:  # pragma: no cover
+                pass
+        try:
+            aside.rmdir()
+        except OSError:
+            pass
+        raise
+    return aside if old else None
 
 
 class _QuietLogger:

@@ -210,6 +210,32 @@ AUTH=(-H "Authorization: Bearer $TOKEN")
 [ "$(mcp "$TOKEN")" = 200 ] || fail "/mcp rejects a new token after recreating the containers"
 echo "ok: after recreating the containers the folder, the file and the search hit are still there"
 
+# ---- main.py backup / restore inside the image (PostgreSQL client tools, the folio-backups volume) ----
+compose exec -T folio python main.py backup >"$WORK/backup.log" 2>&1 || { cat "$WORK/backup.log"; fail "main.py backup failed in the container"; }
+archive="$(compose exec -T folio sh -c 'ls -t /app/backups/folio-backup-*.tar | head -1' | tr -d '\r')"
+[ -n "$archive" ] || fail "main.py backup wrote no archive into /app/backups"
+# Change the data after the backup: a second document with a word of its own
+WORD2="wombatorium"
+printf '# After the backup\n\nThe %s exists only after the backup was taken.\n' "$WORD2" > "$WORK/after.md"
+curl -fsS "${AUTH[@]}" -o /dev/null -X POST "$FOLIO/api/folders/$folder_id/file" \
+    -F "file=@$WORK/after.md;type=text/markdown" -F auto_index=true || fail "the second upload failed"
+search2() {
+    curl -fsS "${AUTH[@]}" -X POST "$FOLIO/api/rag/query" -H 'Content-Type: application/json' \
+        -d "{\"query\":\"what is the $WORD2\",\"folder_name\":\"smoke\"}" \
+        | json "sum('$WORD2' in json.dumps(r) for r in d['data']['results'])" 2>/dev/null || echo 0
+}
+for _ in $(seq 1 90); do [ "$(search2)" -gt 0 ] && break; sleep 2; done
+[ "$(search2)" -gt 0 ] || fail "the document uploaded after the backup was not indexed"
+compose stop folio >/dev/null 2>&1
+compose run --rm --no-deps -T folio python main.py restore "$archive" --force >"$WORK/restore.log" 2>&1 \
+    || { cat "$WORK/restore.log"; fail "main.py restore failed in a one-off container"; }
+up "not healthy after a restore"
+[ "$(search)" -gt 0 ] || fail "the search hit is gone after the restore"
+[ "$(search2)" = 0 ] || fail "the document uploaded after the backup is still there after the restore"
+compose exec -T folio sh -c 'ls -d /app/storage/.folio-work/before-restore-*' >/dev/null \
+    || fail "the previous storage contents were not kept in storage/.folio-work"
+echo "ok: main.py backup into the folio-backups volume; after a new upload, main.py restore --force brings back exactly the backed-up data"
+
 # ---- split state: each piece missing or replaced on its own must stop startup with a clear message ----
 # The data lives in two volumes (folio-db, folio-storage) plus the settings in .env. A piece replaced by an empty
 # volume is mounted through an extra override file, so the real volumes stay untouched for the next case.

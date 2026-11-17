@@ -271,7 +271,37 @@ scrape_configs:
 ## 備份
 
 資料庫和 `storage/` 是一體的：資料庫存資料夾、chunk 與向量，`storage/` 存產生它們的原始上傳檔。請在同
-一個時間點一起備份，也一起還原。用 compose 時：
+一個時間點一起備份，也一起還原。映像檔用一個指令就能做到（細節見[備份與還原](backup.zh-TW.md)）：
+
+```bash
+docker compose exec folio python main.py backup                 # → folio-backups volume（/app/backups）
+docker compose exec folio ls -l /app/backups
+docker compose cp folio:/app/backups/folio-backup-<time>.tar .  # 複製一份到機器外
+```
+
+`main.py backup` 會寫出一個封存檔（`folio-backup-<UTC 時間>.tar`：資料庫的 `pg_dump`、`storage/` 下的檔案，
+以及含 checksum 的 manifest）到 `/app/backups`，也就是映像檔的 `database.backup.dir`，compose 把它放在獨立的
+`folio-backups` volume。Folio 執行中也可以備份。映像檔內含 PostgreSQL 17 的客戶端工具，比內附的 pg16 伺服器新，
+沒有問題。封存檔請另外複製一份到別處：這個 volume 和資料在同一顆磁碟上。
+
+**排程備份：**在 `.env` 設 `FOLIO_BACKUP_ENABLED=true`（再 `docker compose up -d`）。Folio 會每
+`FOLIO_BACKUP_INTERVAL_HOURS`（24）小時寫一個封存檔到同一個 volume，保留最新的 `FOLIO_BACKUP_KEEP`（7）份；
+還沒有任何封存檔時，第一份在啟動兩分鐘後產生。`/health/detailed` 會顯示最新的封存檔與上一次的結果。
+
+**還原**時 Folio 必須停止（還有其他連線連到資料庫時會拒絕），所以用相同 volume 的一次性容器執行：
+
+```bash
+docker compose stop folio
+docker compose cp folio-backup-<time>.tar folio:/app/backups/   # 只有封存檔還不在 volume 裡時才需要
+docker compose run --rm --no-deps folio python main.py restore /app/backups/folio-backup-<time>.tar --force
+docker compose start folio
+```
+
+`--force` 會取代已經有資料表的資料庫，以及已經有資料夾的 `storage/`（還原到全新的 stack 時不需要）。原本的檔案
+不會被刪除，而是移到 storage volume 裡的 `storage/.folio-work/before-restore-<時間>/`；確認還原後的內容沒問題再
+刪掉那個目錄。`restore --check <archive>` 只驗證封存檔。
+
+**不用指令**，手動做法如下：
 
 ```bash
 docker compose stop folio                                       # 複製期間不要有寫入
@@ -308,12 +338,11 @@ Folio 啟動時會檢查資料庫和 `storage/` 是不是同一套資料；少�
 | 第一次啟動後才改了 `.env` 的 `POSTGRES_PASSWORD` | 拒絕啟動：`password authentication failed`。PostgreSQL 沿用建立 volume 時的密碼；請改回原本的密碼（或在 PostgreSQL 裡用 `ALTER USER` 改）。 |
 | 改了 `EMBEDDING_MODEL` 或 `EMBEDDING_DIMENSION` | 照常啟動；用舊模型索引的檔案會在主控台標成 **Re-index recommended**，維度不符時啟動記錄也會逐一列出資料夾的向量表。 |
 | `storage/.console_session_secret` 不見 | 產生新的再啟動：主控台使用者要重新登入，沒有其他東西依賴它。 |
+| 沒有掛上 `folio-backups` volume（override 或 `docker run` 沒帶） | 映像檔把 `/app/backups` 宣告為 volume，所以 Docker 會給它一個匿名 volume：封存檔不會隨容器消失，但名稱是隨機的（`docker volume ls`）。請掛上 `folio-backups`（或你自己的路徑），封存檔才會在你預期的地方。 |
+| `database.backup.dir` 指向 Folio 無法寫入的目錄 | `main.py backup` 與排程會拒絕並說明「cannot write to the backup directory …」，其他不受影響。 |
 
 啟用 `mcp-gate` profile 時，`mcp-gate-secrets` volume 和 `mcp-gate-data` 對不上，MCP Gate 會拒絕啟動。
 `scripts/docker_smoke.sh` 會用實際的映像檔逐一檢查這些情況。
-
-一個指令就完成這些事的 `folio backup` / `folio restore`，以及排程備份，是
-[roadmap](../ROADMAP.zh-TW.md) 上另外的工作。
 
 ## 升級
 

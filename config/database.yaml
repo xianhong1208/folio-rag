@@ -21,9 +21,9 @@ database:
   # Backups: `uv run python main.py backup` writes one archive (database + storage/);
   # `main.py restore <archive>` puts it back. See docs/backup.md.
   backup:
-    dir: "backups"                 # where archives go (relative = next to config/)
-    enabled: false                 # true = the server also makes one every interval_hours
-    interval_hours: 24
-    keep: 7                        # scheduled archives kept (the oldest are deleted)
+    dir: "backups"                 # where archives go (relative = next to config/; Docker: the folio-backups volume)
+    enabled: "${FOLIO_BACKUP_ENABLED:-false}"        # true = the server also makes one every interval_hours
+    interval_hours: "${FOLIO_BACKUP_INTERVAL_HOURS:-24}"
+    keep: "${FOLIO_BACKUP_KEEP:-7}"                   # scheduled archives kept (the oldest are deleted)
     pg_bin_dir: ""                 # where pg_dump / pg_restore are; empty = PATH
     folder_import_max_mb: 2048     # largest folder archive the console imports (MB)

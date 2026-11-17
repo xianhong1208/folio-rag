@@ -44,6 +44,7 @@ services:
     volumes:
       # Uploaded files. Back it up together with the database: one without the other is not a backup.
       - folio-storage:/app/storage
+      - folio-backups:/app/backups
       # Your own config directory instead of the built-in files (docs/deploy.md, "Configuration"):
       # - ./config:/app/config:ro
     depends_on:
@@ -91,6 +92,7 @@ services:
 
 volumes:
   folio-storage:
+  folio-backups:
   folio-db:
   mcp-gate-data:
   mcp-gate-secrets:
