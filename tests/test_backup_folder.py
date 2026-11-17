@@ -400,3 +400,24 @@ class TestConsoleHooks:
         """CEX-31"""
         e = F.FolderRefused("no tables")
         assert e.code == "refused" and e.reasons == ["no tables"] and str(e) == "no tables"
+
+
+def test_cex38_import_unpacks_inside_the_storage_root(tmp_path, monkeypatch):
+    """CEX-38 -- the staging directory is under storage/.folio-work (writable wherever storage/ is,
+    and on its filesystem), and it is removed when the import fails."""
+    monkeypatch.setattr(S, "_engine", lambda url: _FakeConn())
+    path = _export(tmp_path)
+    seen = {}
+
+    def fake_extract(archive, manifest, dest=None, layout=None):
+        seen["dest"] = Path(dest)
+        assert Path(dest).is_dir()
+        raise A.ArchiveError("stop here")
+    monkeypatch.setattr(F, "verify_and_extract", fake_extract)
+    with pytest.raises(A.ArchiveError):
+        TestImportChecks()._import(path, tmp_path)
+    storage = tmp_path / "storage"
+    assert seen["dest"].parent == storage / ".folio-work"
+    assert seen["dest"].name.startswith("import-")
+    assert not seen["dest"].exists()
+    assert oct((storage / ".folio-work").stat().st_mode & 0o777) == "0o700"

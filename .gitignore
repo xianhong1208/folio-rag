@@ -77,9 +77,6 @@ storage/*
 !storage/.gitkeep
 # Backup archives (main.py backup, database.backup.dir)
 backups/
-# Console folder exports waiting for download, uploads being imported, import staging
-.folio-console-archives/
-.folio-import-*/
 data/*
 
 # docling

@@ -193,7 +193,7 @@ def test_a_failed_import_leaves_nothing_behind(source, tmp_path, monkeypatch, wh
         F.import_folder(exp.path, db_url=_url(), storage_root=source.storage, owner=OWNER, rag_conf=RAG)
     assert (_q('SELECT count(*) FROM "Folders"'), _q('SELECT count(*) FROM "Files"')) == before
     assert not (source.storage / "sub_itest-folder-owner" / f"{source.folder.name}-2").exists()
-    assert not list(source.storage.parent.glob(".folio-import-*"))
+    assert not list(source.storage.glob(".folio-work/import-*"))
     # the transaction also rolled back the new vector table
     assert _q("SELECT count(*) FROM pg_tables WHERE tablename LIKE 'data\\_%' AND tablename <> :t",
               t=source.table) == [(0,)]

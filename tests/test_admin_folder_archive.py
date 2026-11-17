@@ -52,7 +52,7 @@ def env(tmp_path, monkeypatch):
     monkeypatch.setattr(AR, "check_expanded_size", lambda path, limit: None)
     with patch("db.cached_folderdb.CachedFolderDB.get_by_id", side_effect=FOLDERS.get), \
          patch("db.cached_folderdb.CachedFolderDB.invalidate_folder_caches"):
-        yield SimpleNamespace(storage=storage, work=tmp_path / "app" / AR.WORK_DIR_NAME)
+        yield SimpleNamespace(storage=storage, work=storage / ".folio-work" / "console")
 
 
 def _client(as_identity, ident):
@@ -309,11 +309,13 @@ class TestHelpers:
         assert sorted(p.name for p in tmp_path.iterdir()) == ["export-busy", "export-fresh"]
         assert AR.sweep(tmp_path / "missing") == 0
 
-    def test_cex21_work_dir_is_beside_storage_and_private(self, env):
-        """CEX-21"""
+    def test_cex21_work_dir_is_inside_storage_and_private(self, env):
+        """CEX-21 -- inside the storage root (the only writable place in the Docker image, and
+        the import's filesystem), under Folio's scratch directory."""
         d = AR.work_dir()
-        assert d == env.storage.resolve().parent / AR.WORK_DIR_NAME
+        assert d == env.storage / ".folio-work" / "console"
         assert oct(d.stat().st_mode & 0o777) == "0o700"
+        assert oct(d.parent.stat().st_mode & 0o777) == "0o700"
 
     def test_cex22_limit_comes_from_the_backup_config(self, monkeypatch):
         """CEX-22"""

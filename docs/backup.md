@@ -15,7 +15,7 @@ For a single folder, see [Exporting and importing one folder](#exporting-and-imp
 | Entry | What it is |
 |---|---|
 | `database.dump` | `pg_dump --format=custom` of Folio's database (compressed) |
-| `storage/…` | every file under `storage/`: the uploaded files and the console session secret |
+| `storage/…` | every file under `storage/`: the uploaded files and the console session secret (not Folio's scratch directory `storage/.folio-work/`) |
 | `manifest.json` | what the archive was made from (below) and a SHA-256 for every other entry |
 
 The manifest records the Folio version, the database migration revision, the embedding model and
@@ -198,7 +198,8 @@ another one, the import is refused; `--files-only` then imports the folder and i
 the index, and **Index** in the console builds it with this Folio's model. A different segmenter
 only warns: run **Rebuild FTS** on the folder. An export from a newer Folio is refused.
 
-The import checks every entry first, writes the database part in one transaction and moves the files
+The import unpacks into `storage/.folio-work/` (inside `storage/`, so on the same disk as the
+folders), checks every entry first, writes the database part in one transaction and moves the files
 into place before it commits, so a failed import leaves no folder behind. It can run while Folio is
 running; the folder list a running server keeps in its cache shows the new folder within three
 minutes. Only import archives you trust.
@@ -217,8 +218,9 @@ differences:
 - An export is refused (409) while an index job runs on the folder; wait for it on **Jobs**.
 - The server writes the archive first and the browser then downloads it once; an export nobody
   downloads is deleted after an hour.
-- The upload is streamed to a temporary file next to `storage/` (`.folio-console-archives/`) and
-  refused as soon as it passes `database.backup.folder_import_max_mb` (2048 MB by default). Raise it
+- The upload is streamed to a temporary file in `storage/.folio-work/console/` (Folio's scratch
+  directory inside `storage/`, so it works wherever `storage/` is writable, such as the Docker
+  volume; backups leave it out) and refused as soon as it passes `database.backup.folder_import_max_mb` (2048 MB by default). Raise it
   for bigger folders, and in a reverse proxy in front of Folio too (e.g. nginx's
   `client_max_body_size`). Temporary files are removed whatever the outcome.
 

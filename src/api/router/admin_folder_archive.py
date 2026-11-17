@@ -4,13 +4,14 @@ The archive is the one ``main.py export-folder`` writes (src/backup/folder.py), 
 export from the console imports with the command line and the other way round.
 
 - ``POST /api/admin/manage/folders/{id}/export`` writes the archive into a private
-  work directory and answers with an ``export_id``; ``GET
+  work directory (``storage/.folio-work/console``) and answers with an ``export_id``; ``GET
   /api/admin/manage/exports/{export_id}`` then downloads it once (the copy is deleted
   when the download ends, or after :data:`EXPORT_TTL_S` if it is never fetched). Two
   steps, so a refusal (an index job running on the folder: 409) is a JSON answer and
   not a broken download, and the browser streams the file instead of holding it.
 - ``POST /api/admin/manage/folders/import`` takes the archive as the raw request body
-  (``Content-Type: application/x-tar``), streamed to a temporary file and refused with
+  (``Content-Type: application/x-tar``), streamed to a temporary file under
+  ``storage/.folio-work/console`` and refused with
   413 as soon as it passes ``database.backup.folder_import_max_mb``. Query parameters:
   ``name`` (the new folder's name; default the exported one) and ``files_only``.
 
@@ -56,7 +57,6 @@ _Session = Depends(require_console_session)
 OPEN_MODE_OWNER = "console"
 # An export nobody downloads is deleted after this long (and so is a leftover upload).
 EXPORT_TTL_S = 3600
-WORK_DIR_NAME = ".folio-console-archives"
 _EXPORT_ID = re.compile(r"^[0-9a-f]{32}$")
 _META = "export.json"
 _WRITE_CHUNK = 1024 * 1024
@@ -72,13 +72,12 @@ def _storage_root() -> Path:
 
 
 def work_dir() -> Path:
-    """Private directory for exports waiting to be downloaded and uploads being imported.
-
-    Next to storage/ (the import unpacks there too, so files move into place without
-    a copy); never inside it, so a backup or an owner directory never sees it.
-    """
-    d = _storage_root().resolve().parent / WORK_DIR_NAME
-    d.mkdir(mode=0o700, parents=True, exist_ok=True)
+    """Private directory for exports waiting to be downloaded and uploads being imported:
+    ``storage/.folio-work/console`` (see src/storage/file_storage.py). The import unpacks
+    under ``storage/.folio-work`` too, so nothing crosses a filesystem boundary."""
+    from src.storage.file_storage import work_root
+    d = work_root(_storage_root()) / "console"
+    d.mkdir(mode=0o700, exist_ok=True)
     return d
 
 

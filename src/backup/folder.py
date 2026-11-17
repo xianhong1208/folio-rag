@@ -530,7 +530,9 @@ def import_folder(archive: Path, *, db_url: str, storage_root: Path, owner: Opti
 
         now = now or datetime.now(timezone.utc)
         storage_root.mkdir(parents=True, exist_ok=True)
-        staging = Path(tempfile.mkdtemp(prefix=".folio-import-", dir=storage_root.parent))
+        from src.storage.file_storage import work_root
+        # Inside storage/: writable wherever storage/ is, and on its filesystem (os.replace below).
+        staging = Path(tempfile.mkdtemp(prefix="import-", dir=work_root(storage_root)))
         target_dir: Optional[Path] = None
         try:
             log("verifying and unpacking the archive")

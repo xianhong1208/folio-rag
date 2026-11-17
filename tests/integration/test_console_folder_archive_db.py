@@ -35,7 +35,7 @@ def api(source, monkeypatch, as_identity, make_identity):  # noqa: F811
         app.include_router(router)
         return TestClient(as_identity(app, make_identity(owner)))
     return SimpleNamespace(a=client(OWNER), b=client(OWNER_B), AR=AR,
-                           work=source.storage.parent / AR.WORK_DIR_NAME)
+                           work=source.storage / ".folio-work" / "console")
 
 
 def _export(c, folder_id):
@@ -79,7 +79,10 @@ def test_cex32_export_download_and_import_as_another_person(source, api):  # noq
     from db.cached_folderdb import CachedFolderDB
     assert d["folder_id"] in {f.id for f in CachedFolderDB.get_by_user_token(OWNER_B)}
     assert list(api.work.iterdir()) == []
-    assert not list(source.storage.parent.glob(".folio-import-*"))
+    assert not list(source.storage.glob(".folio-work/import-*"))
+    # Everything temporary lived inside the storage root, under .folio-work (CEX-40).
+    assert sorted(p.name for p in (source.storage / ".folio-work").iterdir()) == ["console"]
+    assert not list(source.storage.parent.glob(".folio-*"))
 
 
 def test_cex33_running_job_and_model_mismatch(source, api, monkeypatch):  # noqa: F811
