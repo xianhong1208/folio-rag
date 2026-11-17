@@ -202,3 +202,36 @@ The import checks every entry first, writes the database part in one transaction
 into place before it commits, so a failed import leaves no folder behind. It can run while Folio is
 running; the folder list a running server keeps in its cache shows the new folder within three
 minutes. Only import archives you trust.
+
+### In the console
+
+On **Folders**, the **Export** button on a folder's row (and on the folder's own page) downloads the
+same archive; **Import** takes one back. The rules are those of the command line, with these
+differences:
+
+- You can export only your own folders, and an imported folder is always **yours** (the person you
+  are signed in as; `console` in open mode). Nothing in the request can choose another owner.
+- Another embedding model or dimension is refused with the reason and an **Import files only, then
+  index** button; the console then starts indexing the new folder with this Folio's model. The
+  **Files only** box does the same up front.
+- An export is refused (409) while an index job runs on the folder; wait for it on **Jobs**.
+- The server writes the archive first and the browser then downloads it once; an export nobody
+  downloads is deleted after an hour.
+- The upload is streamed to a temporary file next to `storage/` (`.folio-console-archives/`) and
+  refused as soon as it passes `database.backup.folder_import_max_mb` (2048 MB by default). Raise it
+  for bigger folders, and in a reverse proxy in front of Folio too (e.g. nginx's
+  `client_max_body_size`). Temporary files are removed whatever the outcome.
+
+Scripts use the same endpoints with `Authorization: Bearer <token>`:
+
+```bash
+curl -s -X POST -H "Authorization: Bearer $TOKEN" http://127.0.0.1:5039/api/admin/manage/folders/3/export
+# → {"data": {"download_url": "/api/admin/manage/exports/<id>", "file_name": "folio-folder-docs-….tar", …}}
+curl -s -H "Authorization: Bearer $TOKEN" -o docs.tar http://127.0.0.1:5039/api/admin/manage/exports/<id>
+curl -s -X POST -H "Authorization: Bearer $TOKEN" -H "Content-Type: application/x-tar" \
+     --data-binary @docs.tar "http://127.0.0.1:5039/api/admin/manage/folders/import?name=docs-copy"
+```
+
+`files_only=true` is the import's other parameter. Refusals answer `{"detail": {"error": <code>,
+"error_description": …}}` with `index_job_running` (409), `embedding_mismatch` (409),
+`newer_version` (409), `damaged_archive` (400), `too_large` (413) or `empty_upload` (400).

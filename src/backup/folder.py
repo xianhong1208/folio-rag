@@ -67,7 +67,21 @@ _INSERT_BATCH = 500
 
 
 class FolderRefused(S.BackupRefused):
-    """A precondition of an export or import failed."""
+    """A precondition of an export or import failed.
+
+    ``code`` says which one, for callers that answer differently per case (the
+    console): ``not_found``, ``newer_version``, ``embedding_mismatch``, or ``refused``.
+    ``reasons`` are the problems without the command-line hints.
+    """
+
+    def __init__(self, message: str, *, code: str = "refused", reasons: Optional[List[str]] = None):
+        super().__init__(message)
+        self.code = code
+        self.reasons = list(reasons) if reasons else [message]
+
+
+# Added to an embedding mismatch on the command line (the console offers its own option).
+FILES_ONLY_HINT = "pass --files-only to import the files without the index and index the folder here"
 
 
 @dataclass
@@ -149,14 +163,14 @@ def _find_folder(conn, folder_id: Optional[int], owner_key: Optional[str],
     if folder_id is not None:
         row = conn.execute(text('SELECT * FROM "Folders" WHERE id = :i'), {"i": folder_id}).mappings().first()
         if row is None:
-            raise FolderRefused(f"there is no folder {folder_id}")
+            raise FolderRefused(f"there is no folder {folder_id}", code="not_found")
         return dict(row)
     if not (owner_key and name):
         raise FolderRefused("name the folder: --id, or --owner with --name")
     row = conn.execute(text('SELECT * FROM "Folders" WHERE user_token = :o AND name = :n'),
                        {"o": owner_key, "n": name}).mappings().first()
     if row is None:
-        raise FolderRefused(f"{owner_key!r} has no folder named {name!r}")
+        raise FolderRefused(f"{owner_key!r} has no folder named {name!r}", code="not_found")
     return dict(row)
 
 
@@ -175,9 +189,14 @@ def _stored_file(file_path: str, storage_root: Path) -> Optional[Path]:
 def export_folder(*, db_url: str, storage_root: Path, folder_id: Optional[int] = None,
                   owner: Optional[str] = None, name: Optional[str] = None,
                   out_dir: Optional[Path] = None, out_path: Optional[Path] = None, rag_conf=None,
+                  require_owner: Optional[str] = None,
                   now: Optional[datetime] = None, log: Callable[[str], None] = lambda m: None
                   ) -> ExportResult:
-    """Write one folder to an archive; raise FolderRefused / ArchiveError."""
+    """Write one folder to an archive; raise FolderRefused / ArchiveError.
+
+    ``require_owner`` (an owner key) refuses a folder someone else owns as if it did
+    not exist; it is checked in the export's own transaction.
+    """
     now = now or datetime.now(timezone.utc)
     owner_key = resolve_owner(owner) if owner else None
     warnings: List[str] = []
@@ -191,6 +210,8 @@ def export_folder(*, db_url: str, storage_root: Path, folder_id: Optional[int] =
                 if not S._has_table(conn, "Folders"):
                     raise FolderRefused("this database has no Folio tables (no \"Folders\" table)")
                 folder = _find_folder(conn, folder_id, owner_key, name)
+                if require_owner is not None and folder.get("user_token") != require_owner:
+                    raise FolderRefused(f"there is no folder {folder['id']}", code="not_found")
                 jobs = [j for j in S.active_jobs(conn, now) if j["folder_id"] == folder["id"]]
                 if jobs:
                     raise S.JobsRunning(f"{len(jobs)} index job(s) are pending or running on folder "
@@ -291,22 +312,31 @@ def export_folder(*, db_url: str, storage_root: Path, folder_id: Optional[int] =
 
 def compatibility(manifest: Dict[str, Any], *, target: Dict[str, Any], revisions: List[str],
                   version: str, files_only: bool) -> Tuple[List[str], List[str]]:
-    """(blocking problems, warnings) for importing ``manifest`` into this Folio.
+    """(blocking problems, warnings); see :func:`check_compatibility`."""
+    blocking, warnings = check_compatibility(manifest, target=target, revisions=revisions,
+                                             version=version, files_only=files_only)
+    return [msg + ("; " + FILES_ONLY_HINT if code == "embedding_mismatch" else "")
+            for code, msg in blocking], warnings
+
+
+def check_compatibility(manifest: Dict[str, Any], *, target: Dict[str, Any], revisions: List[str],
+                        version: str, files_only: bool) -> Tuple[List[Tuple[str, str]], List[str]]:
+    """([(code, problem)], warnings) for importing ``manifest`` into this Folio.
 
     ``target`` is :func:`src.backup.service.effective_settings` of this Folio. The
     chunks carry vectors from the models in ``indexed_embeddings`` with the table's
     dimension; this Folio embeds queries with ``target``'s model, so anything else is
     refused unless ``files_only``.
     """
-    blocking: List[str] = []
+    blocking: List[Tuple[str, str]] = []
     warnings: List[str] = []
     rev = manifest.get("alembic_revision")
     if rev and rev not in revisions:
-        blocking.append(f"the export was made by a newer Folio ({manifest.get('folio_version')}, database "
-                        f"revision {rev}) than this one ({version})")
+        blocking.append(("newer_version", f"the export was made by a newer Folio ({manifest.get('folio_version')}, database "
+                        f"revision {rev}) than this one ({version})"))
     elif S._version_tuple(manifest.get("folio_version")) > S._version_tuple(version):
-        blocking.append(f"the export was made by Folio {manifest.get('folio_version')}, newer than this "
-                        f"Folio ({version})")
+        blocking.append(("newer_version", f"the export was made by Folio {manifest.get('folio_version')}, "
+                         f"newer than this Folio ({version})"))
     folder = manifest.get("folder") or {}
     vt = manifest.get("vector_table") or {}
     if folder.get("chunks") and not files_only:
@@ -320,11 +350,10 @@ def compatibility(manifest: Dict[str, Any], *, target: Dict[str, Any], revisions
         if vt.get("dimension") and vt.get("dimension") != want_dim:
             problems.append(f"they have dimension {vt.get('dimension')}")
         if problems:
-            blocking.append(f"{' and '.join(problems)}, but this Folio uses {want_model} ({want_dim}); "
-                            "pass --files-only to import the files without the index and index the "
-                            "folder here")
+            blocking.append(("embedding_mismatch",
+                             f"{' and '.join(problems)}, but this Folio uses {want_model} ({want_dim})"))
     if files_only and folder.get("chunks"):
-        warnings.append("imported without the index (--files-only): index the folder in the console")
+        warnings.append("imported without the index (files only): index the folder in the console")
     seg = (manifest.get("vector_table") or {}).get("segmenter")
     here = (target.get("segmenter") or {}).get("name")
     if not files_only and folder.get("chunks") and seg and here and seg != here:
@@ -446,15 +475,18 @@ def _create_vector_table(conn, table: str, dimension: int, segmenter: Optional[s
         _write_tsv_segmenter(conn, table, segmenter)
 
 
-def import_folder(archive: Path, *, db_url: str, storage_root: Path, owner: str,
+def import_folder(archive: Path, *, db_url: str, storage_root: Path, owner: Optional[str] = None,
+                  owner_key: Optional[str] = None,
                   name: Optional[str] = None, files_only: bool = False, check_only: bool = False,
                   rag_conf=None, revisions: Optional[List[str]] = None, version: Optional[str] = None,
                   now: Optional[datetime] = None, log: Callable[[str], None] = lambda m: None
                   ) -> ImportResult:
     """Verify ``archive`` and import it as a new folder of ``owner``.
 
-    Raises FolderRefused on a version or embedding mismatch (see :func:`compatibility`),
-    ArchiveError on a damaged archive.
+    ``owner`` is resolved like ``--owner``; ``owner_key`` is an owner key used as it
+    is (the console passes its session's). Raises FolderRefused on a version or
+    embedding mismatch (see :func:`check_compatibility`), ArchiveError on a damaged
+    archive.
     """
     from db.folder_claim_db import lock_owner, owner_names
     from src.adapter.folder_claim import free_name
@@ -463,7 +495,13 @@ def import_folder(archive: Path, *, db_url: str, storage_root: Path, owner: str,
 
     archive = Path(archive)
     manifest = read_manifest(archive, FOLDER_EXPORT)
-    owner_key = resolve_owner(owner)
+    if owner_key is None:
+        owner_key = resolve_owner(owner or "")
+    else:
+        try:
+            owner_dir_name(owner_key)
+        except ValueError as e:
+            raise FolderRefused(f"{owner_key!r} is not a usable owner: {e}") from e
     wanted = normalize_name(name) if name else str((manifest.get("folder") or {}).get("name") or "")
     try:
         _validate_safe_name(wanted, "folder name")
@@ -478,11 +516,13 @@ def import_folder(archive: Path, *, db_url: str, storage_root: Path, owner: str,
             if not S._has_table(conn, "Folders"):
                 raise FolderRefused("this database has no Folio tables: start Folio once first")
             target = S.effective_settings(conn, rag_conf)
-        blocking, warnings = compatibility(
+        problems, warnings = check_compatibility(
             manifest, target=target, revisions=revisions if revisions is not None else S.code_revisions(),
             version=version or S.current_version(), files_only=files_only)
-        if blocking:
-            raise FolderRefused("; ".join(blocking))
+        if problems:
+            raise FolderRefused(
+                "; ".join(m + ("; " + FILES_ONLY_HINT if c == "embedding_mismatch" else "") for c, m in problems),
+                code=problems[0][0], reasons=[m for _, m in problems])
         if check_only:
             log("verifying every entry's checksum")
             verify_and_extract(archive, manifest, layout=FOLDER_EXPORT)

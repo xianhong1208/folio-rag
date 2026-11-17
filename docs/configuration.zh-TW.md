@@ -55,6 +55,7 @@ Docker 映像檔自己的 `models.yaml` 還會讀幾個變數（模型名稱、�
 | `server.port` | `5039` | HTTP + MCP 綁定 port。MCP 端點是 `/mcp`。 |
 | `FOLIO_STORAGE_ROOT` | 專案根目錄 | 放 `storage/`（上傳檔案與主控台 session 金鑰）的目錄。 |
 | `database.backup.{dir,enabled,interval_hours,keep,pg_bin_dir}` | `backups`、`false`、`24`、`7`、PATH | `main.py backup` 寫出封存檔的位置,以及伺服器自己的備份排程(預設關閉)與保留份數,見[備份與還原](backup.zh-TW.md)。 |
+| `database.backup.folder_import_max_mb` | `2048` | console **Import** 接受的資料夾封存檔上限(MB);上傳以串流寫入,一超過就回 413,見[在 console 裡](backup.zh-TW.md#在-console-裡)。 |
 | `FOLIO_INDEXING_CONCURRENCY`、`FOLIO_PER_FILE_TIMEOUT_SECONDS`、`FOLIO_JOB_TIMEOUT_SECONDS` | 取自 `rag.indexing` | 索引上限的執行期覆寫。改名前的 `RAG_*` 舊名仍可用,但會記一筆 deprecation 警告。 |
 | `auth.enabled` / `MCP_GATE_URL` / `FOLIO_AUDIENCE` | `true` / MCP Gate 位址 / 本伺服器 `/mcp` URL | 對 MCP Gate 做 OAuth 2.1 驗證(`auth.issuer`、`auth.audience`)。 |
 | `auth.console.session_hours` | `8` | 主控台 session 最長時數(token 到期時也會一併結束)。 |

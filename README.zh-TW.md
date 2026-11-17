@@ -53,7 +53,7 @@ Folio 是一套開源、給 Model Context Protocol 用的檢索增強生成(RAG)
   評測、即時設定、健康狀態與稽核紀錄。
 - **一個指令備份與還原。** `main.py backup` 把資料庫、每個資料夾的向量與儲存的檔案一起封存,附上一份
   `main.py restore` 會檢查的 manifest;伺服器也能依排程自動備份。`main.py export-folder` /
-  `import-folder` 可以把單一資料夾連同檔案與索引搬到另一個 Folio,或留一份副本。
+  `import-folder` 可以把單一資料夾連同檔案與索引搬到另一個 Folio,或留一份副本;console 的 Folders 頁面也能做。
 - **Prometheus 監控指標**在 [`/metrics`](docs/metrics.zh-TW.md):請求、搜尋各階段延遲、MCP 工具呼叫、
   索引工作與模型端點呼叫,任何標籤都不含資料夾或使用者名稱。
 - **本機 GPU、CPU 或雲端。** 行程內模型可跑在 AMD ROCm、NVIDIA CUDA 或 CPU 上,也可以讓所有模型都走

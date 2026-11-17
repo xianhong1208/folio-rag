@@ -61,7 +61,7 @@ an OpenAI-compatible API).
 - **Backup and restore in one command.** `main.py backup` archives the database, every folder's
   vectors and the stored files together, with a manifest that `main.py restore` checks; the server
   can also back up on a schedule. `main.py export-folder` / `import-folder` move one folder, with its
-  files and index, to another Folio or keep a copy of it.
+  files and index, to another Folio or keep a copy of it — also from the console's Folders page.
 - **Prometheus metrics** at [`/metrics`](docs/metrics.md): requests, per-stage search latency, MCP
   tool calls, index jobs and model endpoint calls, with no folder or user names in any label.
 - **Local GPU, CPU or cloud.** AMD ROCm, NVIDIA CUDA or CPU for in-process models, or every model
