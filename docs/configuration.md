@@ -42,7 +42,8 @@ lists every variable. An empty value means "not set".
 | `LLM_BASE_URL`, `LLM_API_KEY` | `rag.llm.*` | `http://localhost:5052/v1`, `not-needed` |
 | `CONTEXTUAL_LLM_BASE_URL`, `CONTEXTUAL_LLM_API_KEY` | `rag.contextual_llm.*` (commented out in `models.yaml`) | empty (inherit `rag.llm`) |
 | `RERANK_BASE_URL`, `RERANK_API_KEY` | `rag.rerank.*` | `http://localhost:8787`, `not-needed` |
-| `ASR_BASE_URL`, `ASR_API_KEY` | `rag.asr.*` | empty |
+| `ASR_BASE_URL`, `ASR_API_KEY`, `ASR_MODEL` | `rag.asr.*`: the OpenAI-compatible transcription endpoint ([Moving speech-to-text to an endpoint](migrate-asr.md)) | empty (audio uploads are refused) |
+| `ASR_CA_FILE` | `rag.asr.ca_file`: a PEM CA certificate added to the default trust for that endpoint (Forgeyard's own CA) | empty |
 | `VISION_BASE_URL`, `VISION_API_KEY` | `rag.parsing.vision.*` (commented out in `models.yaml`) | empty |
 | `DOCLING_DEVICE` | `rag.docling.device` | `cuda` |
 | `CKIP_DEVICE` | `rag.retrieval.ckip_device` | `cpu` |
@@ -81,7 +82,8 @@ The settings you are likely to touch:
 | `rag.retrieval.rerank_candidates` | `60` | `fused` pool only: `max(3 × top_k, this)` fused candidates go to the cross-encoder; live-tunable (1–200). |
 | `rag.retrieval.mcp_response_token_budget` | `6000` | Estimated-token cap on an MCP search response; lowest-ranked results are dropped to fit and the response says so. `0` = no cap. |
 | `rag.retrieval.min_relevance` | `0.9` in the shipped config (`0` when unset) | MCP search: best rerank score below this → `low_relevance: true` (flagged, not dropped). Model-specific; `0` = off. |
-| `rag.asr.provider` | `fireredasr` | Audio transcription: `fireredasr` (local zh-TW) · `docling-whisper` · `openai-compatible`. `rag.asr.enabled: false` fails audio files with a clear message (nothing is transcribed). `fireredasr` and `docling-whisper` are **removed in 1.5**: move to `openai-compatible` ([details](api.md#removed-in-15-built-in-ocr-speech-to-text-and-the-v1-media-endpoints)). |
+| `rag.asr.*` | `openai-compatible`, no endpoint | Audio transcription through an OpenAI-compatible `POST {base_url}/audio/transcriptions` (Forgeyard, speaches, vLLM, OpenAI). Without `base_url`, or with `rag.asr.enabled: false`, audio uploads are refused with 422 and the reason. `rag.asr.provider` takes only `openai-compatible`: the in-process `fireredasr` and `docling-whisper` were **removed in 1.5** and stop the start with a pointer to [the migration guide](migrate-asr.md). |
+| `rag.asr.chinese_conversion` | `s2twp` | Chinese script of the transcript: `s2twp` turns whisper's Simplified Chinese into Traditional with Taiwan phrasing (OpenCC); `none` keeps what the endpoint returns. Text without Chinese characters is never changed. Live. |
 | `rag.retrieval.segmenter` | `ckip` (`bigram` under `profile: cloud`) | Chinese segmenter for keyword search: `ckip` · `jieba` · `bigram` (see *Chinese segmentation* in [How Folio works](how-it-works.md)). |
 | `rag.docling.ocr_enabled` | `true` | OCR for scanned PDFs and images. `false` really skips it (restart to apply); a scan with no text layer then fails with a clear message. The built-in OCR is **removed in 1.5**: use cloud parsing with `rag.parsing.vision` ([details](api.md#removed-in-15-built-in-ocr-speech-to-text-and-the-v1-media-endpoints)). |
 | `rag.contextual_retrieval.max_doc_chars` | `60000` | Upper bound on the document text the LLM reads per chunk. It reads the outline plus the chunk's own section, windowed to at most 12,000 characters. |
@@ -154,6 +156,7 @@ rag:
     base_url: https://api.openai.com/v1
     model: whisper-1
     api_key: "${OPENAI_API_KEY}"
+    chinese_conversion: s2twp   # Simplified -> Traditional (Taiwan); none = keep
     segment_seconds: 600    # long audio is uploaded in silence-aligned pieces
 
   retrieval:
@@ -163,13 +166,13 @@ rag:
 
 What the profile does:
 
-- **Validation.** `cloud` refuses in-process providers (`huggingface` embedding, `fireredasr` /
-  `docling-whisper` ASR, local PDF/image parsing) and **rejects API keys that are not `${ENV}`
+- **Validation.** `cloud` refuses in-process providers (`huggingface` embedding, local PDF/image
+  parsing) and **rejects API keys that are not `${ENV}`
   references** — a cloud key is a billable credential and the config files are what gets
   copied around. An explicit `rag.retrieval.segmenter: ckip` is rejected too. Startup fails with the offending paths. `hybrid` only warns about literal keys;
   `local` (the default — existing configs are unchanged) checks nothing new.
 - **Nothing local is imported.** The HuggingFace embedding provider, docling's layout/OCR
-  models, Whisper, FireRedASR and CKIP are imported only when selected; startup skips the docling
+  models and CKIP are imported only when selected (speech-to-text is always an endpoint); startup skips the docling
   warm-up and logs where every role runs. `tests/test_cloud_profile_no_local_models.py` proves it
   by running the whole pipeline on an install without the local stack.
 - **Cloud PDF and image parsing.** Every page is transcribed to Markdown by the vision model,
@@ -179,9 +182,9 @@ What the profile does:
   backoff and, if they still fail, marked in the text instead of failing the file. Chunks keep the
   page they start on for citations. Per-file and per-day page caps bound the cost. The
   unauthenticated `/v1/ocr/general` endpoint is not routed to the paid model.
-- **Cloud speech-to-text.** Audio is resampled and uploaded in segments cut at silences (so no
-  request exceeds an upload limit), with retries, and re-asked when a transcript is empty despite
-  speech or loops.
+- **Speech-to-text** (every profile). Audio is resampled and uploaded in segments cut at silences
+  (so no request exceeds an upload limit), with retries, and re-asked when a transcript is empty
+  despite speech or loops.
 - **Retries and timeouts per role** (`timeout`, `max_retries`): 429 / 5xx / timeouts back off
   exponentially with jitter and honour `Retry-After`.
 - **Chinese BM25.** CKIP is a local torch model, so the cloud profile segments Chinese with the
@@ -241,6 +244,11 @@ What else changed:
   converter drops the two sections (it says so), a leftover in `models.yaml` is ignored with a
   warning, and settings stored for them on the console's Settings page are deleted at startup
   with a warning.
+- **Speech-to-text only through an endpoint.** `rag.asr.provider: fireredasr` or `docling-whisper`
+  stops the start. The converter rewrites it to `openai-compatible` and says so; set
+  `ASR_BASE_URL`, `ASR_API_KEY` and `ASR_MODEL` in `.env` as [the migration guide](migrate-asr.md)
+  shows. Until then the server runs and refuses audio uploads. A provider stored on the console's
+  Settings page is deleted at startup with a warning.
 - **Module wiring** (`modules.<name>.api_router` / `mcp_tools`) is no longer configurable; only
   `modules.enabled` remains. A wiring block in `mcp.yaml` is refused at startup, and an unknown
   module name too.

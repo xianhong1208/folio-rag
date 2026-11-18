@@ -132,13 +132,76 @@ class TestSegmentedUpload:
             assert r.text == "hello" and len(srv.posts("/audio/transcriptions")) == 3
         assert slept[0] == 1.0  # Retry-After honoured
 
-    def test_auth_error_is_not_retried(self, tmp_path):
+    @pytest.mark.parametrize("status", [401, 403])
+    def test_auth_error_is_not_retried_and_names_the_key(self, tmp_path, status):
+        """A wrong key fails the file with what to check (the failure tag), never an empty index."""
         audio = _wav(tmp_path / "a.wav", [(2, True)])
         with FakeModelServer() as srv:
-            srv.fail_next = [(401, None)]
-            with pytest.raises(httpx.HTTPStatusError):
+            srv.fail_next = [(status, None)]
+            with pytest.raises(RuntimeError, match=f"HTTP {status}.*rag.asr.api_key"):
                 _provider(srv).transcribe(audio_path=str(audio), file_name="a.wav")
             assert len(srv.posts("/audio/transcriptions")) == 1
+
+    def test_other_http_errors_still_raise(self, tmp_path):
+        audio = _wav(tmp_path / "a.wav", [(2, True)])
+        with FakeModelServer() as srv:
+            srv.fail_next = [(404, None)]
+            with pytest.raises(httpx.HTTPStatusError):
+                _provider(srv).transcribe(audio_path=str(audio), file_name="a.wav")
+
+    def test_endpoint_down_names_the_endpoint(self, tmp_path):
+        import socket
+        audio = _wav(tmp_path / "a.wav", [(1, True)])
+        with socket.socket() as sock:
+            sock.bind(("127.0.0.1", 0))
+            port = sock.getsockname()[1]  # closed again before the request: nothing listens
+        p = OpenAICompatibleAsrProvider(base_url=f"http://127.0.0.1:{port}/v1", max_retries=1,
+                                        sleep=lambda s: None)
+        with pytest.raises(RuntimeError, match=f"127.0.0.1:{port}/v1/audio/transcriptions could not be reached"):
+            p.transcribe(audio_path=str(audio), file_name="a.wav")
+
+    def test_untrusted_certificate_points_at_ca_file(self, tmp_path, monkeypatch):
+        audio = _wav(tmp_path / "a.wav", [(1, True)])
+
+        def refuse(self, request, **kw):
+            raise httpx.ConnectError("[SSL: CERTIFICATE_VERIFY_FAILED] certificate verify failed")
+        monkeypatch.setattr(httpx.Client, "send", refuse)
+        p = OpenAICompatibleAsrProvider(base_url="https://stt.example/v1", max_retries=0, sleep=lambda s: None)
+        with pytest.raises(RuntimeError, match="does not trust.*rag.asr.ca_file"):
+            p.transcribe(audio_path=str(audio), file_name="a.wav")
+
+    def test_simplified_chinese_becomes_traditional_and_english_is_kept(self, tmp_path):
+        audio = _wav(tmp_path / "a.wav", [(2, True)])
+        with FakeModelServer() as srv:
+            srv.transcribe_reply = lambda f: {"text": "我们今天讨论软件和视频。"}
+            r = _provider(srv).transcribe(audio_path=str(audio), file_name="a.wav")
+            assert r.text == "我們今天討論軟體和影片。"
+            assert r.chunks[0]["text"] == r.text
+            srv.transcribe_reply = lambda f: {"text": "We discussed the software release."}
+            assert _provider(srv).transcribe(audio_path=str(audio), file_name="a.wav").text == \
+                "We discussed the software release."
+            srv.transcribe_reply = lambda f: {"text": "我们今天讨论"}
+            assert _provider(srv, chinese_conversion="none").transcribe(
+                audio_path=str(audio), file_name="a.wav").text == "我们今天讨论"
+
+    def test_ca_file_is_the_client_trust(self, tmp_path, monkeypatch):
+        audio = _wav(tmp_path / "a.wav", [(1, True)])
+        seen = {}
+        real = ap.metered_client
+
+        def spy(role, **kw):
+            seen.update(kw)
+            return real(role, **kw)
+        monkeypatch.setattr(ap, "metered_client", spy)
+        import ssl
+        ctx = ssl.create_default_context()
+        asked = []
+        monkeypatch.setattr(ap, "tls_verify", lambda f: (asked.append(f), ctx if f else True)[1])
+        with FakeModelServer() as srv:
+            _provider(srv).transcribe(audio_path=str(audio), file_name="a.wav")
+            assert seen["verify"] is True
+            _provider(srv, ca_file="/x.pem").transcribe(audio_path=str(audio), file_name="a.wav")
+            assert seen["verify"] is ctx and asked == [None, "/x.pem"]
 
     def test_no_key_sends_no_auth_header(self, tmp_path):
         audio = _wav(tmp_path / "a.wav", [(1, True)])

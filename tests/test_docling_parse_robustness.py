@@ -36,8 +36,6 @@ class TestOcrSwitch:
         monkeypatch.setattr(dl, "_converter", None)
         monkeypatch.setattr(dl, "_apply_docling_env", lambda: None)
         monkeypatch.setattr(dl, "_resolve_artifacts_path", lambda: None)
-        monkeypatch.setattr(dl, "_resolve_whisper_path", lambda: None)
-        monkeypatch.setattr(dl, "asr_wants_local_whisper", lambda: False)
         monkeypatch.setattr(dl, "ocr_enabled", lambda: on)
         monkeypatch.setattr("docling.document_converter.DocumentConverter", _FakeConverter)
         try:
@@ -48,6 +46,12 @@ class TestOcrSwitch:
         opts = captured["fo"][InputFormat.PDF].pipeline_options
         assert opts.do_ocr is on
         assert captured["fo"][InputFormat.IMAGE].pipeline_options.do_ocr is on
+        assert InputFormat.AUDIO not in captured["fo"]  # speech-to-text is the rag.asr endpoint
+
+    def test_audio_is_never_a_docling_format(self):
+        for name in ("a.wav", "b.MP3", "c.m4a", "d.flac", "e.ogg", "f.aac"):
+            assert dl.is_docling_supported(name) is False
+        assert dl.is_docling_supported("a.pdf") is True
 
 
 def _real_md_result(tmp_path):
@@ -154,16 +158,3 @@ class TestDocumentLoaderParseWarning:
              patch("src.domain.rag.document_loader.docling_convert_once", return_value=("", [])):
             with pytest.raises(ValueError, match="Empty content"):
                 self._loader().load(file_path="s/x", file_id="1", file_name="e.docx")
-
-
-class TestMediaSwitches:
-    def test_asr_disabled_helper(self):
-        from src.api.router.media import _asr_disabled
-        cfg = SimpleNamespace(rag=SimpleNamespace(asr=SimpleNamespace(enabled=False)))
-        with patch("src.config.config_manager.Config.get_config_model", return_value=cfg):
-            assert _asr_disabled() is True
-        cfg.rag.asr.enabled = True
-        with patch("src.config.config_manager.Config.get_config_model", return_value=cfg):
-            assert _asr_disabled() is False
-        with patch("src.config.config_manager.Config.get_config_model", side_effect=RuntimeError):
-            assert _asr_disabled() is False

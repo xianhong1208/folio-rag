@@ -46,6 +46,7 @@ def load_overrides_on_startup() -> int:
     ro.capture_startup(config_model)
     overrides = RuntimeSettingsDB.load_all()
     overrides = _drop_removed_roles(overrides)
+    overrides = _drop_asr_provider(overrides)
     if not overrides:
         return 0
     applied = 0
@@ -79,6 +80,26 @@ def _drop_removed_roles(overrides: Dict[str, Any]) -> Dict[str, Any]:
             continue
         kept[path] = value
     return kept
+
+
+def _drop_asr_provider(overrides: Dict[str, Any]) -> Dict[str, Any]:
+    """Delete a stored ``rag.asr.provider`` override (1.5): openai-compatible is the only
+    provider, so the console no longer offers the choice. A row naming a removed in-process
+    provider (docling-whisper, fireredasr) is dropped with a warning that points at the
+    migration guide; rag.asr then follows config/models.yaml, and audio uploads are refused
+    until base_url is set there or in the console. Returns the rest."""
+    from src.config.model import ASR_MIGRATION_GUIDE, REMOVED_ASR_PROVIDERS
+    value = overrides.get("rag.asr.provider")
+    if "rag.asr.provider" not in overrides:
+        return overrides
+    RuntimeSettingsDB.delete("rag.asr.provider")
+    if str(value).strip().lower() in REMOVED_ASR_PROVIDERS:
+        logger.warning(f"[RUNTIME] Dropped stored setting rag.asr.provider={value!r}: in-process "
+                       "speech-to-text was removed in Folio 1.5. Audio now goes to rag.asr.base_url "
+                       f"(an OpenAI-compatible endpoint); see {ASR_MIGRATION_GUIDE}.")
+    else:
+        logger.info("[RUNTIME] Dropped stored setting rag.asr.provider: openai-compatible is the only provider")
+    return {k: v for k, v in overrides.items() if k != "rag.asr.provider"}
 
 
 def get_settings_view() -> Dict[str, Any]:

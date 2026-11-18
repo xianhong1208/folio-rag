@@ -8,13 +8,10 @@ Paths:
 2. PDFs / images when rag.parsing selects cloud (the default under profile: cloud):
    cloud_parser — a vision model transcribes every page; the pages are re-assembled into
    one document and chunked by the same chunker as the docling path.
-3. docling-supported formats: docling_convert_once (audio is first silence-trimmed, then passed
-   through Whisper hallucination filtering).
-4. Fallback: SimpleDirectoryReader.
-
-The whisper anti-hallucination patch (audio_defense) is applied by docling_loader._build_converter
-right before it installs the local Whisper pipeline, so importing this module never imports
-whisper/torch.
+3. Audio: the injected AsrProvider (the rag.asr OpenAI-compatible endpoint), with
+   leading-silence trimming before and Whisper hallucination filtering after.
+4. docling-supported formats: docling_convert_once.
+5. Fallback: SimpleDirectoryReader.
 """
 
 from __future__ import annotations
@@ -110,8 +107,8 @@ class DocumentLoader:
         self._embedding_model_name = embedding_model_name
         # Only affects the docling_max_tokens formula (the contextual prefix consumes token budget)
         self._has_context_generator = has_context_generator
-        # Audio transcription uses the injected provider; when not injected, defaults to
-        # docling-whisper (available() follows the existing auto-discover semantics)
+        # Audio transcription uses the injected provider; when not injected, speech-to-text
+        # is unconfigured and audio fails with a message saying what to set
         self._asr_provider = asr_provider or create_asr_provider(None)
         self._asr_enabled = asr_enabled
 
@@ -165,22 +162,19 @@ class DocumentLoader:
             return Document(text=content, metadata=base_metadata, doc_id=doc_id)
 
         # Audio uses the injected AsrProvider (trim → transcribe → hallucination filter).
-        # The config-selected provider is the ONLY speech source: if it can't serve, raise
-        # an explicit error (file marked failed) rather than silently switching models or
-        # skipping. Only rag.asr.enabled=false means "explicitly do not transcribe".
+        # It is the ONLY speech source: if it can't serve, raise an explicit error (file
+        # marked failed) rather than indexing an empty file. Uploads are already refused
+        # in that state (asr_upload_refusal); this covers files stored before.
         if file_extension in _AUDIO_TRIM_EXTENSIONS and not self._asr_enabled:
-            # Off means off: never fall through to docling's whisper or SimpleDirectoryReader.
+            # Off means off: never fall through to docling or SimpleDirectoryReader.
             raise ValueError(
                 f"Speech-to-text is disabled (rag.asr.enabled=false), so '{file_name}' was "
                 "not transcribed. Enable it and re-index the file to include it."
             )
         if file_extension in _AUDIO_TRIM_EXTENSIONS:
             if not self._asr_provider.available():
-                raise RuntimeError(
-                    f"The configured rag.asr provider is not available (weights or endpoint "
-                    f"not ready), so '{file_name}' cannot be transcribed. Check assets/ or "
-                    "the rag.asr settings; set rag.asr.enabled=false to skip audio on purpose."
-                )
+                from src.domain.rag.asr_provider import NOT_CONFIGURED
+                raise RuntimeError(f"{NOT_CONFIGURED}, so '{file_name}' cannot be transcribed.")
             return self._load_audio(
                 resolved_path=resolved_path,
                 file_name=file_name,

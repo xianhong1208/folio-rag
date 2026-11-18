@@ -49,6 +49,27 @@ def _opencc_converter(config: str):
         return _converters[config]
 
 
+# rag.asr.chinese_conversion values: OpenCC configs applied to whole transcripts.
+CHINESE_CONVERSIONS = ("s2twp", "none")
+
+
+def convert_chinese(text: str, mode: Optional[str]) -> str:
+    """Convert a speech-to-text transcript's Chinese script (``rag.asr.chinese_conversion``).
+
+    ``s2twp`` turns Simplified into Traditional Chinese with Taiwan phrasing (whisper writes
+    Simplified Chinese); ``none`` (or empty) keeps the text as it came. Unlike
+    ``fix_simplified`` this converts the whole text: a transcript has no original wording
+    to protect. Text without Han characters (English, numbers) comes back unchanged.
+    """
+    if not text or not mode or mode == "none":
+        return text
+    if mode not in CHINESE_CONVERSIONS:
+        raise ValueError(f"Unknown rag.asr.chinese_conversion {mode!r}: use one of {CHINESE_CONVERSIONS}")
+    if not _HAN.search(text):
+        return text
+    return _opencc_converter(mode).convert(text)
+
+
 @lru_cache(maxsize=8192)
 def _variant_kind(ch: str) -> int:
     """+1 Traditional-only, -1 Simplified-only, 0 shared / not convertible."""

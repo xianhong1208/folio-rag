@@ -4,7 +4,6 @@ per-role settings view: env-referenced secrets, key indicators, profile enforcem
 Every endpoint is the in-process fake server; no network, no keys.
 """
 
-from types import SimpleNamespace
 from unittest.mock import patch
 
 import pytest
@@ -94,22 +93,29 @@ class TestProbes:
     def test_disabled_and_local_roles_send_nothing(self):
         rag = _config(rerank={"enabled": False},
                       embedding={"provider": "huggingface", "model": "BAAI/bge-m3", "dimension": 8},
-                      parsing=None, asr={"provider": "fireredasr"}).rag
+                      parsing=None, asr={"enabled": False}).rag
         assert probe_role(rag, "rerank")["status"] == "disabled"
         assert probe_role(rag, "embedding")["status"] == "local"
         assert probe_role(rag, "vision")["status"] == "local"
-        with patch("src.domain.rag.model_probe._asr_ready", return_value=False):
-            assert probe_role(rag, "asr") == {**probe_role(rag, "asr"), "status": "down"}
-        with patch("src.domain.rag.model_probe._asr_ready", return_value=True):
-            assert probe_role(rag, "asr")["status"] == "local"
+        assert probe_role(rag, "asr")["status"] == "disabled"
 
     def test_asr_without_endpoint_is_unset(self):
         rag = _config(asr={"provider": "openai-compatible", "base_url": None}).rag
         assert probe_role(rag, "asr")["status"] == "unset"
 
-    def test_asr_ready_helper_is_fail_safe(self):
-        from src.domain.rag.model_probe import _asr_ready
-        assert _asr_ready(SimpleNamespace(asr=SimpleNamespace(provider="bogus"))) is False
+    def test_asr_without_section_is_unset(self):
+        rag = _config().rag
+        rag.asr = None
+        assert probe_role(rag, "asr")["status"] == "unset"
+
+    def test_asr_probe_uses_the_ca_file(self):
+        """An endpoint with its own CA (Forgeyard's) is probed with rag.asr.ca_file trusted."""
+        with FakeModelServer() as srv:
+            rag = _config(srv.url).rag
+            rag.asr.ca_file = "/ca.pem"
+            with patch("src.domain.rag.asr_provider.tls_verify", return_value=True) as tv:
+                assert probe_role(rag, "asr")["status"] == "ok"
+        tv.assert_called_once_with("/ca.pem")
 
     def test_default_llm_probe(self):
         with FakeModelServer() as srv:
@@ -202,8 +208,8 @@ class TestSecretsThroughTheConsole:
                             classmethod(lambda cls: {}))
         cfg = _config(profile="cloud")
         with pytest.raises(ValueError, match="profile 'cloud' rejects"):
-            ro.validate_and_apply(cfg, {"rag.asr.provider": "fireredasr"})
-        assert cfg.rag.asr.provider == "openai-compatible"
+            ro.validate_and_apply(cfg, {"rag.embedding.provider": "huggingface"})
+        assert cfg.rag.embedding.provider != "huggingface"
 
     def test_literal_clears_previous_reference(self, monkeypatch):
         monkeypatch.setenv("A", "1")

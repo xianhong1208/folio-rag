@@ -6,11 +6,11 @@ drafts into evals/asr/drafts/; a human proofreads against the audio and moves
 the result into golden_transcripts/ (workflow in evals/README.md).
 
 Usage:
-    uv run --no-sync python scripts/make_asr_drafts.py                  # whisper (default)
-    uv run --no-sync python scripts/make_asr_drafts.py --provider fireredasr
-        # -> drafts/<stem>.fireredasr.txt (a second opinion to compare side by
-        #    side with the whisper draft; passages where the two disagree are
-        #    the ones to listen to first when proofreading)
+    uv run --no-sync python scripts/make_asr_drafts.py                  # rag.asr's endpoint
+    uv run --no-sync python scripts/make_asr_drafts.py --model other-model --suffix other
+        # -> drafts/<stem>.other.txt (a second opinion to compare side by side
+        #    with the first draft; passages where the two disagree are the ones
+        #    to listen to first when proofreading)
 
 Warning: drafts/ is machine output and must never be moved straight into
 golden_transcripts/ for scoring (CER would then measure against the draft
@@ -29,8 +29,9 @@ AUDIO_EXTS = {".wav", ".mp3", ".m4a", ".aac", ".ogg", ".flac"}
 
 def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__)
-    ap.add_argument("--provider", default="docling-whisper",
-                    choices=["docling-whisper", "fireredasr"])
+    ap.add_argument("--model", help="override rag.asr.model from config")
+    ap.add_argument("--suffix", default="", help="draft name suffix for a second opinion")
+    ap.add_argument("--config-dir", default="config")
     ap.add_argument("--force", action="store_true", help="Overwrite existing drafts")
     args = ap.parse_args()
 
@@ -44,16 +45,25 @@ def main() -> int:
         print("evals/asr/audio/ has no audio files — add source material first (see evals/README.md)")
         return 2
 
+    from src.config.dotenv import load_dotenv
+    load_dotenv()
+    from src.config.config_manager import Config
+    Config.set_config(args.config_dir)
     from src.config.model import AsrConfig
     from src.domain.rag.asr_provider import create_asr_provider
 
-    provider = create_asr_provider(AsrConfig(provider=args.provider))
+    asr_cfg = getattr(getattr(Config.get_config_model(), "rag", None), "asr", None)
+    if args.model:
+        base = asr_cfg.model_dump() if asr_cfg else {}
+        base["model"] = args.model
+        asr_cfg = AsrConfig(**base)
+    provider = create_asr_provider(asr_cfg)
     if not provider.available():
-        print(f"provider '{args.provider}' unavailable (model/weights not ready)")
+        print("speech-to-text not available: set rag.asr.base_url (ASR_BASE_URL) and enable rag.asr")
         return 2
 
-    # The whisper draft is primary (no suffix); other providers get a suffix as a second opinion
-    suffix = "" if args.provider == "docling-whisper" else f".{args.provider}"
+    # The first draft has no suffix; a second opinion gets one
+    suffix = f".{args.suffix}" if args.suffix else ""
 
     for f in files:
         dst = out_dir / f"{f.stem}{suffix}.txt"

@@ -1,8 +1,6 @@
 
-"""audio_defense -- Whisper hallucination filtering (pure text) + silence detection/trimming (mock ffmpeg) + the patch mechanism."""
+"""audio_defense -- Whisper hallucination filtering (pure text) + silence detection/trimming (mock ffmpeg)."""
 
-import sys
-import types
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
@@ -62,6 +60,15 @@ def _ffmpeg_result(stderr: str, returncode: int = 0):
 
 
 class TestSilenceTrim:
+    @pytest.mark.parametrize("end, trimmed", [(4.3, 0.0), (3.4, 0.0), (3.2, 3.2)])
+    def test_silence_to_the_end_of_a_quiet_file_is_not_trimmed(self, end, trimmed):
+        """A quiet recording reads as silence from start to end; trimming it left 0.02 s and the
+        endpoint returned nothing (found on a real FLEURS clip). Keep at least 1 s."""
+        stderr = (f"  Duration: 00:00:04.32, bitrate: 512 kb/s\n"
+                  f"[silencedetect] silence_start: 0\n[silencedetect] silence_end: {end} | silence_duration: {end}")
+        with patch.object(ad, "run_ffmpeg", return_value=_ffmpeg_result(stderr)):
+            assert ad._detect_leading_silence_end("x.wav") == trimmed
+
     def test_detect_leading_silence(self):
         stderr = "[silencedetect] silence_start: 0.0\n[silencedetect] silence_end: 12.5 | silence_duration: 12.5"
         with patch.object(ad, "run_ffmpeg", return_value=_ffmpeg_result(stderr)):
@@ -108,40 +115,3 @@ class TestSilenceTrim:
                 ad._trim_audio_leading_silence("in.mp3", "x.mp3")
 
 
-class TestWhisperPatch:
-    def test_patch_wraps_and_injects_defaults(self, monkeypatch):
-        """Applying the patch to an "unwrapped fake whisper": load_model gets wrapped, transcribe carries the defaults."""
-        fake_model = MagicMock()
-        captured = {}
-
-        def _orig_transcribe(audio, **kw):
-            captured.update(kw)
-            return {"text": "ok"}
-
-        fake_model.transcribe = _orig_transcribe
-        fake_whisper = types.ModuleType("whisper")
-        fake_whisper.load_model = lambda *a, **k: fake_model
-        monkeypatch.setitem(sys.modules, "whisper", fake_whisper)
-
-        ad._enable_whisper_anti_hallucination_defaults()
-        assert getattr(fake_whisper.load_model, "_anti_hallucination_wrapped", False)
-
-        model = fake_whisper.load_model("turbo")
-        model.transcribe("audio.mp3")
-        assert captured["condition_on_previous_text"] is False
-        assert captured["no_speech_threshold"] == 0.7
-
-        # A caller-provided explicit value is not overridden (setdefault semantics)
-        captured.clear()
-        model.transcribe("audio.mp3", no_speech_threshold=0.5)
-        assert captured["no_speech_threshold"] == 0.5
-
-    def test_patch_is_idempotent(self, monkeypatch):
-        fake_whisper = types.ModuleType("whisper")
-        fake_whisper.load_model = lambda *a, **k: MagicMock()
-        monkeypatch.setitem(sys.modules, "whisper", fake_whisper)
-
-        ad._enable_whisper_anti_hallucination_defaults()
-        first = fake_whisper.load_model
-        ad._enable_whisper_anti_hallucination_defaults()  # second call should be a no-op
-        assert fake_whisper.load_model is first

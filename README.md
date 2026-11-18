@@ -32,12 +32,16 @@ an OpenAI-compatible API).
 > `scripts/split_config.py` converts a 1.4 config: see
 > [Upgrading from 1.4](docs/configuration.md#upgrading-from-14).
 
-> **Removed in 1.5:** the built-in OCR, the built-in speech-to-text (FireRedASR, docling-whisper)
-> and the `/v1` media endpoints. 1.4.x keeps them working and warns in the log; `/v1` responses
-> carry a `Deprecation` header. Move to an OpenAI-compatible vision model for scanned PDFs and
-> images and an OpenAI-compatible transcription endpoint for audio, for example both served by
-> [Forgeyard](https://github.com/xianhong1208/forgeyard). See
-> [what replaces them](docs/api.md#removed-in-15-built-in-ocr-speech-to-text-and-the-v1-media-endpoints).
+> **Removed in 1.5 (on `dev`):** the built-in speech-to-text (FireRedASR, docling-whisper) and
+> `POST /v1/transcriptions/general`. Audio now goes only to an OpenAI-compatible transcription
+> endpoint (`rag.asr`, e.g. whisper-large-v3-turbo on
+> [Forgeyard](https://github.com/xianhong1208/forgeyard)); a config that still names an old
+> provider stops the start, and audio uploads are refused until an endpoint is set. See
+> [Moving speech-to-text to an endpoint](docs/migrate-asr.md).
+>
+> **Still announced:** the built-in OCR and the other `/v1` media endpoints (`/v1/ocr/general`,
+> `/v1/models`) keep working and warn in the log; `/v1` responses carry a `Deprecation` header.
+> See [what replaces them](docs/api.md#removed-in-15-built-in-ocr-speech-to-text-and-the-v1-media-endpoints).
 
 ## Key features
 
@@ -53,7 +57,8 @@ an OpenAI-compatible API).
 - **Per-person folders.** You only see the folders of your MCP Gate account, over MCP, REST and the
   console alike.
 - **Many formats.** PDF, Office (including legacy and RTF), OpenDocument, HTML and MHTML, Markdown,
-  EPUB, email, images with OCR, and audio.
+  EPUB, email, images with OCR, and audio (transcribed by an OpenAI-compatible endpoint, with
+  Simplified Chinese turned into Traditional).
 - **Measured, not guessed.** A public 205-question golden set and an evaluation harness; the
   console scores your own folders on Recall@k, MRR and nDCG@k.
 - **A console** at `/admin`: folders and files, a Search Playground with the per-signal trace, index
@@ -156,7 +161,7 @@ its source file and heading.
 
 | Profile | Models | Install |
 |---|---|---|
-| `local` (default) | Anything goes. The shipped config calls self-hosted embedding, LLM and reranker endpoints, and runs CKIP segmentation, Docling parsing with OCR and FireRedASR speech-to-text in-process | `uv sync --extra local --group rocm-r714 \| cuda \| cpu` |
+| `local` (default) | Anything goes. The shipped config calls self-hosted embedding, LLM and reranker endpoints, and runs CKIP segmentation and Docling parsing with OCR in-process; speech-to-text is always an endpoint | `uv sync --extra local --group rocm-r714 \| cuda \| cpu` |
 | `hybrid` | The same, for a mix of self-hosted and cloud endpoints; API keys written literally in the config files are warned about | as `local` |
 | `cloud` | Every role is an HTTP endpoint and keys must be `${ENV}` references; no torch and no model downloads | `uv sync` |
 
@@ -175,6 +180,7 @@ when one of them is missing, [rather than starting without the data](docs/deploy
 | [How it works](docs/how-it-works.md) | the pipeline, retrieval in detail (BM25, segmentation, reranking, latency, relevance cutoff), measuring retrieval, every feature in detail |
 | [Deploying Folio](docs/deploy.md) | the Docker image and compose file, model endpoints (Forgeyard, vLLM), the issuer and audience with MCP Gate, a reverse proxy with HTTPS, backups, upgrades |
 | [Configuration](docs/configuration.md) | the six config files and `.env`, every setting you are likely to touch, the cloud profile, upgrading from 1.4 |
+| [Moving speech-to-text to an endpoint](docs/migrate-asr.md) | 1.5: pointing Folio at Forgeyard or another OpenAI-compatible transcription endpoint, a private CA, Traditional Chinese output |
 | [Authentication](docs/auth.md) | folder ownership by MCP Gate user, and the token revocation feed |
 | [Console](docs/console.md) | signing in, the two permission tiers, each page, re-indexing after an upgrade or an embedding model change |
 | [API reference](docs/api.md) | MCP, REST, console and health endpoints |

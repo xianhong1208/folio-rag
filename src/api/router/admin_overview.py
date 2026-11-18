@@ -217,6 +217,8 @@ async def get_overview(ident: ConsoleIdentity = Depends(require_console_session)
                    "base_url": eff.get("rag.rerank.base_url")},
         "asr": {"enabled": eff.get("rag.asr.enabled"),
                 "provider": eff.get("rag.asr.provider"),
+                "model": eff.get("rag.asr.model"),
+                "base_url": eff.get("rag.asr.base_url"),
                 "available": _asr_available(cfg)},
     }
     # How retrieval fuses vector and BM25 results (the overview used to claim a fixed
@@ -230,8 +232,8 @@ async def get_overview(ident: ConsoleIdentity = Depends(require_console_session)
 
 
 def _asr_available(cfg) -> bool:
-    """Whether the ASR provider is ready (fireredasr = weights present; docling-whisper = .pt present;
-    cloud = configuration complete). A cheap file-existence check that does not load any model."""
+    """Whether speech-to-text is configured (enabled, with an endpoint). No request is made:
+    the console's model probe checks that the endpoint answers."""
     try:
         from src.domain.rag.asr_provider import create_asr_provider
         asr_cfg = getattr(getattr(cfg, "rag", None), "asr", None)
@@ -430,18 +432,21 @@ async def health_check():  # read-only status; any console session may view it
         checks.append({"name": name, "kind": icon, "status": status,
                        "detail": detail, "latency_ms": ms, "endpoint": url or ""})
 
-    # ASR (whether local weights or cloud configuration are ready; not an HTTP probe)
+    # Speech-to-text (whether an endpoint is configured; not an HTTP probe)
     asr_enabled = bool(eff.get("rag.asr.enabled"))
-    asr_provider = eff.get("rag.asr.provider") or "—"
+    asr_endpoint = eff.get("rag.asr.base_url") or ""
     if not asr_enabled:
         checks.append({"name": "Speech-to-Text", "kind": "mic", "status": "disabled",
-                       "detail": "Disabled in settings", "latency_ms": None, "endpoint": asr_provider})
+                       "detail": "Disabled in settings", "latency_ms": None, "endpoint": asr_endpoint})
+    elif not _asr_available(cfg):
+        checks.append({"name": "Speech-to-Text", "kind": "mic", "status": "unset",
+                       "detail": "Not configured: set rag.asr.base_url (audio uploads are refused)",
+                       "latency_ms": None, "endpoint": ""})
     else:
-        avail = _asr_available(cfg)
-        checks.append({"name": "Speech-to-Text", "kind": "mic",
-                       "status": "ok" if avail else "down",
-                       "detail": "Ready" if avail else "Model/weights not found",
-                       "latency_ms": None, "endpoint": asr_provider})
+        model = eff.get("rag.asr.model")
+        checks.append({"name": "Speech-to-Text", "kind": "mic", "status": "ok",
+                       "detail": f"Configured{f' ({model})' if model else ''}",
+                       "latency_ms": None, "endpoint": asr_endpoint})
 
     active = [c for c in checks if c["status"] not in ("disabled", "unset")]
     overall = "ok" if active and all(c["status"] == "ok" for c in active) else (

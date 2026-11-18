@@ -1,15 +1,12 @@
-"""/v1 media endpoints: honest model ids and 4xx for bad input (QA 2026-11-09).
+"""/v1 media endpoints: 4xx for bad input (QA 2026-11-09), and the removed speech-to-text.
 
-- Speech-to-text reported "whisper-turbo" and /v1/models listed Whisper while
-  FireRedASR did the work.
-- A corrupt audio file or PDF got a 500, the audio one carrying ffmpeg's stderr.
+- A corrupt PDF got a 500.
 - An unknown response_format was ignored silently (json came back).
+- 1.5: POST /v1/transcriptions/general answers 410 Gone with the migration guide, and
+  /v1/models lists no speech-to-text model (Folio runs none).
 """
 
 import io
-import shutil
-import wave
-from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -18,29 +15,11 @@ from fastapi.testclient import TestClient
 
 from src.api.router import media
 
-_CFG = "src.config.config_manager.Config.get_config_model"
-
-
-def _cfg(provider="fireredasr", enabled=True):
-    return SimpleNamespace(rag=SimpleNamespace(asr=SimpleNamespace(
-        enabled=enabled, provider=provider, base_url=None, api_key=None, model=None)))
-
-
 @pytest.fixture()
 def client():
     app = FastAPI()
     app.include_router(media.router)
     return TestClient(app)
-
-
-def _wav() -> bytes:
-    buf = io.BytesIO()
-    with wave.open(buf, "wb") as w:
-        w.setnchannels(1)
-        w.setsampwidth(2)
-        w.setframerate(16000)
-        w.writeframes(b"\x00\x00" * 1600)
-    return buf.getvalue()
 
 
 def _pdf() -> bytes:
@@ -59,52 +38,30 @@ def _png() -> bytes:
     return buf.getvalue()
 
 
-class TestModelIds:
-    @pytest.mark.parametrize("provider, expected", [
-        ("fireredasr", "fireredasr"), ("openai-compatible", "openai-compatible"),
-        ("docling-whisper", "whisper-turbo")])
-    def test_stt_model_id_follows_the_provider(self, provider, expected):
-        with patch(_CFG, return_value=_cfg(provider)):
-            assert media._asr_model_id() == expected
+class TestSpeechToTextRemoved:
+    def test_transcriptions_endpoint_is_gone_with_the_guide(self, client):
+        r = client.post("/v1/transcriptions/general", files={"audio": ("a.wav", b"RIFF....WAVE")})
+        assert r.status_code == 410
+        assert "removed in Folio 1.5" in r.json()["detail"]
+        assert "docs/migrate-asr.md" in r.json()["detail"] and "migrate-asr.md" in r.headers["link"]
 
-    def test_models_lists_the_configured_provider(self, client):
-        converter = MagicMock(format_to_options={}, initialized_pipelines={})
-        with patch(_CFG, return_value=_cfg("fireredasr")), \
-                patch("src.api.router.media.get_converter", return_value=converter):
-            ids = [m["id"] for m in client.get("/v1/models").json()["data"]]
-        assert "fireredasr" in ids and "whisper-turbo" not in ids
+    def test_gone_without_a_body_too(self, client):
+        assert client.post("/v1/transcriptions/general").status_code == 410
+
+    @pytest.mark.parametrize("ocr_formats", [True, False])
+    def test_models_lists_no_speech_model(self, client, ocr_formats):
+        from docling.datamodel.base_models import InputFormat
+        opts = {InputFormat.PDF: object(), InputFormat.AUDIO: object()} if ocr_formats else {InputFormat.AUDIO: object()}
+        converter = MagicMock(format_to_options=opts, initialized_pipelines={})
+        with patch("src.api.router.media.get_converter", return_value=converter):
+            data = client.get("/v1/models").json()["data"]
+        assert [m["type"] for m in data] == (["ocr"] if ocr_formats else [])
 
 
 class TestResponseFormat:
-    @pytest.mark.parametrize("path, field, name", [
-        ("/v1/transcriptions/general", "audio", "a.wav"), ("/v1/ocr/general", "file", "a.png")])
-    def test_unknown_format_is_400(self, client, path, field, name):
-        r = client.post(path, files={field: (name, b"x")}, data={"response_format": "srt"})
+    def test_unknown_format_is_400(self, client):
+        r = client.post("/v1/ocr/general", files={"file": ("a.png", b"x")}, data={"response_format": "srt"})
         assert r.status_code == 400 and "response_format" in r.json()["detail"]
-
-
-@pytest.mark.skipif(shutil.which("ffprobe") is None, reason="ffprobe not installed")
-class TestAudioInput:
-    def test_a_real_wav_is_decodable(self, tmp_path):
-        p = tmp_path / "a.wav"
-        p.write_bytes(_wav())
-        assert media._decodable_audio(str(p)) is True
-
-    def test_garbage_is_not(self, tmp_path):
-        p = tmp_path / "a.wav"
-        p.write_bytes(b"RIFF\x00\x00garbage" * 50)
-        assert media._decodable_audio(str(p)) is False
-
-    def test_a_readable_file_without_an_audio_stream_is_not(self, tmp_path):
-        p = tmp_path / "a.wav"
-        p.write_bytes(_png())  # ffprobe opens it fine, but there is nothing to listen to
-        assert media._decodable_audio(str(p)) is False
-
-    def test_corrupt_audio_is_422_without_ffmpeg_output(self, client):
-        with patch(_CFG, return_value=_cfg("fireredasr")):
-            r = client.post("/v1/transcriptions/general", files={"audio": ("a.mp3", b"\xff\xfb" + b"\x00" * 300)})
-        assert r.status_code == 422
-        assert "could not be decoded" in r.json()["detail"] and "ffmpeg" not in r.json()["detail"].lower()
 
 
 class TestDocumentInput:

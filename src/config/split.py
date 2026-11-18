@@ -2,8 +2,10 @@
 
 Used by ``scripts/split_config.py``. The conversion keeps every value: the merged config
 the six files and the generated ``.env`` lines produce equals what the old file produced,
-except for the removed LLM roles (``rag.answer_llm``, ``rag.eval_llm``) and the module
-wiring (now in code). ``check`` proves it field by field and reports field names only.
+except for the removed LLM roles (``rag.answer_llm``, ``rag.eval_llm``), the module
+wiring (now in code) and a removed in-process speech-to-text provider (``rag.asr.provider``
+``fireredasr`` / ``docling-whisper`` becomes ``openai-compatible`` with a note: audio is
+refused until ``ASR_BASE_URL`` is set, see docs/migrate-asr.md). ``check`` proves it field by field and reports field names only.
 
 Per-machine and secret values (``layout.ENV_SETTINGS``) are written as ``${VAR:-default}``
 references with safe defaults; the actual value goes to the ``.env`` lines when the
@@ -157,10 +159,27 @@ def place_sections(tree: Dict[str, Any], notes: Optional[List[str]] = None) -> D
     return files
 
 
+def _replace_removed_asr_provider(raw: Dict[str, Any], notes: Optional[List[str]] = None) -> None:
+    """1.5 runs no speech-to-text model: an in-process ``rag.asr.provider`` becomes the only one
+    left. The note says what to set; the service starts and refuses audio until then."""
+    from src.config.model import ASR_MIGRATION_GUIDE, REMOVED_ASR_PROVIDERS
+    asr = (raw.get("rag") or {}).get("asr") if isinstance(raw.get("rag"), dict) else None
+    if not isinstance(asr, dict):
+        return
+    name = str(asr.get("provider") or "").strip().lower()
+    if name in REMOVED_ASR_PROVIDERS:
+        asr["provider"] = "openai-compatible"
+        if notes is not None:
+            notes.append(f"rag.asr.provider '{name}' was removed in Folio 1.5 and is now openai-compatible: "
+                         "set ASR_BASE_URL, ASR_API_KEY and ASR_MODEL in .env to a transcription endpoint "
+                         f"(e.g. Forgeyard); until then audio uploads are refused. See {ASR_MIGRATION_GUIDE}")
+
+
 def split_legacy(old_raw: Dict[str, Any], env: Mapping[str, str]) -> SplitResult:
     """Split an old config tree (as read from YAML, unexpanded) into the six files."""
     raw = copy.deepcopy(old_raw or {})
     notes: List[str] = []
+    _replace_removed_asr_provider(raw, notes)
     env_lines: Dict[str, str] = {}
     for path, setting in ENV_SETTINGS.items():
         loc = _locate(raw, path)
@@ -204,6 +223,7 @@ def legacy_config_dict(old_raw: Dict[str, Any], env: Mapping[str, str]) -> Dict[
     if isinstance(rag, dict):
         for sec in REMOVED_SECTIONS:
             rag.pop(sec.split(".", 1)[1], None)
+    _replace_removed_asr_provider(data)
     return ConfigModel(**data).model_dump()
 
 

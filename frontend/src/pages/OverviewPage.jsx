@@ -83,7 +83,8 @@ export default function OverviewPage() {
     { k: 'Active Jobs', v: fmtNum(d.jobs.active.length), cls: 'gr', d: jobsFoot, nav: '/jobs' },
   ]
 
-  const asrState = !m.asr.enabled ? 'disabled' : (m.asr.available ? 'ready' : 'offline')
+  // Configured = an endpoint is set (not probed here); none = audio uploads are refused
+  const asrState = !m.asr.enabled ? 'disabled' : (m.asr.available ? 'ready' : 'unset')
 
   return (
     <div id="view-overview">
@@ -147,7 +148,7 @@ export default function OverviewPage() {
             <div className="svc"><div className="grow"><div className="name">Embedding</div><div className="val">{m.embedding.model || '—'} · {m.embedding.dimension || '?'}d</div></div><Pill state={health.embed || 'checking'} /></div>
             <div className="svc"><div className="grow"><div className="name">LLM</div><div className="val">{m.llm.model || '—'}</div></div><Pill state={health.llm || 'checking'} /></div>
             <div className="svc"><div className="grow"><div className="name">Reranker</div><div className="val">{m.rerank.enabled ? (m.rerank.model || '—') : 'Disabled'}</div></div><Pill state={m.rerank.enabled ? (health.rerank || 'checking') : 'disabled'} /></div>
-            <div className="svc"><div className="grow"><div className="name">Speech-to-Text</div><div className="val">{m.asr.provider || '—'}</div></div><Pill state={asrState} /></div>
+            <div className="svc"><div className="grow"><div className="name">Speech-to-Text</div><div className="val">{m.asr.model || (m.asr.available ? 'openai-compatible' : '—')}</div></div><Pill state={asrState} /></div>
           </div>
 
           <div className="sec" style={{ marginTop: 24 }}>Store <span className="r">PostgreSQL · pgvector</span></div>

@@ -29,6 +29,7 @@ from src.adapter.rag import get_rag_adapter
 from src.log import get_api_logger
 from src.utils.names import content_disposition, sanitize_filename
 from db.filedb import FileNameConflictError, FileTooLargeError, UnsupportedFileTypeError
+from src.domain.rag.asr_provider import SpeechToTextUnavailableError
 from db.file_with_index_db import FileWithIndexDB
 
 logger = get_api_logger()
@@ -55,6 +56,8 @@ def _upload_source(file: UploadFile):
         404: {"model": ErrorDetailResponse, "description": "folder not found"},
         409: {"model": ErrorDetailResponse, "description": "a file with the same name already exists in the folder"},
         400: {"model": ErrorDetailResponse, "description": "validation failed (file too large, unsupported format, etc.)"},
+        422: {"model": ErrorDetailResponse,
+              "description": "audio while speech-to-text is disabled or not configured (rag.asr)"},
         500: {"model": ErrorDetailResponse},
     },
 )
@@ -161,6 +164,9 @@ async def upload_file(
     except FileTooLargeError as e:
         logger.info(f"Upload rejected (size): {file.filename!r} → folder {folder_id}: {e}")
         raise HTTPException(status_code=413, detail=str(e))
+    except SpeechToTextUnavailableError as e:
+        logger.info(f"Upload rejected (speech-to-text): {file.filename!r} → folder {folder_id}")
+        raise HTTPException(status_code=422, detail=str(e))
     except ValueError as e:
         logger.info(f"Upload rejected: {file.filename!r} → folder {folder_id}: {e}")
         raise HTTPException(status_code=400, detail=str(e))

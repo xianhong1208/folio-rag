@@ -74,7 +74,7 @@ class FileDB(BaseDB):
         'mht', 'mhtml',
         # Images (Docling + RapidOcr)
         'png', 'jpg', 'jpeg', 'tiff', 'tif', 'bmp', 'webp', 'gif',
-        # Audio (AsrProvider: local docling whisper or cloud; aligned with docling's official 6 formats)
+        # Audio (rag.asr OpenAI-compatible endpoint; refused at upload when it is not configured)
         'wav', 'mp3', 'm4a', 'aac', 'ogg', 'flac',
     }
 

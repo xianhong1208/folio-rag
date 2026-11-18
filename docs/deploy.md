@@ -33,14 +33,18 @@ loaded inside the container. No torch, no GPU stack, no model downloads.
 | Migrations | run on every start, as with `python main.py` |
 | Health | a Docker `HEALTHCHECK` on `/health`; `/health/detailed` checks the database, pgvector and the revocation feed |
 
-**Not in the image:** the in-process models (CKIP, docling's layout and OCR models, Whisper,
-FireRedASR, HuggingFace embeddings). For `rag.profile: local` or `hybrid`, run Folio from source
+**Not in the image:** the in-process models (CKIP, docling's layout and OCR models, HuggingFace
+embeddings). Folio has no in-process speech-to-text in any install since 1.5. For `rag.profile: local` or `hybrid`, run Folio from source
 ([below](#running-from-source)). There is no GPU image.
 
-**Audio** is transcribed by an OpenAI-compatible endpoint, but Folio resamples and splits it with
-`ffmpeg` first, and the published image leaves `ffmpeg` out to stay small. To transcribe audio, build
-the image with it: `docker build --build-arg INSTALL_FFMPEG=true -t folio:audio .`, then set
-`ASR_ENABLED=true`, `ASR_BASE_URL` and `ASR_MODEL`.
+**Audio** is transcribed by an OpenAI-compatible endpoint ([Moving speech-to-text to an
+endpoint](migrate-asr.md)). Folio resamples and splits long audio with `ffmpeg` first, and the
+published image leaves `ffmpeg` out to stay small: without it, a file up to 24 MB is sent whole and
+a larger one fails with a message saying to install `ffmpeg`. For long recordings, build the image
+with it: `docker build --build-arg INSTALL_FFMPEG=true -t folio:audio .`. Then set
+`ASR_ENABLED=true`, `ASR_BASE_URL` and `ASR_MODEL`. While speech-to-text is off or has no endpoint,
+audio uploads are refused (422). If the endpoint's certificate comes from a private CA (Forgeyard's
+own), mount the CA file read-only and point `ASR_CA_FILE` at it.
 
 ## Docker Compose
 
@@ -96,7 +100,7 @@ Every role is an OpenAI-compatible endpoint. The variables (all in `.env`):
 | LLM | `LLM_BASE_URL` | `LLM_MODEL` | `LLM_API_KEY` | `POST /chat/completions`: answers, evaluation and the one-line context written for each chunk at index time. |
 | Reranker | `RERANK_BASE_URL` | `RERANK_MODEL` | `RERANK_API_KEY` | `RERANK_API`: `generic` (`POST /rerank`, vLLM, Forgeyard, Infinity; the default), `score` (vLLM `/score`), `cohere` or `jina`. `RERANK_ENABLED=false` turns it off. |
 | Vision | `VISION_BASE_URL` | `VISION_MODEL` | `VISION_API_KEY` | Reads PDFs and images page by page (the image has no built-in OCR). Office, Markdown, HTML and text files need no model. |
-| Speech-to-text | `ASR_BASE_URL` | `ASR_MODEL` | `ASR_API_KEY` | Off unless `ASR_ENABLED=true`; needs an image with `ffmpeg` (above). |
+| Speech-to-text | `ASR_BASE_URL` | `ASR_MODEL` | `ASR_API_KEY` | `POST /audio/transcriptions`. Off unless `ASR_ENABLED=true`; long audio needs an image with `ffmpeg` (above). `ASR_CA_FILE` for a private CA. Chinese transcripts are converted to Traditional (`rag.asr.chinese_conversion`). |
 
 Inside a container, `localhost` is the container itself. Reach a model server on the same machine
 as `host.docker.internal`, and one on another machine by its address.

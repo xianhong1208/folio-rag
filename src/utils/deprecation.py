@@ -1,18 +1,19 @@
-"""Advance notice: the built-in OCR, speech-to-text and the ``/v1`` media endpoints go in 1.5.
+"""Advance notice: the built-in OCR and the ``/v1`` media endpoints are going away.
 
-1.4.2 removes nothing. It says so in four places:
+The built-in speech-to-text and ``POST /v1/transcriptions/general`` were removed in 1.5
+(docs/migrate-asr.md); the built-in OCR and the rest of ``/v1`` are still announced
+(1.4.2) and stay until the vision-model path replaces them. The notice appears in four places:
 
 - a startup log line when the configuration uses any of them;
-- a warning logged once per process on the first in-process OCR or speech-to-text use
+- a warning logged once per process on the first in-process OCR use
   and on the first ``/v1`` media call;
 - ``Deprecation`` (RFC 9745) and ``Link: rel="deprecation"`` headers on every ``/v1``
   media response, errors included (no ``Sunset`` header: 1.5 has no release date yet);
 - the README, the docs and the CHANGELOG.
 
 What replaces them: an OpenAI-compatible vision model for scanned PDFs and images
-(``rag.parsing.pdf/images: cloud`` with ``rag.parsing.vision``), and an OpenAI-compatible
-transcription endpoint for audio (``rag.asr.provider: openai-compatible``), for example
-both served by Forgeyard.
+(``rag.parsing.pdf/images: cloud`` with ``rag.parsing.vision``), for example served by
+Forgeyard.
 """
 
 from __future__ import annotations
@@ -36,16 +37,12 @@ LINK_HEADER = f'<{NOTICE_URL}>; rel="deprecation"; type="text/html"'
 REPLACE_OCR = ("read scanned PDFs and images with an OpenAI-compatible vision model instead "
                "(rag.parsing.pdf / rag.parsing.images: cloud, with rag.parsing.vision; "
                "e.g. Qwen3-VL served by Forgeyard)")
-REPLACE_ASR = ("send audio to an OpenAI-compatible transcription endpoint instead "
-               "(rag.asr.provider: openai-compatible with base_url; e.g. Forgeyard's)")
-REPLACE_MEDIA = ("call the vision model or transcription endpoint directly instead "
+REPLACE_MEDIA = ("call the vision model directly instead "
                  "(any OpenAI-compatible server, e.g. Forgeyard)")
 
 MESSAGES = {
     "ocr": f"The built-in OCR is deprecated and will be removed in {REMOVED_IN}: {REPLACE_OCR}.",
-    "asr": f"The built-in speech-to-text is deprecated and will be removed in {REMOVED_IN}: "
-           f"{REPLACE_ASR}.",
-    "media": f"The /v1 media endpoints (/v1/ocr/general, /v1/transcriptions/general, /v1/models) "
+    "media": f"The /v1 media endpoints (/v1/ocr/general, /v1/models) "
              f"are deprecated and will be removed in {REMOVED_IN}: {REPLACE_MEDIA}.",
 }
 
@@ -69,16 +66,14 @@ def _reset_for_tests() -> None:
 
 
 def deprecated_in_use(config) -> List[str]:
-    """Which of the deprecated features this configuration uses (``ocr``, ``asr``, ``media``)."""
-    from src.config.roles import asr_runs_in_process, needs_local_docling_models
+    """Which of the deprecated features this configuration uses (``ocr``, ``media``)."""
+    from src.config.roles import needs_local_docling_models
     used: List[str] = []
     rag = getattr(config, "rag", None)
     if rag is not None:
         docling = getattr(rag, "docling", None)
         if needs_local_docling_models(rag) and bool(getattr(docling, "ocr_enabled", True)):
             used.append("ocr")
-        if asr_runs_in_process(rag):
-            used.append("asr")
     modules = getattr(getattr(config, "modules", None), "enabled", None) or []
     if "media" in modules:
         used.append("media")

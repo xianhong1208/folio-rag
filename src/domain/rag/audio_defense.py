@@ -1,20 +1,15 @@
 
-"""Whisper audio defense — anti-hallucination patch, hallucination filtering, leading-silence trimming.
+"""Whisper audio defense — hallucination filtering and leading-silence trimming.
 
-These are read-file-layer audio pre/post-processing steps, independent of indexing logic, shared by
-both the indexing path (hierarchical_indexer) and REST STT (media router).
-
-The whisper anti-hallucination monkey-patch (_enable_whisper_anti_hallucination_defaults, idempotent)
-must run before the Docling AudioPipeline first loads the whisper model. It is applied by
-docling_loader._build_converter right before the local Whisper pipeline is installed (and at
-import time only if whisper is already loaded), so a deployment without local Whisper never
-imports whisper/torch.
+Model-agnostic audio pre/post-processing around the speech-to-text provider (document_loader's
+audio path): trimming leading silence keeps whisper's language detection on real speech, and
+the filter drops the stock phrases whisper invents over silence. Both apply to any
+OpenAI-compatible whisper endpoint (Forgeyard, speaches, OpenAI).
 """
 
 from __future__ import annotations
 
 import re
-import sys
 import tempfile
 from pathlib import Path
 from typing import Optional
@@ -24,62 +19,6 @@ from src.utils.ffmpeg import run_ffmpeg
 
 logger = get_api_logger()
 
-# Whisper anti-hallucination defaults via monkey-patch of whisper.load_model.
-# Docling 4.x calls model.transcribe() without hallucination knobs, leaving
-# whisper's overly permissive defaults. On non-speech audio the decoder falls
-# into outro/repetition hallucination loops (worse under AMD ROCm's experimental
-# attention). We bake tighter defaults into every loaded model:
-#   - condition_on_previous_text=False: each 30s decodes alone, no cascade
-#   - no_speech_threshold=0.7: drop more silence than the 0.6 default
-# We don't hardcode language=zh — the leading-silence trim below gives whisper a
-# real speech window so auto-detect stays reliable across languages.
-# Idempotent; runs at import before Docling lazily builds the audio pipeline.
-
-
-def _enable_whisper_anti_hallucination_defaults() -> None:
-    """Bake anti-hallucination defaults into every whisper.load_model() result. Idempotent."""
-    try:
-        import whisper
-    except ImportError:
-        logger.info("whisper not installed; anti-hallucination patch skipped")
-        return
-
-    if getattr(whisper.load_model, "_anti_hallucination_wrapped", False):
-        return
-
-    _original_load = whisper.load_model
-    _DEFAULTS = {
-        "condition_on_previous_text": False,
-        "no_speech_threshold": 0.7,
-    }
-
-    def _patched_load(*args, **kwargs):
-        model = _original_load(*args, **kwargs)
-        _original_transcribe = model.transcribe
-
-        def _patched_transcribe(audio, **kw):
-            for k, v in _DEFAULTS.items():
-                kw.setdefault(k, v)
-            return _original_transcribe(audio, **kw)
-
-        model.transcribe = _patched_transcribe
-        return model
-
-    _patched_load._anti_hallucination_wrapped = True
-    whisper.load_model = _patched_load
-    logger.info(
-        "Whisper anti-hallucination defaults enabled: "
-        "condition_on_previous_text=False, no_speech_threshold=0.7"
-    )
-
-
-# Applied lazily: importing whisper loads torch, which profile: cloud must never do. The
-# docling converter calls this right before it installs the local Whisper pipeline
-# (docling_loader._build_converter); here we only patch a whisper that is already loaded.
-if "whisper" in sys.modules:
-    _enable_whisper_anti_hallucination_defaults()
-
-
 # Trim leading silence before Whisper. Whisper auto-detects language on the first
 # 30s mel window; if those seconds are silent, the encoder gets near-zero
 # activations and detection falls back to the highest-prior language (English),
@@ -88,6 +27,7 @@ if "whisper" in sys.modules:
 _AUDIO_TRIM_EXTENSIONS = {".mp3", ".wav", ".m4a", ".flac", ".ogg", ".aac", ".opus", ".webm"}
 _SILENCE_THRESHOLD_DB = -35.0
 _SILENCE_MIN_DURATION = 2.0
+_MIN_SPEECH_LEFT_SECONDS = 1.0  # never trim a file down to less than this
 _TRIM_SKIP_BELOW_SECONDS = 0.5  # don't bother re-encoding for <0.5s of leading silence
 
 # Per-format encoder settings for trim re-encode. Defaults are reasonable quality
@@ -187,7 +127,15 @@ def _detect_leading_silence_end(src: str) -> float:
     ends = re.findall(r"silence_end:\s*([\d.]+)", result.stderr)
     if not starts or not ends or float(starts[0]) > 1.0:
         return 0.0
-    return float(ends[0])
+    end = float(ends[0])
+    # A "silence" that runs to the end of the file means the whole recording is below the
+    # threshold (a quiet but real recording): trimming would leave nothing to transcribe.
+    m = re.search(r"Duration:\s*(\d+):(\d+):([\d.]+)", result.stderr)
+    if m:
+        total = int(m.group(1)) * 3600 + int(m.group(2)) * 60 + float(m.group(3))
+        if end >= total - _MIN_SPEECH_LEFT_SECONDS:
+            return 0.0
+    return end
 
 
 def _trim_audio_leading_silence(input_path: str, file_name: str) -> Optional[str]:

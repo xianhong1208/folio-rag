@@ -9,7 +9,7 @@ and validates the per-role choices against them:
   reported as warnings, because a hybrid deployment usually holds at least one billable
   cloud key.
 * ``cloud``  — every role must be an HTTP endpoint. In-process providers (HuggingFace
-  embedding, docling-whisper / FireRedASR, local docling PDF/image parsing, the CKIP
+  embedding, local docling PDF/image parsing, the CKIP
   segmenter) are errors, and so is any API key that is not an ``${ENV_VAR}`` reference.
   The FTS segmenter defaults to the model-free ``bigram`` there.
 
@@ -27,7 +27,6 @@ from dataclasses import dataclass, field
 from typing import Any, Dict, Iterator, List, Mapping, Optional, Tuple
 
 from src.config.roles import (
-    IN_PROCESS_ASR,
     IN_PROCESS_EMBEDDING,
     LLM_ROLES,
     parsing_mode,
@@ -114,11 +113,6 @@ def check_profile(rag_config, refs: Optional[Mapping[str, str]] = None) -> Profi
             report.errors.append(
                 f"rag.embedding.provider '{emb.provider}' loads the model in-process, which "
                 "profile: cloud forbids — use openai / openai-compatible / azure / vllm / ollama")
-        asr = getattr(rag_config, "asr", None)
-        if asr is not None and asr.enabled and asr.provider in IN_PROCESS_ASR:
-            report.errors.append(
-                f"rag.asr.provider '{asr.provider}' runs locally, which profile: cloud forbids — "
-                "use openai-compatible, or set rag.asr.enabled: false")
         for kind in ("pdf", "images"):
             if parsing_mode(rag_config, kind) == "local":
                 report.errors.append(

@@ -21,7 +21,6 @@ from src.config.profile import (
     literal_secret_paths,
 )
 from src.config.roles import (
-    asr_runs_in_process,
     needs_local_docling_models,
     parsing_mode,
     resolve_llm,
@@ -60,7 +59,6 @@ class TestDefaults:
     def test_cloud_profile_disables_asr_when_unset(self):
         rag = _rag(profile="cloud", parsing=VISION)
         assert rag.asr.enabled is False and rag.asr.provider == "openai-compatible"
-        assert not asr_runs_in_process(rag)
 
     def test_cloud_profile_defaults_parsing_to_cloud(self):
         rag = _rag(profile="cloud", parsing=VISION)
@@ -88,15 +86,19 @@ class TestDefaults:
             AsrConfig(segment_seconds=900)  # 16k pcm16 over ~13 min exceeds a 25 MB upload
 
 
-class TestAsrInProcess:
-    def test_legacy_unset_asr_is_local_whisper(self):
-        assert asr_runs_in_process(_rag())
+class TestNoInProcessAsr:
+    """1.5: speech-to-text never runs in-process; the removed providers do not validate."""
 
-    def test_cloud_provider_is_not_in_process(self):
-        assert not asr_runs_in_process(_rag(asr={"provider": "openai-compatible"}))
+    def test_removed_providers_fail_validation_in_every_profile(self):
+        for profile in ("local", "hybrid", "cloud"):
+            for name in ("fireredasr", "docling-whisper"):
+                with pytest.raises(ValueError, match="migrate-asr"):
+                    _rag(profile=profile, asr={"provider": name}, parsing=VISION)
 
-    def test_local_provider_disabled_is_not_in_process(self):
-        assert not asr_runs_in_process(_rag(asr={"provider": "fireredasr", "enabled": False}))
+    def test_disabled_removed_provider_still_fails(self):
+        """Even switched off, an old provider name stops the start: the file needs editing."""
+        with pytest.raises(ValueError, match="removed in Folio 1.5"):
+            _rag(asr={"provider": "fireredasr", "enabled": False})
 
 
 class TestResolveLlm:
@@ -142,15 +144,13 @@ class TestCheckProfile:
     def test_cloud_rejects_in_process_providers(self):
         rag = _rag(profile="cloud",
                    embedding={"provider": "huggingface", "model": "BAAI/bge-m3", "dimension": 1024},
-                   asr={"provider": "fireredasr"},
                    parsing={"pdf": "local", **VISION})
         errs = "\n".join(check_profile(rag, refs={}).errors)
         assert "rag.embedding.provider 'huggingface'" in errs
-        assert "rag.asr.provider 'fireredasr'" in errs
         assert "rag.parsing.pdf: local" in errs
 
-    def test_cloud_allows_disabled_local_asr(self):
-        rag = _rag(profile="cloud", asr={"provider": "fireredasr", "enabled": False}, parsing=VISION,
+    def test_cloud_allows_disabled_asr(self):
+        rag = _rag(profile="cloud", asr={"enabled": False}, parsing=VISION,
                    embedding={"provider": "openai", "model": "m", "dimension": 8,
                               "api_key": "${OPENAI_API_KEY}"})
         report = check_profile(rag, refs={"rag.embedding.api_key": "OPENAI_API_KEY",
@@ -254,7 +254,7 @@ class TestRoleSummary:
         assert roles["contextual_llm"]["runs"] == "endpoint" and roles["contextual_llm"]["inherits"] == "llm"
         assert roles["rerank"]["runs"] == "off"
         assert roles["vision"]["runs"] == "in-process" and roles["vision"]["provider"] == "docling"
-        assert roles["asr"]["runs"] == "in-process"
+        assert roles["asr"]["runs"] == "endpoint" and roles["asr"]["provider"] == "openai-compatible"
         assert all("api_key" not in str(v) or k == "secret_path" for e in roles.values() for k, v in e.items())
 
     def test_cloud_summary_and_role_secret_path(self):
