@@ -35,8 +35,6 @@ ENV UV_LINK_MODE=copy \
     UV_PROJECT_ENVIRONMENT=/app/.venv
 WORKDIR /app
 COPY pyproject.toml uv.lock .python-version ./
-# uv reads the vendored FireRedASR's metadata to check the lock; the `local` extra that uses it is not installed
-COPY vendor/fireredasr_src/pyproject.toml vendor/fireredasr_src/pyproject.toml
 # The application itself is not installed: main.py runs from /app. --no-default-groups keeps every torch group out;
 # the jieba extra is the image's Chinese segmenter (no model). Nothing from the `local` extra.
 RUN uv sync --locked --no-dev --no-default-groups --extra jieba --no-install-project --no-cache

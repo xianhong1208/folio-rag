@@ -19,7 +19,7 @@
 
 | 階段 | 內容 |
 |------|------|
-| **Ingest** | Docling 解析 PDF / DOCX / PPTX / XLSX / 圖片（OCR）;音訊由 FireRedASR 轉錄。 |
+| **Ingest** | Docling 解析 PDF / DOCX / PPTX / XLSX / 圖片（OCR）;音訊由 OpenAI 相容端點轉錄（例如 Forgeyard 上的 whisper）。 |
 | **Chunk** | 依章節切成小 **leaf** + 大 **parent**;每個 leaf 帶麵包屑（檔名 › 標題）與 LLM 寫的脈絡說明。表格放得下時保持完整。 |
 | **Embed** | 每個 leaf 的檢索文字（脈絡說明 + 麵包屑 + 原文）做 embedding（預設 `intfloat/multilingual-e5-large`,1024 維）,與 BM25 的 `text_search_tsv`（中文以 CKIP 斷詞）在同一筆交易內寫入 **pgvector**,每個檔案一筆交易。 |
 | **Retrieve** | **混合**:密集向量 + 稀疏 BM25,以 Reciprocal Rank Fusion 融合。 |
@@ -82,7 +82,7 @@
 - **增量重建索引。** 重新索引一個檔案時,沒變的 chunk 沿用原本的脈絡說明與 embedding,只改一個章節大約只花一次 LLM 呼叫與一次 embedding。檔案的 chunk 在單一交易內替換 —— 過程中不會從搜尋結果消失。
 - **每資料夾一個 MCP 工具,依使用者隔離。** 每個資料夾註冊成 `Folio_<folder>` 工具;呼叫者看到的工具清單會依其 token 所屬的使用者過濾 —— 你只看得到自己擁有的資料夾。歸屬以 token 的 `sub`(MCP Gate 使用者)為 key,所以同一位使用者的每一把 token —— personal access token 與 OAuth 登入皆然 —— 看到的是同一組資料夾(見[資料夾歸屬](auth.zh-TW.md#資料夾歸屬))。工具名稱一律符合所有 MCP 用戶端的限制(`[A-Za-z0-9_-]`、最長 64 字元):含空白、中日韓文字或其他符號的資料夾名稱會變成 `Folio_<ASCII 部分>_<8 碼雜湊>`,每次都是同一個名稱。
 - **OAuth 2.1 resource server。** 一個 `RemoteAuthProvider` + `JWTVerifier` 保護 `/mcp`;token 用 MCP Gate 的 JWKS 在本地離線驗證（RS256),並綁定本伺服器的 audience,別台的 token 在這裡無效。
-- **文件 + 音訊匯入。** [Docling](https://github.com/DS4SD/docling) 解析 PDF、Office（含舊版 `.doc` / `.xls` / `.ppt`、RTF 與 Excel 範本）、OpenDocument、HTML 與 MHTML 網頁封存檔、Markdown、EPUB、電子郵件與圖片（含 OCR）;舊版 Office 與 RTF 經 LibreOffice 轉換,需安裝 `soffice`。**FireRedASR** 在本地做繁體中文語音轉錄（或任何 OpenAI 相容的 `/v1/transcriptions`）。
+- **文件 + 音訊匯入。** [Docling](https://github.com/DS4SD/docling) 解析 PDF、Office（含舊版 `.doc` / `.xls` / `.ppt`、RTF 與 Excel 範本）、OpenDocument、HTML 與 MHTML 網頁封存檔、Markdown、EPUB、電子郵件與圖片（含 OCR）;舊版 Office 與 RTF 經 LibreOffice 轉換,需安裝 `soffice`。音訊送到 **OpenAI 相容的 `/audio/transcriptions` 端點**（Forgeyard、speaches、vLLM、OpenAI）:長錄音在靜音處切段,開頭的靜音會先剪掉讓語言偵測聽到語音,whisper 常見的幻覺句會被濾掉,簡體中文會轉成台灣用語的繁體（`rag.asr.chinese_conversion`）。沒有端點時,上傳音訊會被拒絕（[遷移指南](migrate-asr.zh-TW.md)）。
 - **內建評測 harness。** 從你自己的 chunk 自動生成問題,對正式檢索管線(與 `/api/rag/query` 同一路徑)以及 `vector` / `bm25` / `rrf` / `rerank`(全部走正式檢索路徑)評 **Recall@k · MRR · nDCG@k**,讓你針對真實語料調校檢索。
 - **Retrieval Terminal 主控台。** `/admin` 的 React 單頁主控台:管線總覽、資料夾與檔案、會顯示**逐訊號檢索軌跡**的 Search Playground、即時索引任務串流、查詢分析、評測 harness、即時設定、健康狀態與稽核時間軸。
 - **跑在你的 GPU 上。** PyTorch 以 PEP 735 dependency group 依平台選擇（`rocm-r714` / `cuda` / `cpu`）—— AMD ROCm、NVIDIA CUDA 或純 CPU。

@@ -32,14 +32,16 @@ GPU 套件、不下載模型。
 | Migration | 每次啟動都會執行，和 `python main.py` 一樣 |
 | 健康檢查 | Docker `HEALTHCHECK` 打 `/health`；`/health/detailed` 檢查資料庫、pgvector 與撤銷清單 |
 
-**映像檔裡沒有**：在程序內執行的模型（CKIP、docling 的版面與 OCR 模型、Whisper、FireRedASR、
-HuggingFace 嵌入）。要用 `rag.profile: local` 或 `hybrid`，請從原始碼執行（[見下方](#從原始碼執行)）。
+**映像檔裡沒有**：在程序內執行的模型（CKIP、docling 的版面與 OCR 模型、HuggingFace 嵌入）。
+自 1.5 起，任何安裝方式都不再在程序內做語音轉文字。要用 `rag.profile: local` 或 `hybrid`，請從原始碼執行（[見下方](#從原始碼執行)）。
 沒有 GPU 版映像檔。
 
-**音訊**由 OpenAI 相容端點轉成文字，但 Folio 會先用 `ffmpeg` 重新取樣並切段，而公開的映像檔為了保持
-輕量沒有裝 `ffmpeg`。要處理音訊，請自行建置含 `ffmpeg` 的映像檔：
-`docker build --build-arg INSTALL_FFMPEG=true -t folio:audio .`，再設定 `ASR_ENABLED=true`、
-`ASR_BASE_URL` 與 `ASR_MODEL`。
+**音訊**由 OpenAI 相容端點轉成文字（[把語音轉文字改到端點](migrate-asr.zh-TW.md)）。Folio 會先用 `ffmpeg`
+重新取樣並切段長音訊，而公開的映像檔為了保持輕量沒有裝 `ffmpeg`：沒有它時，24 MB 以內的檔案整份送出，更大的檔案
+會失敗並提示安裝 `ffmpeg`。要處理長錄音，請自行建置含 `ffmpeg` 的映像檔：
+`docker build --build-arg INSTALL_FFMPEG=true -t folio:audio .`。再設定 `ASR_ENABLED=true`、`ASR_BASE_URL`
+與 `ASR_MODEL`。語音轉文字關閉或沒有端點時，上傳音訊會被拒絕（422）。若端點的憑證來自私有 CA（Forgeyard 自己的
+CA），請把 CA 檔以唯讀方式掛載進容器，並把 `ASR_CA_FILE` 指向它。
 
 ## Docker Compose
 
@@ -94,7 +96,7 @@ volume：`folio-storage`、`folio-db`，啟用 MCP Gate profile 時還有 `mcp-g
 | LLM | `LLM_BASE_URL` | `LLM_MODEL` | `LLM_API_KEY` | `POST /chat/completions`：回答、評估，以及索引時替每個 chunk 寫的一句脈絡。 |
 | 重排序 | `RERANK_BASE_URL` | `RERANK_MODEL` | `RERANK_API_KEY` | `RERANK_API`：`generic`（`POST /rerank`，vLLM、Forgeyard、Infinity；預設）、`score`（vLLM `/score`）、`cohere` 或 `jina`。`RERANK_ENABLED=false` 關閉。 |
 | 視覺 | `VISION_BASE_URL` | `VISION_MODEL` | `VISION_API_KEY` | 逐頁讀 PDF 與圖片（映像檔沒有內建 OCR）。Office、Markdown、HTML 與純文字檔不需要模型。 |
-| 語音轉文字 | `ASR_BASE_URL` | `ASR_MODEL` | `ASR_API_KEY` | 預設關閉，`ASR_ENABLED=true` 才啟用；需要含 `ffmpeg` 的映像檔（見上方）。 |
+| 語音轉文字 | `ASR_BASE_URL` | `ASR_MODEL` | `ASR_API_KEY` | `POST /audio/transcriptions`。預設關閉，`ASR_ENABLED=true` 才啟用；長音訊需要含 `ffmpeg` 的映像檔（見上方）。私有 CA 用 `ASR_CA_FILE`。中文轉錄結果會轉成繁體（`rag.asr.chinese_conversion`）。 |
 
 在容器裡，`localhost` 指的是容器自己。同一台機器上的模型伺服器請用 `host.docker.internal`，其他機器
 就用它的位址。

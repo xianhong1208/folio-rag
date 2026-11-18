@@ -1,4 +1,4 @@
-"""Audio segmentation shared by the segment-based ASR providers (FireRedASR, cloud).
+"""Audio segmentation for the OpenAI-compatible speech-to-text provider.
 
 Pure stdlib + the ffmpeg binary: resample any source to 16 kHz mono pcm16 WAV, find
 silences with ``silencedetect``, plan segments that end at the midpoint of the last
@@ -14,7 +14,7 @@ from pathlib import Path
 from typing import Dict, List, Optional, Tuple
 from src.utils.ffmpeg import run_ffmpeg
 
-# FireRedASR's limit (60 s hard cap minus a 5 s margin); cloud providers pass their own.
+# Default segment cap for plan_segments; the provider passes rag.asr.segment_seconds.
 MAX_SEGMENT_SECONDS = 55.0
 # silencedetect parameters: below -35dB for 0.3s counts as silence (a natural
 # pause in meeting speech).

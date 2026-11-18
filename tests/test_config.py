@@ -415,21 +415,21 @@ def test_config_dir_outside_cwd_rejected(tmp_path, monkeypatch):
 
 
 def test_asr_config_defaults():
-    """AsrConfig minimal field set: enabled + provider + the cloud fields, nothing else
+    """AsrConfig minimal field set: the OpenAI-compatible endpoint fields, nothing else
 
     Deliberately lean: every config field is a permanent maintenance surface;
-    trimming/filtering is always on in code, and FireRedASR-specific fields are
-    added only when the FireRedASR provider is implemented. The cloud profile added the four fields
-    chunked cloud transcription needs (language hint, segment length, timeout, retries)."""
+    trimming/filtering is always on in code. 1.5 added the Chinese-script conversion
+    (whisper writes Simplified) and the extra CA for an endpoint with its own CA."""
     from src.config.model import AsrConfig
     cfg = AsrConfig()
     assert cfg.enabled is True
-    assert cfg.provider == "docling-whisper"
+    assert cfg.provider == "openai-compatible"
     assert cfg.base_url is None and cfg.api_key is None and cfg.model is None
+    assert cfg.chinese_conversion == "s2twp" and cfg.ca_file is None
     # Guard the lean set: the removed fields must not quietly grow back
     assert set(AsrConfig.model_fields) == {
         "enabled", "provider", "base_url", "api_key", "model",
-        "language", "segment_seconds", "timeout", "max_retries"}
+        "language", "chinese_conversion", "ca_file", "segment_seconds", "timeout", "max_retries"}
 
 
 _RAG_REQUIRED = dict(

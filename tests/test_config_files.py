@@ -371,8 +371,19 @@ class TestConverterRoundTrip:
         result = split_legacy(old, env)
         write_outputs(result, tmp_path / "cfg", tmp_path / "env.lines")
         assert result.env_lines.keys() == {"DATABASE_URL", "DATABASE_PORT"}
-        assert result.notes == []
+        # 1.4's template used FireRedASR, which 1.5 removed: the only note says what to set.
+        assert len(result.notes) == 1 and "rag.asr.provider 'fireredasr' was removed" in result.notes[0]
+        assert "ASR_BASE_URL" in result.notes[0] and "docs/migrate-asr.md" in result.notes[0]
+        assert result.files["models.yaml"]["rag"]["asr"]["provider"] == "openai-compatible"
         assert check(old, tmp_path / "cfg", env, result.env_lines) == []
+
+    @pytest.mark.parametrize("name", ["docling-whisper", "openai-compatible"])
+    def test_other_asr_providers(self, tmp_path, name):
+        old = _legacy_raw()
+        old["rag"]["asr"]["provider"] = name
+        result = split_legacy(old, _env_without_config_vars())
+        assert result.files["models.yaml"]["rag"]["asr"]["provider"] == "openai-compatible"
+        assert (len(result.notes) == 1) is (name == "docling-whisper")
 
     def test_every_kind_of_value_round_trips(self, tmp_path):
         """Literal keys, references with other defaults, references to other variables,

@@ -36,7 +36,8 @@
 | `LLM_BASE_URL`、`LLM_API_KEY` | `rag.llm.*` | `http://localhost:5052/v1`、`not-needed` |
 | `CONTEXTUAL_LLM_BASE_URL`、`CONTEXTUAL_LLM_API_KEY` | `rag.contextual_llm.*`(在 `models.yaml` 中預設註解掉) | 空(沿用 `rag.llm`) |
 | `RERANK_BASE_URL`、`RERANK_API_KEY` | `rag.rerank.*` | `http://localhost:8787`、`not-needed` |
-| `ASR_BASE_URL`、`ASR_API_KEY` | `rag.asr.*` | 空 |
+| `ASR_BASE_URL`、`ASR_API_KEY`、`ASR_MODEL` | `rag.asr.*`:OpenAI 相容的轉錄端點([把語音轉文字改到端點](migrate-asr.zh-TW.md)) | 空(上傳音訊會被拒絕) |
+| `ASR_CA_FILE` | `rag.asr.ca_file`:為該端點額外信任的 PEM CA 憑證(Forgeyard 自己的 CA) | 空 |
 | `VISION_BASE_URL`、`VISION_API_KEY` | `rag.parsing.vision.*`(在 `models.yaml` 中預設註解掉) | 空 |
 | `DOCLING_DEVICE` | `rag.docling.device` | `cuda` |
 | `CKIP_DEVICE` | `rag.retrieval.ckip_device` | `cpu` |
@@ -74,7 +75,8 @@ Docker 映像檔自己的 `models.yaml` 還會讀幾個變數（模型名稱、�
 | `rag.retrieval.rerank_candidates` | `60` | 僅用於 `fused` 候選池:`max(3 × top_k, 此值)` 個融合候選送進 cross-encoder;可即時調整(1–200)。 |
 | `rag.retrieval.mcp_response_token_budget` | `6000` | MCP 搜尋回應的估算 token 上限;超過時省略排名最低的結果並在回應中註明。`0` = 不限制。 |
 | `rag.retrieval.min_relevance` | 隨附設定檔為 `0.9`(未設定時 `0`) | MCP 搜尋:最高 rerank 分數低於此值 → `low_relevance: true`(只標記、不刪除)。依模型而定;`0` = 關閉。 |
-| `rag.asr.provider` | `fireredasr` | 音訊轉錄:`fireredasr`（本地繁中）· `docling-whisper` · `openai-compatible`。`rag.asr.enabled: false` 時音檔會以明確訊息標為失敗(不做任何轉錄)。`fireredasr` 與 `docling-whisper` **將在 1.5 移除**,請改用 `openai-compatible`([詳見](api.zh-TW.md#15-移除內建-ocr語音轉文字與-v1-媒體端點))。 |
+| `rag.asr.*` | `openai-compatible`,沒有端點 | 透過 OpenAI 相容的 `POST {base_url}/audio/transcriptions` 轉錄音訊(Forgeyard、speaches、vLLM、OpenAI)。沒有 `base_url`,或 `rag.asr.enabled: false` 時,上傳音訊會以 422 拒絕並說明原因。`rag.asr.provider` 只接受 `openai-compatible`:在程序內執行的 `fireredasr` 與 `docling-whisper` **已在 1.5 移除**,設定若仍寫它們,啟動會被拒絕並指向[遷移指南](migrate-asr.zh-TW.md)。 |
+| `rag.asr.chinese_conversion` | `s2twp` | 轉錄結果的中文字體:`s2twp` 把 whisper 輸出的簡體中文轉成台灣用語的繁體(OpenCC);`none` 保留端點原本的輸出。沒有中文字的文字一律不變。即時生效。 |
 | `rag.retrieval.segmenter` | `ckip`(`profile: cloud` 為 `bigram`) | 關鍵字檢索的中文斷詞器:`ckip` · `jieba` · `bigram`（見[運作原理](how-it-works.zh-TW.md)的「中文斷詞」）。 |
 | `rag.docling.ocr_enabled` | `true` | 掃描 PDF 與圖片的 OCR。設 `false` 會真的關掉(重啟後生效);沒有文字層的掃描檔會以明確訊息失敗。內建 OCR **將在 1.5 移除**,請改用搭配 `rag.parsing.vision` 的雲端解析([詳見](api.zh-TW.md#15-移除內建-ocr語音轉文字與-v1-媒體端點))。 |
 | `rag.contextual_retrieval.max_doc_chars` | `60000` | 每個 chunk 交給 LLM 的文件文字上限。LLM 讀的是大綱加上 chunk 所在章節,以 chunk 為中心最多 12,000 字元。 |
@@ -145,6 +147,7 @@ rag:
     base_url: https://api.openai.com/v1
     model: whisper-1
     api_key: "${OPENAI_API_KEY}"
+    chinese_conversion: s2twp   # Simplified -> Traditional (Taiwan); none = keep
     segment_seconds: 600    # long audio is uploaded in silence-aligned pieces
 
   retrieval:
@@ -154,18 +157,17 @@ rag:
 
 profile 做了什麼:
 
-- **驗證。** `cloud` 會拒絕在本機程序內載入的 provider（`huggingface` embedding、`fireredasr` /
-  `docling-whisper` ASR、本地 PDF/圖片解析）,而且**拒絕不是 `${ENV}` 參照的 API 金鑰** —— 雲端金鑰會計費,
+- **驗證。** `cloud` 會拒絕在本機程序內載入的 provider（`huggingface` embedding、本地 PDF/圖片解析）,而且**拒絕不是 `${ENV}` 參照的 API 金鑰** —— 雲端金鑰會計費,
   而設定檔是最常被複製流傳的檔案。明確設定 `rag.retrieval.segmenter: ckip` 也會被拒絕。啟動會失敗並列出有問題的設定路徑。`hybrid` 對寫死的金鑰只發警告;
   `local`（預設 —— 既有設定不受影響）不做任何新檢查。
-- **不 import 任何本地模型。** HuggingFace embedding、docling 的版面/OCR 模型、Whisper、FireRedASR、CKIP
-  只在被選用時才 import;啟動時略過 docling 預熱,並在 log 中列出每個角色跑在哪裡。
+- **不 import 任何本地模型。** HuggingFace embedding、docling 的版面/OCR 模型與 CKIP
+  只在被選用時才 import(語音轉文字一律走端點);啟動時略過 docling 預熱,並在 log 中列出每個角色跑在哪裡。
   `tests/test_cloud_profile_no_local_models.py` 在沒有本地堆疊的安裝上跑完整流程來證明這點。
 - **雲端 PDF 與圖片解析。** 每一頁由視覺模型轉成 Markdown,所有頁面先接回**同一份**文件再切 chunk,
   標題、麵包屑與表格都能跨頁延續。每頁都會附上前一頁的結尾與目前的標題路徑;頁面以有序區塊並行
   （並行數有上限）;失敗的頁面會退避重試,仍失敗就在文字中標記,而不是讓整個檔案失敗。chunk 保留起始頁碼
   供引用。單檔與每日頁數上限控制成本。未驗證的 `/v1/ocr/general` 端點不會轉給付費模型。
-- **雲端語音轉文字。** 音訊重新取樣後,在靜音處切段上傳（每個請求都不會超過上傳上限）,有重試;
+- **語音轉文字**(所有 profile)。音訊重新取樣後,在靜音處切段上傳（每個請求都不會超過上傳上限）,有重試;
   轉錄結果在有語音卻為空、或疑似生成迴圈時會重新請求。
 - **每個角色各自的重試與逾時**（`timeout`、`max_retries`）:429 / 5xx / 逾時以指數退避加抖動重試,並遵守 `Retry-After`。
 - **中文 BM25。** CKIP 是本地 torch 模型,cloud profile 不載入它,預設改用不需模型的 `bigram` 斷詞;
@@ -213,6 +215,9 @@ profile 做了什麼:
 - **LLM 角色從 4 個變 2 個。** 移除 `rag.answer_llm` 與 `rag.eval_llm`:回答與評估都用 `rag.llm`。`rag.contextual_llm`
   保留,作為 contextual 前綴的選用覆寫。轉換工具會略過這兩段(並提示);`models.yaml` 裡殘留的會被忽略並警告;主控台設定頁
   為它們存下的設定,會在啟動時刪除並警告。
+- **語音轉文字只走端點。** `rag.asr.provider: fireredasr` 或 `docling-whisper` 會讓啟動失敗。轉換工具會把它改成
+  `openai-compatible` 並註明;請依[遷移指南](migrate-asr.zh-TW.md)在 `.env` 設定 `ASR_BASE_URL`、`ASR_API_KEY` 與
+  `ASR_MODEL`。在那之前服務照常啟動,但會拒絕上傳音訊。主控台設定頁存過的 provider 會在啟動時刪除並發出警告。
 - **模組接線**(`modules.<name>.api_router` / `mcp_tools`)不再能設定,只剩 `modules.enabled`。`mcp.yaml` 裡如果有接線區塊,
   或是不認得的模組名稱,啟動都會拒絕。
 - **端點、金鑰與裝置**改成 `${VAR:-預設值}` 參照(見上表)。你在 1.4 直接寫死的值,會以該變數名稱移到 `.env`;

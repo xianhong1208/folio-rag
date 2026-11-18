@@ -80,6 +80,8 @@ ENV_SETTINGS: Dict[str, EnvSetting] = {
     "rag.rerank.api_key": EnvSetting("RERANK_API_KEY", "not-needed", True),
     "rag.asr.base_url": EnvSetting("ASR_BASE_URL", "", True),
     "rag.asr.api_key": EnvSetting("ASR_API_KEY", "", True),
+    "rag.asr.model": EnvSetting("ASR_MODEL", "", True),
+    "rag.asr.ca_file": EnvSetting("ASR_CA_FILE", "", True),
     "rag.parsing.vision.base_url": EnvSetting("VISION_BASE_URL", "", True),
     "rag.parsing.vision.api_key": EnvSetting("VISION_API_KEY", "", True),
     "rag.docling.device": EnvSetting("DOCLING_DEVICE", "cuda"),

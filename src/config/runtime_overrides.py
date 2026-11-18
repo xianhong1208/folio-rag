@@ -70,11 +70,11 @@ EDITABLE: Dict[str, str] = {
     "rag.rerank.max_retries": "live",
     # Model services — ASR
     "rag.asr.enabled": "live",
-    "rag.asr.provider": "live",
     "rag.asr.base_url": "live",
     "rag.asr.api_key": "live",
     "rag.asr.model": "live",
     "rag.asr.language": "live",
+    "rag.asr.chinese_conversion": "live",
     "rag.asr.segment_seconds": "live",
     "rag.asr.timeout": "live",
     "rag.asr.max_retries": "live",
@@ -163,12 +163,12 @@ _NULLABLE = {"rag.rerank.top_n", "rag.contextual_retrieval.reasoning_effort",
 # Choice lists. Providers are lower-cased and trimmed before the check (the factories
 # compare lower-case names). Embedding providers come from the factory itself.
 LLM_PROVIDERS = ("azure", "openai", "openai-compatible", "vllm", "ollama")
-ASR_PROVIDERS = ("docling-whisper", "openai-compatible", "fireredasr")
+CHINESE_CONVERSIONS = ("s2twp", "none")
 # Vision models are called through the OpenAI-compatible chat API (azure: its own client).
 VISION_PROVIDERS = ("openai-compatible", "openai", "vllm", "ollama", "azure")
 RERANK_APIS = ("score", "cohere", "jina", "generic")
 PARSING_MODES = ("local", "cloud")
-_LOWERCASE_PATHS = ("rag.embedding.provider", "rag.llm.provider", "rag.asr.provider",
+_LOWERCASE_PATHS = ("rag.embedding.provider", "rag.llm.provider", "rag.asr.chinese_conversion",
                     *(f"rag.{r}.provider" for r in _LLM_ROLES),
                     "rag.parsing.vision.provider", "rag.rerank.api",
                     "rag.parsing.pdf", "rag.parsing.images", "rag.parsing.on_page_failure",
@@ -187,7 +187,7 @@ def _allowed_values(path: str):
     return {
         "rag.llm.provider": LLM_PROVIDERS,
         **{f"rag.{r}.provider": LLM_PROVIDERS for r in _LLM_ROLES},
-        "rag.asr.provider": ASR_PROVIDERS,
+        "rag.asr.chinese_conversion": CHINESE_CONVERSIONS,
         "rag.parsing.vision.provider": VISION_PROVIDERS,
         "rag.rerank.api": RERANK_APIS,
         "rag.parsing.pdf": PARSING_MODES,

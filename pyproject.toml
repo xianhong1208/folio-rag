@@ -2,8 +2,9 @@
 # Install profiles:
 #   uv sync                                   core only: every model is an HTTP endpoint
 #                                             (rag.profile: cloud) — no torch, no transformers
-#   uv sync --extra local --group <gpu>       + in-process models (docling layout/OCR, Whisper,
-#                                             FireRedASR, CKIP, HuggingFace embeddings)
+#   uv sync --extra local --group <gpu>       + in-process models (docling layout/OCR, CKIP,
+#                                             HuggingFace embeddings). Speech-to-text is always an
+#                                             OpenAI-compatible endpoint (rag.asr).
 # GPU builds select PyTorch via PEP 735 dependency groups: `--group {rocm-r714|cuda|cpu}`.
 # Only torch/torchvision/torchaudio differ per group; the [tool.uv] sections below map each one to its index.
 
@@ -42,7 +43,7 @@ dependencies = [
     "tiktoken==0.12.0",
     "numpy==2.3.4",
     # Document parsing without models: docling-slim's format backends (Office, OpenDocument,
-    # Markdown, HTML, LaTeX, e-mail, PDF text layer) are torch-free. The layout/OCR/ASR model
+    # Markdown, HTML, LaTeX, e-mail, PDF text layer) are torch-free. The layout/OCR model
     # stack is the `local` extra. tree-sitter is needed to import docling-core's chunker
     # package (its code chunkers import it at package import).
     "docling-slim[format-office,format-opendocument,format-markdown,format-html,format-web,format-latex,format-email,format-pdf,convert-core]>=2.124.0",
@@ -53,8 +54,8 @@ dependencies = [
     # OpenDocument (odt/ods/odp) parsing
     "odfdo>=3.22.0,<4.0.0",
     # Simplified -> Traditional conversion (no torch): repairs Simplified drift in LLM-written
-    # contextual prefixes and detects the document's script (src/domain/rag/han_script.py) in
-    # every profile, and converts FireRedASR output in the local one.
+    # contextual prefixes, detects the document's script (src/domain/rag/han_script.py) and
+    # converts speech-to-text output (rag.asr.chinese_conversion) in every profile.
     "opencc>=1.1.9",
     # Page rendering for cloud PDF parsing (and page counts for progress). PDFium,
     # Apache-2.0 / BSD-3-Clause; also docling's PDF backend. Not PyMuPDF: it is AGPL-3.0.
@@ -90,16 +91,10 @@ dependencies = [
 # Everything here pulls torch; profile: cloud never imports any of it
 # (tests/test_cloud_profile_no_local_models.py).
 local = [
-    # Docling's layout / TableFormer / RapidOCR models + local Whisper (ASR extra)
-    "docling[asr]>=2.124.0",
+    # Docling's layout / TableFormer / RapidOCR models
+    "docling>=2.124.0",
     # In-process embedding models (provider: huggingface)
     "llama-index-embeddings-huggingface==0.6.1",
-    # FireRedASR — vendored official inference code (see [tool.uv.sources]; vendor/fireredasr_src)
-    "fireredasr",
-    # FireRedASR AED inference deps (arch-independent).
-    "kaldiio>=2.18.0",
-    "kaldi-native-fbank>=1.15",
-    "sentencepiece>=0.2.0",
     # OCR runs via docling's transitive rapidocr (torch backend); no onnxruntime needed.
     # 5.x: 4.x carries advisories fixed only in 5.0-5.10 (torch.load in Trainer, malicious
     # config.json, save_pretrained path traversal, ...). Output checked equal to 4.57 for CKIP
@@ -117,7 +112,7 @@ jieba = ["jieba>=0.42.1"]
 [tool.ruff]
 line-length = 120
 target-version = "py312"
-extend-exclude = [".venv", ".claude", "vendor", "frontend", "static"]
+extend-exclude = [".venv", ".claude", "frontend", "static"]
 
 [tool.ruff.lint]
 # Correctness only (pyflakes + the E4/E7/E9 errors), the same baseline as MCP Gate,
@@ -215,7 +210,7 @@ cuda = [
     "triton>=3.8.0,<3.9",
 ]
 
-# Pure CPU (CI / no GPU). Keep torch >= 2.8 — earlier versions break docling ASR.
+# Pure CPU (CI / no GPU).
 cpu = [
     "torch>=2.8.0",
     "torchvision>=0.23.0",
@@ -291,8 +286,6 @@ explicit = true
 
 # Map torch/torchvision/torchaudio (and triton) to the right index per group.
 [tool.uv.sources]
-# Vendored FireRedASR (no PyPI release) installed as a local path dependency.
-fireredasr = { path = "vendor/fireredasr_src" }
 torch = [
     { index = "pytorch-rocm-multiarch", group = "rocm-r714" },
     { index = "pytorch-cu130",          group = "cuda"      },

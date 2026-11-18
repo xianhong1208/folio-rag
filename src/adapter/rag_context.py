@@ -103,7 +103,7 @@ class RAGContext:
         except Exception as e:
             logger.warning(f"Contextual Retrieval initialization failed: {e}")
 
-        # ASR provider from config (unset -> default docling-whisper)
+        # ASR provider from config (no endpoint -> unconfigured: audio is refused)
         from src.domain.rag.asr_provider import create_asr_provider
         asr_cfg = getattr(rag_config, "asr", None) if rag_config else None
         indexer = HierarchicalIndexer(

@@ -1,6 +1,6 @@
 """Run the ffmpeg binary, turning "not installed" into a clear error.
 
-Audio transcription (local Whisper / FireRedASR and the cloud ASR path alike) shells
+Audio transcription (the OpenAI-compatible speech-to-text path) shells
 out to ffmpeg for resampling, silence detection and trimming. Without the binary,
 ``subprocess.run`` raises a bare ``FileNotFoundError: 'ffmpeg'`` from deep inside the
 pipeline, which reads like a missing upload. Callers already handle ``RuntimeError``

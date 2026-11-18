@@ -26,7 +26,6 @@ LLM_ROLES = ("contextual_llm",)
 
 # Providers that load weights into this process (everything else is an HTTP endpoint).
 IN_PROCESS_EMBEDDING = frozenset({"huggingface", "local"})
-IN_PROCESS_ASR = frozenset({"docling-whisper", "fireredasr"})
 
 ROLE_LABELS = {
     "embedding": "Embedding",
@@ -97,21 +96,12 @@ def needs_local_docling_models(rag_config) -> bool:
     return any(parsing_mode(rag_config, k) == "local" for k in ("pdf", "images"))
 
 
-def asr_runs_in_process(rag_config) -> bool:
-    asr = getattr(rag_config, "asr", None)
-    if asr is None:  # legacy default: local docling-whisper when weights are present
-        return getattr(rag_config, "profile", "local") != "cloud"
-    return bool(asr.enabled and asr.provider in IN_PROCESS_ASR)
-
-
 def docling_warmup_needed(rag_config) -> bool:
     """Whether startup should pre-load docling's models: only when PDFs/images are parsed
-    locally or local docling-whisper transcribes audio. Office/Markdown/HTML need no models."""
+    locally. Office/Markdown/HTML need no models, and speech-to-text is an endpoint."""
     if rag_config is None:
         return True  # unknown config: keep the historical behaviour
-    asr = getattr(rag_config, "asr", None)
-    local_whisper = asr_runs_in_process(rag_config) and (asr is None or asr.provider == "docling-whisper")
-    return needs_local_docling_models(rag_config) or local_whisper
+    return needs_local_docling_models(rag_config)
 
 
 def _endpoint(provider, model, base_url, enabled=True, in_process=False) -> Dict[str, Any]:
@@ -176,11 +166,9 @@ def role_summary(rag_config) -> List[Dict[str, Any]]:
 
     asr = getattr(rag_config, "asr", None)
     if asr is None:
-        entry = _endpoint("docling-whisper", None, None,
-                          enabled=getattr(rag_config, "profile", "local") != "cloud", in_process=True)
+        entry = _endpoint("openai-compatible", None, None)
     else:
-        entry = _endpoint(asr.provider, asr.model, asr.base_url, enabled=asr.enabled,
-                          in_process=asr.provider in IN_PROCESS_ASR)
+        entry = _endpoint(asr.provider, asr.model, asr.base_url, enabled=asr.enabled)
     out.append({"role": "asr", "secret_path": "rag.asr.api_key", **entry})
 
     for e in out:

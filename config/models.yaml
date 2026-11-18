@@ -48,14 +48,17 @@ rag:
     query_template: "query: {text}"
     document_template: "document: {text}\nYou are a search relevance expert who evaluates how well documents match search queries. For each query-document pair, carefully analyze the semantic relationship between them, then provide your binary relevance judgment (0 for not relevant, 1 for relevant).\nRelevance:"
 
-  # Speech-to-text for audio files and /v1/audio/transcriptions.
+  # Speech-to-text for audio files: an OpenAI-compatible /audio/transcriptions endpoint
+  # (Forgeyard, speaches, vLLM, OpenAI). Folio runs no speech model itself (docs/migrate-asr.md);
+  # without base_url, audio uploads are refused.
   asr:
-    enabled: true                               # false = do not transcribe audio (even if the model is present)
-    provider: "fireredasr"                      # docling-whisper | openai-compatible | fireredasr
-    # openai-compatible only (OpenAI / Groq / self-hosted vLLM whisper):
-    base_url: "${ASR_BASE_URL:-}"               # e.g. http://localhost:8000/v1
+    enabled: true                               # false = do not transcribe audio (audio uploads are refused)
+    provider: "openai-compatible"               # the only provider
+    base_url: "${ASR_BASE_URL:-}"               # e.g. https://forgeyard.example:7860/v1
     api_key: "${ASR_API_KEY:-}"
-    model: null                                 # cloud model name, e.g. whisper-1
+    model: "${ASR_MODEL:-}"                     # e.g. whisper-large-v3-turbo
+    chinese_conversion: "s2twp"                 # s2twp = Traditional Chinese (Taiwan) | none
+    ca_file: "${ASR_CA_FILE:-}"                 # PEM of a private CA (Forgeyard's own), added to the default trust
 
   # Docling — structured PDF/DOCX parsing with local models.
   docling:

@@ -211,7 +211,7 @@ class HierarchicalIndexer:
             leaf_chunk_size=leaf_chunk_size,
             embedding_model_name=embedding_model_name,
             has_context_generator=context_generator is not None,
-            asr_provider=asr_provider,   # None → default docling-whisper
+            asr_provider=asr_provider,   # None → unconfigured (audio refused)
             asr_enabled=asr_enabled,
         )
         self._leaf_splitter = LeafSplitter(

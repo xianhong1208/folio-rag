@@ -104,9 +104,9 @@ class TestWarmupAndConverterGating:
         assert not docling_warmup_needed(_rag(**CLOUD))
         hybrid = _rag(profile="hybrid", parsing={"pdf": "cloud", "images": "cloud",
                                                  "vision": {"model": "v"}},
-                      asr={"provider": "fireredasr"})
-        assert not docling_warmup_needed(hybrid)  # FireRedASR is not docling
-        hybrid.asr.provider = "docling-whisper"
+                      asr={"base_url": "http://stt/v1"})
+        assert not docling_warmup_needed(hybrid)  # speech-to-text is an endpoint, not docling
+        hybrid.parsing.pdf = "local"
         assert docling_warmup_needed(hybrid)
 
     def test_local_pdf_models_wanted(self, monkeypatch):

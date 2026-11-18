@@ -1,8 +1,9 @@
-"""Advance notice (1.4.2): the built-in OCR, speech-to-text and /v1 media endpoints go in 1.5.
+"""Advance notice (1.4.2): the built-in OCR and the /v1 media endpoints are going away.
 
-Nothing is removed yet. /v1 responses carry Deprecation + Link headers, and the
-first /v1 call, the first in-process OCR and the first in-process transcription each
-log a warning once per process; startup logs what the configuration uses.
+The built-in speech-to-text was removed in 1.5 (test_asr_provider covers the refusal), so
+there is no "asr" notice any more. /v1 responses carry Deprecation + Link headers, and the
+first /v1 call and the first in-process OCR each log a warning once per process; startup
+logs what the configuration uses.
 """
 
 from types import SimpleNamespace
@@ -45,15 +46,16 @@ class TestWarnOnce:
         with patch.object(dep, "logger") as log:
             assert dep.warn_once("ocr") is True
             assert dep.warn_once("ocr") is False
-            assert dep.warn_once("asr") is True
+            assert dep.warn_once("media") is True
         assert log.warning.call_count == 2
         first = log.warning.call_args_list[0].args[0]
         assert "removed in 1.5" in first and "vision model" in first and dep.NOTICE_URL in first
 
     def test_messages_name_the_replacements(self):
-        assert "openai-compatible" in dep.MESSAGES["asr"] and "Forgeyard" in dep.MESSAGES["asr"]
+        assert set(dep.MESSAGES) == {"ocr", "media"}  # speech-to-text is gone, not deprecated
         assert "rag.parsing.vision" in dep.MESSAGES["ocr"]
         assert "/v1/ocr/general" in dep.MESSAGES["media"]
+        assert "transcriptions" not in dep.MESSAGES["media"]
 
 
 def _app():
@@ -124,8 +126,8 @@ def _config(rag, modules=("media",)):
 
 
 class TestStartup:
-    def test_local_defaults_use_all_three(self):
-        assert dep.deprecated_in_use(_config(_rag())) == ["ocr", "asr", "media"]
+    def test_local_defaults_use_ocr_and_media(self):
+        assert dep.deprecated_in_use(_config(_rag())) == ["ocr", "media"]
 
     def test_cloud_setup_without_the_media_module_uses_none(self):
         assert dep.deprecated_in_use(_config(_rag(**CLOUD), modules=("rag",))) == []
@@ -135,15 +137,10 @@ class TestStartup:
                    asr={"provider": "openai-compatible", "base_url": "http://x/v1", "model": "w"})
         assert dep.deprecated_in_use(_config(rag, modules=())) == []
 
-    def test_in_process_asr_is_counted(self):
-        rag = _rag(**{**CLOUD, "profile": "hybrid", "asr": {"provider": "fireredasr"},
-                      "parsing": {"pdf": "cloud", "images": "cloud", "vision": {"model": "v", "base_url": "http://x/v1"}}})
-        assert dep.deprecated_in_use(_config(rag, modules=())) == ["asr"]
-
     def test_startup_logs_one_line_each(self):
         with patch.object(dep, "logger") as log:
-            assert dep.log_startup_notice(_config(_rag())) == ["ocr", "asr", "media"]
-        assert log.warning.call_count == 3
+            assert dep.log_startup_notice(_config(_rag())) == ["ocr", "media"]
+        assert log.warning.call_count == 2
 
     def test_startup_check_never_raises(self):
         with patch.object(dep, "deprecated_in_use", side_effect=RuntimeError("bad config")):
@@ -158,7 +155,7 @@ def _cpu():
 class TestFirstUse:
     def test_building_the_local_ocr_converter_warns(self, monkeypatch):
         from src.domain.rag import docling_loader as dl
-        monkeypatch.setattr(_CFG, lambda: SimpleNamespace(rag=_rag(asr={"provider": "fireredasr"})))
+        monkeypatch.setattr(_CFG, lambda: SimpleNamespace(rag=_rag()))
         monkeypatch.setattr(dl, "_converter", None)
         monkeypatch.setattr(dl, "_resolve_artifacts_path", lambda: None)
         monkeypatch.setattr(dl, "_get_accelerator_options", _cpu)
@@ -173,7 +170,7 @@ class TestFirstUse:
     def test_no_warning_when_ocr_is_off(self, monkeypatch):
         from src.domain.rag import docling_loader as dl
         monkeypatch.setattr(_CFG, lambda: SimpleNamespace(rag=_rag(
-            docling={"ocr_enabled": False}, asr={"provider": "fireredasr"})))
+            docling={"ocr_enabled": False})))
         monkeypatch.setattr(dl, "_converter", None)
         monkeypatch.setattr(dl, "_resolve_artifacts_path", lambda: None)
         monkeypatch.setattr(dl, "_get_accelerator_options", _cpu)
@@ -184,22 +181,6 @@ class TestFirstUse:
             dl._build_converter()
         warn.assert_not_called()
         monkeypatch.setattr(dl, "_converter", None)
-
-    def test_docling_whisper_transcription_warns(self):
-        from src.domain.rag.asr_provider import DoclingWhisperAsrProvider
-        with patch.object(dep, "warn_once") as warn, \
-                patch("src.domain.rag.asr_provider.docling_convert_once", side_effect=RuntimeError("stop")):
-            with pytest.raises(RuntimeError):
-                DoclingWhisperAsrProvider().transcribe(audio_path="a.wav", file_name="a.wav", max_tokens=512)
-        warn.assert_called_once_with("asr")
-
-    def test_fireredasr_transcription_warns(self):
-        from src.domain.rag.fireredasr_provider import FireRedAsrProvider
-        with patch.object(dep, "warn_once") as warn, \
-                patch("src.domain.rag.fireredasr_provider._resample_to_wav16k", side_effect=RuntimeError("stop")):
-            with pytest.raises(RuntimeError):
-                FireRedAsrProvider().transcribe(audio_path="a.wav", file_name="a.wav")
-        warn.assert_called_once_with("asr")
 
     def test_cloud_transcription_does_not_warn(self):
         from src.domain.rag.asr_provider import OpenAICompatibleAsrProvider

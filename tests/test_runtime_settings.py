@@ -46,7 +46,7 @@ def _mk_config() -> ConfigModel:
             "llm": {"provider": "vllm", "model": "m", "base_url": "http://x/v1"},
             "rerank": {"enabled": False, "model": "r", "base_url": "http://x"},
             "contextual_retrieval": {"enabled": True},
-            "asr": {"enabled": True, "provider": "docling-whisper"},
+            "asr": {"enabled": True, "provider": "openai-compatible"},
         },
     })
 
@@ -111,9 +111,9 @@ class TestValidateAndApply:
         # rag.asr unset (None) → patch auto-creates the default section before writing
         cfg = _mk_config()
         cfg.rag.asr = None
-        ro.validate_and_apply(cfg, {"rag.asr.provider": "fireredasr"})
+        ro.validate_and_apply(cfg, {"rag.asr.model": "whisper-large-v3-turbo"})
         assert cfg.rag.asr is not None
-        assert cfg.rag.asr.provider == "fireredasr"
+        assert cfg.rag.asr.model == "whisper-large-v3-turbo"
 
     def test_coercion_follows_pydantic(self):
         # "12" (a numeric string) → pydantic's lenient coercion, consistent with yaml behavior
@@ -218,6 +218,25 @@ class TestService:
         dropped = [c.args[0] for c in warn.call_args_list if "Dropped stored setting" in c.args[0]]
         assert len(dropped) == 2 and all("rag.llm" in w for w in dropped)
         assert all("${LLM_KEY}" not in str(c) for c in warn.call_args_list)
+
+    @pytest.mark.parametrize("stored", ["fireredasr", "docling-whisper", "openai-compatible"])
+    def test_startup_drops_a_stored_asr_provider(self, stored):
+        """1.5: rag.asr.provider is no longer a console setting. A stored row is deleted before the
+        replay; a removed in-process provider gets a warning naming the migration guide, and
+        rag.asr then follows the config files (no silent switch to another local model)."""
+        cfg = _mk_config()
+        from src.adapter import runtime_settings_service as svc
+        with self._with_cfg(cfg), patch("db.db.get_engine"), \
+             patch(f"{_SVC}.RuntimeSettingsDB") as db, patch.object(svc.logger, "warning") as warn:
+            db.load_all.return_value = {"rag.asr.provider": stored, "rag.asr.model": "m"}
+            applied = svc.load_overrides_on_startup()
+        assert [c.args[0] for c in db.delete.call_args_list] == ["rag.asr.provider"]
+        assert applied == 1 and cfg.rag.asr.model == "m" and cfg.rag.asr.provider == "openai-compatible"
+        dropped = [c.args[0] for c in warn.call_args_list if "rag.asr.provider" in c.args[0]]
+        if stored == "openai-compatible":
+            assert dropped == []
+        else:
+            assert len(dropped) == 1 and "docs/migrate-asr.md" in dropped[0]
 
     def test_startup_overlay_binds_the_engine_before_reading(self):
         """main.py overlays the overrides before it calls init_db. Without binding the
@@ -392,6 +411,12 @@ class TestServiceViewAndReset:
 class TestValueConstraints:
     """The settings API rejects values that would hang or empty the service."""
 
+    def test_asr_provider_is_not_a_console_setting(self):
+        """openai-compatible is the only provider (1.5), so the console cannot set one."""
+        assert "rag.asr.provider" not in ro.EDITABLE
+        with pytest.raises(ValueError, match="cannot be changed at runtime"):
+            ro.validate_and_apply(_mk_config(), {"rag.asr.provider": "fireredasr"})
+
     @pytest.mark.parametrize("path, value", [
         ("rag.contextual_retrieval.max_concurrent", 0),      # Semaphore(0) hangs indexing
         ("rag.contextual_retrieval.max_concurrent", -3),
@@ -409,7 +434,7 @@ class TestValueConstraints:
         ("rag.retrieval.hybrid_fusion", "foo"),
         ("rag.embedding.provider", "nope"),
         ("rag.llm.provider", "nope"),
-        ("rag.asr.provider", "nope"),
+        ("rag.asr.chinese_conversion", "s2t"),
         ("rag.contextual_retrieval.reasoning_effort", "max"),
         ("rag.rerank.base_url", "localhost:8787"),            # scheme missing
         ("rag.rerank.query_template", "no placeholder"),
@@ -559,7 +584,8 @@ class TestResetMissingSection:
         from src.config.model import AsrConfig
         with patch(f"{_SVC}.Config.get_config_model", return_value=cfg), \
              patch.object(Config, "_config_dir", None):
-            assert svc._yaml_value("rag.asr.provider") == AsrConfig.model_fields["provider"].get_default()
+            assert svc._yaml_value("rag.asr.chinese_conversion") == \
+                AsrConfig.model_fields["chinese_conversion"].get_default()
 
     def test_reset_with_missing_section_succeeds(self, tmp_path):
         cfg = _mk_config()
@@ -572,8 +598,8 @@ class TestResetMissingSection:
              patch(f"{_SVC}.RuntimeSettingsDB") as db, patch(f"{_SVC}._rebind"), \
              patch(f"{_SVC}._audit"), patch.object(Config, "_config_dir", config_dir_from_file(yaml_file)):
             db.delete.return_value = True
-            assert svc.reset_setting("rag.asr.provider") is True
-        assert cfg.rag.asr.provider == "docling-whisper"
+            assert svc.reset_setting("rag.asr.chinese_conversion") is True
+        assert cfg.rag.asr.chinese_conversion == "s2twp"
 
     def test_reset_resolves_value_before_deleting_override(self, tmp_path):
         """If the factory value cannot be applied, the override row must survive."""

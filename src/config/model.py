@@ -477,28 +477,62 @@ class DoclingConfig(BaseModel):
     compile_models: bool = False  # torch.compile model optimization (faster inference but ~120s slower startup; suits rarely-restarted environments)
 
 
-class AsrConfig(BaseModel):
-    """Audio-transcription (ASR) source selection.
+# Speech-to-text moved out of the process in 1.5; the guide says how to point Folio at an endpoint.
+ASR_MIGRATION_GUIDE = "docs/migrate-asr.md"
+REMOVED_ASR_PROVIDERS = ("docling-whisper", "fireredasr")
 
-    Only the minimal field set is exposed (every config field is a permanent maintenance surface);
-    trimming/hallucination filtering stays always-on in code (audio_defense). provider maps to the
-    factory in src/domain/rag/asr_provider.py.
+
+def removed_asr_provider_message(provider: str) -> str:
+    return (f"rag.asr.provider {provider!r} was removed in Folio 1.5: speech-to-text no longer runs "
+            "inside Folio. Set rag.asr.provider to openai-compatible with base_url (env "
+            "ASR_BASE_URL), api_key and model pointing at an OpenAI-compatible transcription "
+            f"endpoint such as Forgeyard's. See {ASR_MIGRATION_GUIDE}.")
+
+
+class AsrConfig(BaseModel):
+    """Speech-to-text: an OpenAI-compatible ``POST {base_url}/audio/transcriptions`` endpoint.
+
+    Folio 1.5 runs no speech-to-text model itself (docs/migrate-asr.md). Without a base_url the
+    service starts and audio uploads are refused with a message saying what to set.
+    Trimming/hallucination filtering stays always-on in code (audio_defense).
     """
-    enabled: bool = True                    # False = don't transcribe audio (even if the model is present)
-    # docling-whisper (local) | openai-compatible (cloud/self-hosted HTTP;
-    # compatible with OpenAI / Groq / vLLM whisper / faster-whisper-server) |
-    # fireredasr (local FireRedASR-AED-L, Traditional-Chinese output; weights see fireredasr_provider.py)
-    provider: str = "docling-whisper"
-    # ---- Cloud (openai-compatible) only: POST {base_url}/audio/transcriptions ----
-    base_url: OptStr = None                 # e.g. http://host:8000/v1
+    enabled: bool = True                    # False = don't transcribe audio (audio uploads are refused)
+    # The only provider. The in-process ones (docling-whisper, fireredasr) were removed in 1.5
+    # and are refused here, so an old configuration stops the start instead of losing audio.
+    provider: str = "openai-compatible"
+    base_url: OptStr = None                 # e.g. https://forgeyard.example:7860/v1
     api_key: OptStr = Field(None, repr=False)
-    model: OptStr = None                    # cloud model name, e.g. whisper-1
+    model: OptStr = None                    # e.g. whisper-large-v3-turbo
     language: Optional[str] = None          # ISO-639-1 hint (e.g. "zh"); empty = auto-detect
+    # Chinese script of the transcript: s2twp = Simplified -> Traditional with Taiwan phrasing
+    # (whisper writes Simplified Chinese); none = keep what the endpoint returns.
+    chinese_conversion: str = "s2twp"
+    # Extra CA certificate (PEM) trusted for base_url, for a server with its own CA such as
+    # Forgeyard's. Added to the default trust store; SSL_CERT_FILE replaces it instead.
+    ca_file: OptStr = None
     # Long audio is resampled to 16 kHz mono and uploaded in segments cut at silences, so
     # no single request hits the provider's upload limit (OpenAI: 25 MB ≈ 13 min of 16k pcm).
     segment_seconds: float = Field(600.0, ge=30.0, le=780.0)
     timeout: float = Field(300.0, gt=0)     # per-segment request timeout (seconds)
     max_retries: int = Field(3, ge=0, le=10)  # 429 / 5xx / timeout / empty-or-runaway retries
+
+    @field_validator("provider", mode="before")
+    @classmethod
+    def _only_openai_compatible(cls, v):
+        name = (str(v).strip().lower() if v is not None else "openai-compatible") or "openai-compatible"
+        if name in REMOVED_ASR_PROVIDERS:
+            raise ValueError(removed_asr_provider_message(name))
+        if name != "openai-compatible":
+            raise ValueError(f"Unknown rag.asr.provider {v!r}: the only provider is openai-compatible")
+        return name
+
+    @field_validator("chinese_conversion", mode="before")
+    @classmethod
+    def _known_conversion(cls, v):
+        name = (str(v).strip().lower() if v is not None else "none") or "none"
+        if name not in ("s2twp", "none"):
+            raise ValueError(f"rag.asr.chinese_conversion {v!r}: use s2twp or none")
+        return name
 
 
 class VisionModelConfig(BaseModel):
@@ -610,8 +644,8 @@ class RAGConfig(BaseModel):
     @model_validator(mode="after")
     def _apply_profile_defaults(self) -> "RAGConfig":
         """Profile defaults that need no validation: a cloud deployment without an `asr`
-        section must not fall back to local Whisper, so speech-to-text is off until an
-        OpenAI-compatible endpoint is configured."""
+        section has speech-to-text off until an OpenAI-compatible endpoint is configured
+        (other profiles leave it unconfigured: audio uploads are refused either way)."""
         if self.profile == "cloud" and self.asr is None:
             self.asr = AsrConfig(enabled=False, provider="openai-compatible")
         return self

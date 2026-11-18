@@ -59,3 +59,5 @@ rag:
     base_url: "${ASR_BASE_URL:-}"
     api_key: "${ASR_API_KEY:-}"
     model: "${ASR_MODEL:-}"
+    chinese_conversion: "s2twp"                 # s2twp = Traditional Chinese (Taiwan) | none
+    ca_file: "${ASR_CA_FILE:-}"                 # PEM of a private CA (Forgeyard's own); mount it read-only

@@ -35,9 +35,9 @@ from src.domain.rag.docling_guard import (
 
 logger = get_api_logger()
 
-# Supported file types for Docling. Documents / images / audio each map to a
-# Docling FormatOption; the audio path only activates when the Whisper model
-# exists, else it falls back to SimpleDirectoryReader. This set is kept aligned
+# Supported file types for Docling. Documents and images each map to a Docling
+# FormatOption; audio is listed for the format invariant only — it never reaches
+# docling (document_loader sends it to the rag.asr endpoint). This set is kept aligned
 # to docling's official format list by a programmatic invariant in
 # tests/test_upload_formats.py (see its _EXCLUDED_FORMATS for exclusions).
 DOCLING_EXTENSIONS = {
@@ -62,7 +62,7 @@ DOCLING_EXTENSIONS = {
     ".msg", ".eml", ".epub", ".vtt",
     # Images
     ".png", ".jpg", ".jpeg", ".tiff", ".tif", ".bmp", ".webp", ".gif",
-    # Audio (docling's 6 official audio types; transcription goes through AsrProvider)
+    # Audio (docling's 6 official audio types; transcribed by the rag.asr endpoint, not docling)
     ".wav", ".mp3", ".m4a", ".aac", ".ogg", ".flac",
 }
 
@@ -76,8 +76,8 @@ _converter = None
 # converter (several-second GPU load ×N → wasted VRAM/OOM).
 _converter_lock = threading.Lock()
 # Inference lock. The converter is a process-wide singleton shared by indexing and
-# media's /v1/ocr, /v1/transcriptions; concurrent forwards on the same
-# TableFormer / RapidOCR / Whisper instance race the KV-cache → tensor reshape
+# media's /v1/ocr; concurrent forwards on the same
+# TableFormer / RapidOCR instance race the KV-cache → tensor reshape
 # errors, CUDA illegal memory, OOM. Every converter.convert() must hold this lock.
 # media.py imports this same lock — do not create separate ones.
 DOCLING_INFER_LOCK = threading.Lock()
@@ -224,26 +224,6 @@ def _resolve_artifacts_path() -> Optional[Path]:
     return None
 
 
-def _resolve_whisper_path() -> Optional[Path]:
-    """Resolve the Whisper ASR model directory: assets/whisper_models
-
-    `whisper.load_model('turbo', download_root=...)` saves the weights as `large-v3-turbo.pt`
-    (OpenAI internally maps the alias 'turbo' to the formal filename). We don't hard-code the
-    filename; a directory is considered "whisper ready" if it contains at least one .pt file.
-
-    Auto-discover design: no directory or no .pt file → return None → the audio pipeline isn't
-    installed → uploaded .wav/.mp3 naturally fall back to SimpleDirectoryReader (a silent fallback,
-    consistent with the principle of least surprise).
-    """
-    assets = resolve_assets_dir()
-    if not assets:
-        return None
-    p = assets / "whisper_models"
-    if p.is_dir() and any(p.glob("*.pt")):
-        return p
-    return None
-
-
 def ocr_enabled() -> bool:
     """config ``rag.docling.ocr_enabled`` (restart-level: the converter is a singleton).
     Unreadable config keeps the default (on)."""
@@ -252,25 +232,6 @@ def ocr_enabled() -> bool:
         return bool(_Cfg.get_config_model().rag.docling.ocr_enabled)
     except Exception:
         return True
-
-
-def asr_wants_local_whisper() -> bool:
-    """Whether config `rag.asr` requires local docling-whisper.
-
-    Installation (get_converter) and warmup (warmup_docling) must use the SAME condition. If they
-    judge independently (warmup only checking whether the weight file exists), then with the provider
-    set to fireredasr but a stray whisper .pt left on the machine, warmup would init a default docling
-    audio pipeline with no artifacts_path → triggering a runtime download → SSL failure in an
-    offline/intercepted environment. A missing config (None) keeps the old auto-discover semantics (yes).
-    """
-    try:
-        from src.config.config_manager import Config as _Cfg
-        _asr_cfg = getattr(getattr(_Cfg.get_config_model(), "rag", None), "asr", None)
-        if _asr_cfg is not None:
-            return bool(_asr_cfg.enabled and _asr_cfg.provider == "docling-whisper")
-    except Exception:
-        pass  # config unreadable → keep the old behavior
-    return True
 
 
 def _local_pdf_models_wanted() -> bool:
@@ -308,7 +269,7 @@ def _apply_docling_env():
 
     Note: the device setting no longer goes through the DOCLING_DEVICE env var (Docling doesn't read
     it). The actual GPU enablement point is `_get_accelerator_options()`, which passes AcceleratorOptions
-    into PdfPipelineOptions / AsrPipelineOptions.
+    into PdfPipelineOptions.
     """
     global _docling_env_applied
     if _docling_env_applied:
@@ -482,15 +443,14 @@ def _get_accelerator_options():
     return AcceleratorOptions(device=AcceleratorDevice.CPU, num_threads=4)
 
 
-# Audio extensions listed separately — only actually supported when the Whisper model is present
+# Audio extensions: transcribed by the rag.asr endpoint, never by docling
 _AUDIO_EXTENSIONS = {".wav", ".mp3", ".m4a", ".aac", ".ogg", ".flac"}  # docling's 6 official types
 
 
 def is_docling_supported(file_name: str) -> bool:
     """Determine whether a file can be processed by Docling.
 
-    Audio files (.wav / .mp3) require assets/whisper_models/turbo.pt to exist; otherwise they're
-    treated as unsupported, letting the caller fall back to SimpleDirectoryReader.
+    Audio is never parsed by docling (document_loader sends it to the rag.asr endpoint first).
 
     Args:
         file_name: The filename including its extension.
@@ -501,7 +461,7 @@ def is_docling_supported(file_name: str) -> bool:
     ext = Path(file_name).suffix.lower()
     if ext not in DOCLING_EXTENSIONS:
         return False
-    if ext in _AUDIO_EXTENSIONS and _resolve_whisper_path() is None:
+    if ext in _AUDIO_EXTENSIONS:
         return False
     return True
 
@@ -546,24 +506,18 @@ def _build_converter():
             )
 
         from docling.datamodel.base_models import InputFormat
-        from docling.datamodel.pipeline_options import PdfPipelineOptions, AsrPipelineOptions
-        from docling.datamodel.asr_model_specs import WHISPER_TURBO_NATIVE
+        from docling.datamodel.pipeline_options import PdfPipelineOptions
         from docling.document_converter import (
             DocumentConverter,
             PdfFormatOption,
             ImageFormatOption,
-            AudioFormatOption,
         )
 
         format_options: dict = {}
 
-        # Audio pipeline: installed only when the Whisper model exists AND config permits.
-        whisper_path = _resolve_whisper_path() if asr_wants_local_whisper() else None
-
-        # Compute the GPU/CPU choice from config — passed to all pipeline options so Docling's
-        # Layout / TableFormer / OCR / Whisper all run on the configured device
-        accelerator_options = (
-            _get_accelerator_options() if (local_models or whisper_path) else None)
+        # Compute the GPU/CPU choice from config — passed to the pipeline options so Docling's
+        # Layout / TableFormer / OCR run on the configured device
+        accelerator_options = _get_accelerator_options() if local_models else None
 
         ocr_on = ocr_enabled()
         pdf_kwargs = {
@@ -597,33 +551,7 @@ def _build_converter():
         else:
             logger.info("[DOCLING] PDF/image models not configured: rag.parsing sends them to the cloud")
 
-        # Not installed when rag.asr.enabled=false or the provider isn't docling-whisper (e.g. cloud),
-        # saving local whisper's VRAM/warmup; a missing config keeps the old auto-discover semantics.
-        if whisper_path is None and not asr_wants_local_whisper():
-            logger.info("[DOCLING] Audio pipeline skipped by rag.asr config (disabled or non-local provider)")
-        if whisper_path:
-            # Patch whisper.load_model before docling's audio pipeline can load the model.
-            from src.domain.rag.audio_defense import _enable_whisper_anti_hallucination_defaults
-            _enable_whisper_anti_hallucination_defaults()
-            logger.info(f"[DOCLING] Audio pipeline enabled, whisper_models at: {whisper_path}")
-            # word_timestamps=False: avoids whisper/timing.py's hard dependency on Triton
-            # (`triton_ops.dtw_kernel` / `median_filter_cuda`) — that API is unstable across Triton/ROCm
-            # versions, and we don't need word-level timestamps. From docling 2.111 this is an official
-            # option (older versions hardcoded True, requiring a whole-class PatchedAsrPipeline override,
-            # since removed with the 2.119 upgrade).
-            asr_pipeline_options = AsrPipelineOptions(
-                artifacts_path=str(whisper_path),
-                asr_options=WHISPER_TURBO_NATIVE.model_copy(
-                    update={"word_timestamps": False}
-                ),
-                accelerator_options=accelerator_options,
-            )
-            format_options[InputFormat.AUDIO] = AudioFormatOption(
-                pipeline_options=asr_pipeline_options,
-            )
-        elif asr_wants_local_whisper():
-            logger.info("[DOCLING] assets/whisper_models/*.pt not found: local whisper transcription unavailable")
-
+        # No audio pipeline: speech-to-text is the rag.asr endpoint (document_loader).
         converter_kwargs = {"format_options": format_options} if format_options else {}
 
         logger.info("[DOCLING] Creating DocumentConverter (loading ML models)...")
@@ -646,41 +574,15 @@ def warmup_docling():
     try:
         converter = get_converter()
 
-        # Force-initialize every pipeline to be exposed via /v1/transcriptions/general and
-        # /v1/ocr/general, so the first REST request after startup doesn't pay cold-start model load cost.
+        # Force-initialize every pipeline exposed via /v1/ocr/general, so the first REST request after startup doesn't pay cold-start model load cost.
         from docling.datamodel.base_models import InputFormat
         warmup_formats = [InputFormat.PDF, InputFormat.DOCX, InputFormat.IMAGE]
-        # The AUDIO warmup condition must match get_converter's install condition (config + weights) —
-        # checking only the weight file would, when the provider isn't docling-whisper, warm up
-        # docling's default audio pipeline (no artifacts_path → runtime download → SSL failure offline)
-        _local_whisper = asr_wants_local_whisper() and _resolve_whisper_path() is not None
-        if _local_whisper:
-            warmup_formats.append(InputFormat.AUDIO)
         for fmt in warmup_formats:
             try:
                 logger.info(f"[DOCLING_WARMUP] Initializing pipeline for {fmt.value}...")
                 converter.initialize_pipeline(fmt)
             except Exception as e:
                 logger.warning(f"[DOCLING_WARMUP] Pipeline init for {fmt.value} failed: {e}")
-
-        # Verify Whisper anti-hallucination monkey-patch actually took effect.
-        # If Docling imported whisper before hierarchical_indexer loaded, the patch misses that copy
-        # → Layer 1 defense silently fails. Assert right after audio pipeline warmup, logging an error
-        # on failure so ops sees it at a glance (no raise — avoids blocking server startup; degraded is still usable).
-        if _local_whisper:
-            try:
-                import whisper as _w
-                if not getattr(_w.load_model, "_anti_hallucination_wrapped", False):
-                    logger.error(
-                        "[DOCLING_WARMUP] ❌ Whisper anti-hallucination monkey-patch NOT applied — "
-                        "Layer 1 defense disabled. Check import order in hierarchical_indexer.py"
-                    )
-                else:
-                    logger.info(
-                        "[DOCLING_WARMUP] ✓ Whisper anti-hallucination monkey-patch verified"
-                    )
-            except Exception as exc:
-                logger.warning(f"[DOCLING_WARMUP] Could not verify whisper monkey-patch: {exc}")
 
         # GPU self-diagnosis: an OCR session's CUDA provider init failure silently falls back to CPU
         # (ORT only grumbles to stderr), so print the truth into the real log — on deployment, the

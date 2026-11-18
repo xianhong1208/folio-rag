@@ -45,8 +45,23 @@ def test_core_parses_documents_without_models():
 
 def test_local_extra_carries_the_model_stack():
     local = {_name(d) for d in _project()["optional-dependencies"]["local"]}
-    assert {"docling", "llama-index-embeddings-huggingface", "fireredasr",
+    assert {"docling", "llama-index-embeddings-huggingface",
             "transformers", "ckip-transformers"} <= local
+
+
+def test_no_in_process_speech_to_text():
+    """1.5: speech-to-text is an OpenAI-compatible endpoint. No Whisper, FireRedASR or kaldi
+    in any install, not even through docling's [asr] extra, and nothing vendored."""
+    project = _project()
+    specs = list(project["dependencies"]) + [d for ds in project["optional-dependencies"].values() for d in ds]
+    names = {_name(d) for d in specs}
+    assert not names & {"fireredasr", "openai-whisper", "kaldiio", "kaldi-native-fbank", "faster-whisper"}
+    assert not any(re.search(r"^docling\[[^]]*asr", d.replace(" ", "")) for d in specs)
+    root = Path(__file__).resolve().parents[1]
+    lock = (root / "uv.lock").read_text(encoding="utf-8")
+    for pkg in ("fireredasr", "openai-whisper", "kaldiio", "mlx-whisper", "whisper-s2t-reborn"):
+        assert f'name = "{pkg}"' not in lock, pkg
+    assert not (root / "vendor" / "fireredasr_src").exists()
 
 
 def test_core_renders_pdfs_with_pypdfium2_not_agpl_pymupdf():

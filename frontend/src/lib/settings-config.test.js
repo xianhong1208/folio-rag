@@ -45,6 +45,11 @@ describe('per-role settings', () => {
     expect(META['rag.contextual_llm'].desc).toMatch(/one short sentence/)
     expect(META['rag.contextual_llm'].desc).toMatch(/small, fast model/)
   })
+  it('offers no in-process speech-to-text, and the Chinese script choice', () => {
+    expect(FIELDS).not.toHaveProperty('rag.asr.provider')
+    expect(JSON.stringify(FIELDS)).not.toMatch(/fireredasr|docling-whisper/)
+    expect(FIELDS['rag.asr.chinese_conversion'].options).toEqual(['s2twp', 'none'])
+  })
   it('every api_key field is a secret input', () => {
     for (const [path, f] of Object.entries(FIELDS)) if (path.endsWith('.api_key')) expect(f.type).toBe('secret')
   })
