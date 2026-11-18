@@ -1,6 +1,5 @@
-"""PDF page counts and rendering through PDFium (src/domain/rag/pdf_pages.py), and the two
-callers: the progress-bar total (docling_loader._pdf_page_count) and the cloud parser's
-page source (cloud_parser._PageSource)."""
+"""PDF page counts and rendering through PDFium (src/domain/rag/pdf_pages.py), and the
+vision parser's page source (cloud_parser._PageSource)."""
 
 import io
 import threading
@@ -10,7 +9,6 @@ from PIL import Image
 
 from src.domain.rag import pdf_pages
 from src.domain.rag.cloud_parser import CloudParseError, _PageSource
-from src.domain.rag.docling_loader import _pdf_page_count
 from tests.pdf_fixtures import encrypt_pdf, make_pdf
 
 
@@ -147,33 +145,6 @@ def test_pdf_pages_parallel_renders(three_pages):
     for t in threads:
         t.join()
     assert not errors and len(out) == 12
-
-
-# ---------------------------------------------------------------- docling_loader._pdf_page_count
-
-def test_progress_page_count_pdf(three_pages):
-    assert _pdf_page_count(three_pages) == 3
-
-
-def test_progress_page_count_images_count_frames(tmp_path):
-    png = tmp_path / "scan"  # extensionless, like FileStorage
-    Image.new("RGB", (20, 20), "white").save(png, format="PNG")
-    tif = tmp_path / "multi"
-    Image.new("RGB", (20, 20)).save(tif, format="TIFF", save_all=True,
-                                    append_images=[Image.new("RGB", (20, 20))] * 2)
-    assert _pdf_page_count(str(png)) == 1
-    assert _pdf_page_count(str(tif)) == 3
-
-
-def test_progress_page_count_none_for_text_corrupt_encrypted(tmp_path, encrypted):
-    txt = tmp_path / "doc"
-    txt.write_text("# heading\n\nbody")
-    bad = tmp_path / "bad.pdf"
-    bad.write_bytes(b"%PDF-1.4\n garbage")
-    assert _pdf_page_count(str(txt)) is None
-    assert _pdf_page_count(str(bad)) is None
-    assert _pdf_page_count(encrypted) is None
-    assert _pdf_page_count(str(tmp_path / "missing")) is None
 
 
 # ---------------------------------------------------------------- cloud_parser._PageSource

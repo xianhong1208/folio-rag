@@ -1,8 +1,7 @@
 """Folio MCP Server CLI entry point.
 
-Default run (`uv run python main.py`) does DB bootstrap, auto migration, Docling
-warmup (only when a role uses docling's local models), then starts the FastAPI +
-FastMCP server. See main() for the CLI flags.
+Default run (`uv run python main.py`) does DB bootstrap, auto migration, logs where
+every model role runs, then starts the FastAPI + FastMCP server. See main() for the CLI flags.
 
 Note: this file deliberately does not use `from __future__ import annotations`.
 Nuitka's libs-loader injection prepends executable code to the top of main.py,
@@ -22,9 +21,10 @@ from src.config.dotenv import load_dotenv as _load_dotenv  # noqa: E402
 
 _load_dotenv(Path(__file__).resolve().parent / ".env")
 
-# Let the PyTorch CUDA allocator grow segments instead of fragmenting them: on a
-# card shared with vLLM, fragmentation alone causes out-of-memory errors in the
-# docling stages. Must be set before torch is imported; a user value wins.
+# Let the PyTorch CUDA allocator grow segments instead of fragmenting them: on a card
+# shared with vLLM, fragmentation alone causes out-of-memory errors in the in-process
+# models (HuggingFace embeddings, CKIP). Must be set before torch is imported; a user
+# value wins.
 import os as _os
 _os.environ.setdefault("PYTORCH_CUDA_ALLOC_CONF", "expandable_segments:True")
 
@@ -299,22 +299,12 @@ def main():
             logger.error(f"❌ DB connect failed: {e}")
             logger.warning("⚠️ Server starting anyway — RAG features will fail")
 
-        # Say where every model role runs (no "weights missing" noise for roles that
-        # are cloud endpoints), then pre-warm docling only if a role needs its local models.
+        # Say where every model role runs, and how PDFs and images are read.
         rag_conf = getattr(config_obj, "rag", None)
-        from src.config.roles import docling_warmup_needed, startup_lines
+        from src.config.roles import startup_lines
         if rag_conf is not None:
             for line in startup_lines(rag_conf):
                 logger.info(line)
-        if docling_warmup_needed(rag_conf):
-            # Pre-warm Docling (1-2 min on first start).
-            try:
-                from src.domain.rag.docling_loader import warmup_docling
-                warmup_docling()
-            except Exception as e:
-                logger.warning(f"Docling warmup skipped: {e}")
-        else:
-            logger.info("Docling warm-up skipped: no role parses PDFs/images or audio with local models")
 
         app_instance = create_app(config_obj, transport=transport)
         uvicorn.run(

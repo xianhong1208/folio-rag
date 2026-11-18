@@ -44,7 +44,7 @@ _ABORT_PROBE_INTERVAL_SECONDS = 10.0
 # Keepalive tick interval (seconds). Must stay far below the watchdog's stale threshold
 # (index_job_manager._HEARTBEAT_STALE_SECONDS, 600s): the watchdog fails and cancels a
 # job after 600s without a heartbeat, but the per-file budget is up to 10 days, so a slow
-# file in a heartbeat blind spot (semaphore wait, docling/OCR, context-gen throttle,
+# file in a heartbeat blind spot (semaphore wait, parsing (docling, vision model), context-gen throttle,
 # embedding batch, pgvector write) would be killed prematurely. Injected heartbeats keep
 # "slow" from being mistaken for "dead"; a genuinely hung file is still caught by
 # _with_timeout's wait_for(per_file_timeout).
@@ -492,14 +492,14 @@ class RAGIndexingService:
                 ),
             )
 
-            # Docling parsing + RapidOCR is synchronous CPU-bound work that would stall the
+            # Parsing (docling, the PDF text layer, vision-model page calls) is synchronous work that would stall the
             # event loop (~32s for an 11MB image-heavy PDF), so offload it to a thread pool
             # to keep serving upload/query requests during indexing.
             logger.debug(
                 f"[INDEX_LOAD] fid={folder_id} file={file_id} | "
                 f"path={file_record.file_path} name={file_record.file_name}"
             )
-            # Report the loading stage first: docling/OCR is the biggest chunk-progress blind
+            # Report the loading stage first: parsing is the biggest chunk-progress blind
             # spot, so the job status must not sit with no stage during parsing.
             if _progress_cb:
                 try:
@@ -512,7 +512,7 @@ class RAGIndexingService:
                 file_path=file_record.file_path,
                 file_id=str(file_id),
                 file_name=file_record.file_name,
-                # Page-level parse progress (PDF/OCR); the keepalive-wrapped cb also refreshes the heartbeat.
+                # Page-level parse progress (PDF pages); the keepalive-wrapped cb also refreshes the heartbeat.
                 progress_cb=_progress_cb,
                 metadata={
                     "folder_id": folder_id,

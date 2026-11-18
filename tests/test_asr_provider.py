@@ -35,7 +35,7 @@ class TestFactory:
         assert AsrConfig().provider == "openai-compatible"
         p = create_asr_provider(AsrConfig())
         assert isinstance(p, UnconfiguredAsrProvider) and p.available() is False
-        with pytest.raises(RuntimeError, match="not configured.*ASR_BASE_URL.*migrate-asr"):
+        with pytest.raises(RuntimeError, match="not configured.*ASR_BASE_URL.*migrate-1.5"):
             p.transcribe(audio_path="a.wav", file_name="a.wav")
 
     def test_none_config_is_unconfigured(self):
@@ -64,7 +64,7 @@ class TestFactory:
 
     def test_removed_provider_on_a_built_object_is_refused(self):
         cfg = AsrConfig(base_url="http://x/v1").model_copy(update={"provider": "fireredasr"})
-        with pytest.raises(ValueError, match="removed in Folio 1.5.*migrate-asr"):
+        with pytest.raises(ValueError, match="removed in Folio 1.5.*migrate-1.5"):
             create_asr_provider(cfg)
         cfg = AsrConfig(base_url="http://x/v1").model_copy(update={"provider": "bogus"})
         with pytest.raises(ValueError, match="bogus"):
@@ -74,7 +74,7 @@ class TestFactory:
 class TestRemovedProviders:
     @pytest.mark.parametrize("name", ["fireredasr", "docling-whisper", " FireRedASR "])
     def test_config_refuses_removed_providers_with_the_guide(self, name):
-        with pytest.raises(ValidationError, match="removed in Folio 1.5.*docs/migrate-asr.md"):
+        with pytest.raises(ValidationError, match="removed in Folio 1.5.*docs/migrate-1.5.md"):
             AsrConfig(provider=name)
 
     def test_unknown_provider_refused(self):

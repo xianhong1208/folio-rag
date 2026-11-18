@@ -91,7 +91,7 @@ Durations are in seconds. Histograms come with `_bucket`, `_sum` and `_count` se
 | `process_*`, `python_info` | | | CPU, resident memory, open files and start time of the process; the Python version |
 
 Not measured: models that run in-process (`rag.profile: local` / `hybrid`, e.g. a HuggingFace
-embedding model or docling's layout and OCR models) make no HTTP request, so `folio_model_*`
+embedding model or the CKIP segmenter) make no HTTP request, so `folio_model_*`
 only covers endpoints; the console's model probes are not counted either. With
 `database.vector_store_engines: per_folder` each folder has its own small pool, which is not
 reported.

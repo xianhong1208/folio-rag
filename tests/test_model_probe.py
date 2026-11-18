@@ -28,8 +28,7 @@ def _config(base: str = "http://127.0.0.1:9", profile: str = "local", **rag_over
         "contextual_retrieval": {"enabled": True},
         "rerank": {"enabled": True, "api": "cohere", "model": "rr", "base_url": base, "api_key": "k"},
         "asr": {"provider": "openai-compatible", "model": "whisper-1", "base_url": base + "/v1", "api_key": "k"},
-        "parsing": {"pdf": "cloud", "images": "cloud",
-                    "vision": {"model": "vlm", "base_url": base + "/v1", "api_key": "k"}},
+        "parsing": {"vision": {"model": "vlm", "base_url": base + "/v1", "api_key": "k"}},
     }
     rag.update(rag_over)
     return ConfigModel.model_validate({
@@ -96,7 +95,8 @@ class TestProbes:
                       parsing=None, asr={"enabled": False}).rag
         assert probe_role(rag, "rerank")["status"] == "disabled"
         assert probe_role(rag, "embedding")["status"] == "local"
-        assert probe_role(rag, "vision")["status"] == "local"
+        r = probe_role(rag, "vision")
+        assert r["status"] == "unset" and "text layer" in r["detail"]
         assert probe_role(rag, "asr")["status"] == "disabled"
 
     def test_asr_without_endpoint_is_unset(self):
@@ -274,16 +274,27 @@ class TestHealthListsVision:
         return TestClient(as_identity(app, make_identity("sub:owner-tok", admin=False)))
 
     @pytest.mark.parametrize("parsing,listed", [
-        ({"pdf": "cloud", "vision": {"model": "vlm", "base_url": "http://v/v1"}}, True),
-        (None, False),
+        ({"pdf": "auto", "vision": {"model": "vlm", "base_url": "http://v/v1"}}, "ok"),
+        ({"vision": {"model": "vlm", "base_url": "https://v/v1", "ca_file": "/fy-ca.pem"}}, "ok"),
+        (None, "unset"),
+        ({"vision": {"model": "vlm"}}, "unset"),  # no endpoint: not configured
     ])
     def test_document_parsing_row(self, as_identity, make_identity, parsing, listed):
-        async def ok(url, key):
+        cas = []
+
+        async def ok(url, key, ca_file=None):
+            cas.append((url, ca_file))
             return "ok", "HTTP 200", 1
         with patch("src.config.config_manager.Config.get_config_model",
                    return_value=_config(parsing=parsing)), \
              patch("src.api.router.admin_overview._probe_db_health", return_value=("ok", "x", 1)), \
              patch("src.api.router.admin_overview._probe_endpoint_health", side_effect=ok):
             r = self._client(as_identity, make_identity).get("/api/admin/health")
-        names = [c["name"] for c in r.json()["data"]["checks"]]
-        assert ("Document Parsing" in names) is listed
+        rows = {c["name"]: c for c in r.json()["data"]["checks"]}
+        assert rows["Document Parsing"]["status"] == listed
+        if listed == "unset":
+            assert rows["Document Parsing"]["detail"].startswith("Text layer only")
+            assert all(url != "http://v/v1" for url, _ in cas)
+        else:
+            want = (parsing or {}).get("vision", {}).get("ca_file")
+            assert (parsing["vision"]["base_url"], want) in cas  # probed with its own CA

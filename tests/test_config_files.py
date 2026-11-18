@@ -70,7 +70,7 @@ class TestLayout:
         ("rag.profile", "models.yaml"),
         ("rag.llm.base_url", "models.yaml"),
         ("rag.contextual_llm.model", "models.yaml"),
-        ("rag.docling.device", "models.yaml"),
+        ("rag.parsing.vision.ca_file", "models.yaml"),
         ("rag.parsing.vision.api_key", "models.yaml"),
         ("rag.retrieval.segmenter", "retrieval.yaml"),
         ("rag.contextual_retrieval.enabled", "retrieval.yaml"),
@@ -140,10 +140,12 @@ class TestCommittedFiles:
 
     def test_committed_files_match_the_1_4_template(self, clean_env):
         """The six templates hold the same settings as 1.4's config.yaml, except the defaults
-        that moved to .env (database port, devices) and the module wiring."""
+        that moved to .env (database port, devices), the module wiring and 1.5's rag.parsing
+        section (pdf: auto, a vision model only once VISION_* is set; rag.docling is gone)."""
         before = legacy_config_dict(_legacy_raw(), _env_without_config_vars())
         after = split_config_dict(REPO / "config", _env_without_config_vars())
-        assert diff_paths(before, after) == ["database.port", "database.url"]
+        assert diff_paths(before, after) == ["database.port", "database.url", "rag.parsing"]
+        assert after["rag"]["parsing"]["pdf"] == "auto" and after["rag"]["parsing"]["vision"]["model"] is None
 
 
 def _leaves(tree, prefix=""):
@@ -371,10 +373,14 @@ class TestConverterRoundTrip:
         result = split_legacy(old, env)
         write_outputs(result, tmp_path / "cfg", tmp_path / "env.lines")
         assert result.env_lines.keys() == {"DATABASE_URL", "DATABASE_PORT"}
-        # 1.4's template used FireRedASR, which 1.5 removed: the only note says what to set.
-        assert len(result.notes) == 1 and "rag.asr.provider 'fireredasr' was removed" in result.notes[0]
-        assert "ASR_BASE_URL" in result.notes[0] and "docs/migrate-asr.md" in result.notes[0]
+        # 1.4's template used FireRedASR and docling's OCR, which 1.5 removed: one note each
+        # says what to set.
+        assert len(result.notes) == 2 and "rag.asr.provider 'fireredasr' was removed" in result.notes[0]
+        assert "ASR_BASE_URL" in result.notes[0] and "docs/migrate-1.5.md" in result.notes[0]
+        assert result.notes[1].startswith("In-process PDF/image parsing was removed in Folio 1.5: rag.docling")
+        assert "HF_HUB_OFFLINE=1" in result.notes[1] and "VISION_BASE_URL" in result.notes[1]
         assert result.files["models.yaml"]["rag"]["asr"]["provider"] == "openai-compatible"
+        assert "docling" not in result.files["models.yaml"]["rag"]
         assert check(old, tmp_path / "cfg", env, result.env_lines) == []
 
     @pytest.mark.parametrize("name", ["docling-whisper", "openai-compatible"])
@@ -383,7 +389,27 @@ class TestConverterRoundTrip:
         old["rag"]["asr"]["provider"] = name
         result = split_legacy(old, _env_without_config_vars())
         assert result.files["models.yaml"]["rag"]["asr"]["provider"] == "openai-compatible"
-        assert (len(result.notes) == 1) is (name == "docling-whisper")
+        asr_notes = [n for n in result.notes if "rag.asr.provider" in n]
+        assert (len(asr_notes) == 1) is (name == "docling-whisper")
+
+    @pytest.mark.parametrize("parsing,kept", [
+        ({"pdf": "local", "images": "local"}, {}),
+        ({"pdf": "cloud", "images": "cloud", "vision": {"model": "v", "base_url": "http://v/v1"}},
+         {"vision": {"model": "${VISION_MODEL:-}", "base_url": "${VISION_BASE_URL:-}"}}),
+        ({"pdf": "text"}, {"pdf": "text"}),
+    ])
+    def test_old_parsing_modes_are_dropped_with_a_note(self, tmp_path, parsing, kept):
+        old = _legacy_raw()
+        old["rag"]["parsing"] = parsing
+        env = _env_without_config_vars()
+        result = split_legacy(old, env)
+        got = result.files["models.yaml"]["rag"].get("parsing", {})
+        assert {k: v for k, v in got.items() if k != "vision"} == {k: v for k, v in kept.items() if k != "vision"}
+        note = next(n for n in result.notes if n.startswith("In-process PDF/image parsing"))
+        if "images" in parsing:
+            assert "rag.parsing.images" in note and "rag.parsing.pdf" in note
+        write_outputs(result, tmp_path / "cfg", tmp_path / "env.lines")
+        assert check(old, tmp_path / "cfg", env, result.env_lines) == []
 
     def test_every_kind_of_value_round_trips(self, tmp_path):
         """Literal keys, references with other defaults, references to other variables,

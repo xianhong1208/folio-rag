@@ -1,7 +1,7 @@
 // Map GET /api/admin/health checks to the Overview service pills.
 // The health endpoint probes the *configured* endpoints server-side, so any signed-in
 // user can see service status without the admin-only arbitrary-URL probe.
-const BY_NAME = { Embedding: 'embed', LLM: 'llm', Reranker: 'rerank' }
+const BY_NAME = { Embedding: 'embed', LLM: 'llm', Reranker: 'rerank', 'Document Parsing': 'vision' }
 const STATE = { ok: 'online', down: 'offline', unset: 'unset', disabled: 'disabled' }
 
 export function serviceStates(checks) {

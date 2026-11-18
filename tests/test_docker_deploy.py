@@ -75,10 +75,11 @@ class TestImageConfig:
         assert rag.profile == "cloud"
         assert rag.retrieval.segmenter == "jieba"
         assert rag.embedding.provider == "openai-compatible" and rag.embedding.dimension == 1024
-        assert rag.parsing.vision.model and rag.asr.enabled is False
+        assert rag.asr.enabled is False
         assert rag.rerank.enabled is True and rag.rerank.api == "generic"
-        from src.config.roles import docling_warmup_needed, needs_local_docling_models
-        assert not needs_local_docling_models(rag) and not docling_warmup_needed(rag)
+        # No vision model until VISION_BASE_URL / VISION_MODEL are set: PDFs from their text layer.
+        from src.config.roles import images_readable, pdf_parsing
+        assert rag.parsing.vision.model is None and pdf_parsing(rag) == "text" and not images_readable(rag)
         assert cfg_dir.is_dir()
 
     def test_endpoints_and_models_come_from_the_environment(self, tmp_path, clean_env):
@@ -94,6 +95,13 @@ class TestImageConfig:
         assert (rag.embedding.base_url, rag.embedding.model, rag.embedding.dimension) == (
             "http://models:8000/v1", "Qwen/Qwen3-Embedding-0.6B", 256)
         assert (rag.llm.model, rag.rerank.enabled, rag.parsing.vision.model) == ("m", False, "v")
+        from src.config.roles import pdf_parsing
+        assert pdf_parsing(rag) == "text"  # a model name alone is not enough: no endpoint yet
+        clean_env.setenv("VISION_BASE_URL", "https://fy:7860/v1")
+        clean_env.setenv("VISION_CA_FILE", "/run/secrets/fy-ca.pem")
+        Config.set_config("config")
+        rag = Config.get_config_model().rag
+        assert pdf_parsing(rag) == "vision" and rag.parsing.vision.ca_file == "/run/secrets/fy-ca.pem"
         assert (rag.asr.enabled, rag.asr.base_url, rag.asr.model) == (True, "http://a/v1", "whisper")
         assert rag.retrieval.segmenter == "bigram"
 

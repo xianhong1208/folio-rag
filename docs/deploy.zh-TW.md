@@ -32,11 +32,14 @@ GPU 套件、不下載模型。
 | Migration | 每次啟動都會執行，和 `python main.py` 一樣 |
 | 健康檢查 | Docker `HEALTHCHECK` 打 `/health`；`/health/detailed` 檢查資料庫、pgvector 與撤銷清單 |
 
-**映像檔裡沒有**：在程序內執行的模型（CKIP、docling 的版面與 OCR 模型、HuggingFace 嵌入）。
-自 1.5 起，任何安裝方式都不再在程序內做語音轉文字。要用 `rag.profile: local` 或 `hybrid`，請從原始碼執行（[見下方](#從原始碼執行)）。
+**映像檔裡沒有**：在程序內執行的模型（CKIP、HuggingFace 嵌入）。
+自 1.5 起，任何安裝方式都不再在程序內執行 OCR、版面或語音轉文字模型。要用 `rag.profile: local` 或 `hybrid`，請從原始碼執行（[見下方](#從原始碼執行)）。
 沒有 GPU 版映像檔。
 
-**音訊**由 OpenAI 相容端點轉成文字（[把語音轉文字改到端點](migrate-asr.zh-TW.md)）。Folio 會先用 `ffmpeg`
+**PDF 與圖片**在設定 `VISION_BASE_URL` 與 `VISION_MODEL` 時由視覺模型讀取（[升級到 1.5](migrate-1.5.zh-TW.md#pdf-與圖片)）。
+沒有設定時，PDF 從文字層讀取（掃描頁會變成一個標記；完全沒有文字的 PDF 會索引失敗），上傳圖片則以 422 拒絕。
+
+**音訊**由 OpenAI 相容端點轉成文字（[升級到 1.5](migrate-1.5.zh-TW.md#語音轉文字)）。Folio 會先用 `ffmpeg`
 重新取樣並切段長音訊，而公開的映像檔為了保持輕量沒有裝 `ffmpeg`：沒有它時，24 MB 以內的檔案整份送出，更大的檔案
 會失敗並提示安裝 `ffmpeg`。要處理長錄音，請自行建置含 `ffmpeg` 的映像檔：
 `docker build --build-arg INSTALL_FFMPEG=true -t folio:audio .`。再設定 `ASR_ENABLED=true`、`ASR_BASE_URL`
@@ -65,7 +68,7 @@ LLM_BASE_URL=http://host.docker.internal:8001/v1
 LLM_MODEL=Qwen/Qwen3-4B
 RERANK_BASE_URL=http://host.docker.internal:8002/v1
 RERANK_MODEL=BAAI/bge-reranker-v2-m3
-VISION_BASE_URL=http://host.docker.internal:8003/v1
+VISION_BASE_URL=http://host.docker.internal:8003/v1   # 選用：不設時 PDF 從文字層讀取
 VISION_MODEL=Qwen/Qwen3-VL-8B-Instruct
 # MCP Gate（見下方「MCP Gate」）
 MCP_GATE_URL=http://localhost:4568
@@ -95,7 +98,7 @@ volume：`folio-storage`、`folio-db`，啟用 MCP Gate profile 時還有 `mcp-g
 | 嵌入 | `EMBEDDING_BASE_URL` | `EMBEDDING_MODEL`、`EMBEDDING_DIMENSION` | `EMBEDDING_API_KEY` | `POST /embeddings`。維度必須和模型一致；換模型或維度都要重新索引。e5 系列還需要 `EMBEDDING_QUERY_PREFIX="query: "` 與 `EMBEDDING_PASSAGE_PREFIX="passage: "`。 |
 | LLM | `LLM_BASE_URL` | `LLM_MODEL` | `LLM_API_KEY` | `POST /chat/completions`：回答、評估，以及索引時替每個 chunk 寫的一句脈絡。 |
 | 重排序 | `RERANK_BASE_URL` | `RERANK_MODEL` | `RERANK_API_KEY` | `RERANK_API`：`generic`（`POST /rerank`，vLLM、Forgeyard、Infinity；預設）、`score`（vLLM `/score`）、`cohere` 或 `jina`。`RERANK_ENABLED=false` 關閉。 |
-| 視覺 | `VISION_BASE_URL` | `VISION_MODEL` | `VISION_API_KEY` | 逐頁讀 PDF 與圖片（映像檔沒有內建 OCR）。Office、Markdown、HTML 與純文字檔不需要模型。 |
+| 視覺 | `VISION_BASE_URL` | `VISION_MODEL` | `VISION_API_KEY` | 以 `POST /chat/completions` 附上圖片，讀取每一頁 PDF 與每張圖片（例如 Qwen3-VL）。選用：沒有設定時 PDF 從文字層讀取，圖片上傳會被拒絕。私有 CA 用 `VISION_CA_FILE`。Office、Markdown、HTML 與純文字檔不需要模型。 |
 | 語音轉文字 | `ASR_BASE_URL` | `ASR_MODEL` | `ASR_API_KEY` | `POST /audio/transcriptions`。預設關閉，`ASR_ENABLED=true` 才啟用；長音訊需要含 `ffmpeg` 的映像檔（見上方）。私有 CA 用 `ASR_CA_FILE`。中文轉錄結果會轉成繁體（`rag.asr.chinese_conversion`）。 |
 
 在容器裡，`localhost` 指的是容器自己。同一台機器上的模型伺服器請用 `host.docker.internal`，其他機器
@@ -226,8 +229,8 @@ gate.example.com {
 
 Folio 只信任 `FORWARDED_ALLOW_IPS` 裡的位址送來的 `X-Forwarded-Proto`（這是 uvicorn 的設定，預設
 `127.0.0.1`）。在容器裡，代理的連線是從 Docker 網路進來的，所以請在 `.env` 設 `FORWARDED_ALLOW_IPS=*`，
-而且只在連接埠只對 `127.0.0.1` 開放時這樣設，因為那時只有代理連得到它。不需驗證的 `/v1` 媒體端點與
-`/health*` 任何連得到 Folio 的人都能呼叫；請把它放在代理後面、可信任的網路裡，或在代理擋掉 `/v1/`。
+而且只在連接埠只對 `127.0.0.1` 開放時這樣設，因為那時只有代理連得到它。不需驗證的
+`/health*` 任何連得到 Folio 的人都能呼叫；請把它放在代理後面、可信任的網路裡。
 
 ## 設定
 

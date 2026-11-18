@@ -41,7 +41,7 @@ personal access token 與 OAuth 登入都看到同一組資料夾,舊資料夾�
 
 | 版本 | 你會得到 |
 |---|---|
-| **1.5:一行指令安裝,資料不會遺失** | **輕量的 Docker 映像檔**,以及含 PostgreSQL + pgvector 的 compose 檔,另有可選的 MCP Gate profile。內建的 OCR 與語音模型從映像檔移除:掃描 PDF 與圖片改由 **OpenAI 相容 API 上的視覺模型**讀取(例如由 [Forgeyard](https://github.com/xianhong1208/forgeyard) 提供的 Qwen3-VL),音訊交給 Forgeyard 轉錄。`/v1` 的 OCR 與語音端點一併移除;**遷移指南**說明怎麼讓 Folio 改用 Forgeyard。**部署指南。** **`folio backup` / `folio restore`** 與排程備份。**單一資料夾的匯出與匯入。** **`/metrics`** 提供 Prometheus 指標。 |
+| **1.5:一行指令安裝,資料不會遺失** | **輕量的 Docker 映像檔**,以及含 PostgreSQL + pgvector 的 compose 檔,另有可選的 MCP Gate profile。內建的 OCR、版面與語音模型從 Folio 移除:PDF 與圖片改由 **OpenAI 相容 API 上的視覺模型**讀取(例如由 [Forgeyard](https://github.com/xianhong1208/forgeyard) 提供的 Qwen3-VL),沒有設定模型時 PDF 從文字層讀取,音訊交給 Forgeyard 轉錄。`/v1` 的 OCR 與語音端點一併移除;**遷移指南**說明怎麼讓 Folio 改用 Forgeyard。**部署指南。** **`folio backup` / `folio restore`** 與排程備份。**單一資料夾的匯出與匯入。** **`/metrics`** 提供 Prometheus 指標。 |
 | **1.6:找到那份文件** | 文件的**中繼資料與標籤**,在 REST、主控台與 MCP 都能用來篩選。**以文件為單位的結果**,不只是段落。**跨你所有資料夾搜尋。** **Library** 頁面。回傳文件的 MCP **`find`** 模式。 |
 | **1.7:更好的答案** | **查詢改寫與多重查詢**,HyDE 與翻譯為選用。每一項都只有在黃金測試集變好時才保留。**圖片**由視覺模型寫出說明,讓它們也搜得到。**引用會開啟 PDF** 並標示出該段文字。答案的**讚 / 倒讚**。 |
 | **1.8:資料夾保持最新** | 資料夾的**來源**:網址或 sitemap、Git repository、伺服器上的目錄、S3 或 WebDAV。**依排程重新同步**,只處理有變動的部分,來源刪掉的檔案也會從資料夾移除。 |

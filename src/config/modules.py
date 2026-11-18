@@ -61,7 +61,7 @@ MODULES: Dict[str, ModuleConfig] = {
     # The router already prefixes /v1 itself.
     "media": ModuleConfig(
         api_router=_router("src.api.router.media", ""), mcp_tools=None,
-        description="OpenAI-style speech-to-text / OCR REST API (/v1)"),
+        description="Removed in 1.5: every /v1 media endpoint answers 410 Gone"),
 }
 
 # What config/mcp.yaml enables out of the box.

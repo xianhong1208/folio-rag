@@ -74,7 +74,7 @@ function RolesPanel({ view, readOnly, probes, onProbe }) {
                 <span className="name">{r.label}</span>
                 <span className={'pill ' + runs.cls}>{runs.text}</span>
               </div>
-              <div className="val" title={r.base_url || ''}>{r.runs === 'off' ? '—' : `${r.provider || '—'} · ${r.model || '—'}`}</div>
+              <div className="val" title={r.summary || r.base_url || ''}>{r.runs === 'off' ? (r.role === 'vision' ? 'PDFs: text layer · images refused' : '—') : `${r.provider || '—'} · ${r.model || '—'}`}</div>
               {r.runs === 'endpoint' && <div className="sub" title={r.base_url || ''}>{r.base_url || 'provider default endpoint'}</div>}
               {r.inherits && r.runs !== 'off' && <div className="sub">inherits the LLM section</div>}
               <div className="role-foot">
@@ -88,7 +88,7 @@ function RolesPanel({ view, readOnly, probes, onProbe }) {
         })}
       </div>
       {(usage.vision_pages || usage.prefix_tokens) ? (
-        <div className="set-foot"><span className="probe-result">Today (UTC): {fmtNum(usage.vision_pages || 0)} cloud-parsed page(s) · {fmtNum(usage.prefix_tokens || 0)} estimated prefix token(s) against daily caps</span></div>
+        <div className="set-foot"><span className="probe-result">Today (UTC): {fmtNum(usage.vision_pages || 0)} vision-model page(s) · {fmtNum(usage.prefix_tokens || 0)} estimated prefix token(s) against daily caps</span></div>
       ) : null}
     </section>
   )

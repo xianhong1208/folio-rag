@@ -10,6 +10,8 @@ One factory instead of a per-call-site switch, so every role gets the same rules
 * ``azure`` uses the Azure client (``base_url`` is the resource endpoint).
 * ``metrics_role`` (``llm``, ``contextual_llm``, ``vision``) counts and times every request
   in ``/metrics`` (src/utils/metered_http.py); None for probes.
+* ``ca_file`` (the vision role has one: ``rag.parsing.vision.ca_file``) adds a private CA,
+  such as Forgeyard's, to the default trust for that endpoint (src/utils/tls.py).
 * ``timeout`` and ``max_retries`` come from the role config. The OpenAI SDK retries
   429 / 408 / 409 / 5xx and connection errors with exponential backoff and honours
   ``Retry-After``, so no second retry layer is stacked on top.
@@ -36,11 +38,19 @@ def _timeout_and_retries(cfg) -> dict:
             "max_retries": DEFAULT_MAX_RETRIES if retries is None else int(retries)}
 
 
-def _http_client(metrics_role: Optional[str]) -> dict:
-    if not metrics_role:
-        return {}
-    from src.utils.metered_http import metered_client
-    return {"http_client": metered_client(metrics_role, openai=True)}
+def _http_client(metrics_role: Optional[str], ca_file: Optional[str] = None,
+                 setting: str = "ca_file") -> dict:
+    extra = {}
+    if ca_file:
+        from src.utils.tls import tls_verify
+        extra["verify"] = tls_verify(ca_file, setting)
+    if metrics_role:
+        from src.utils.metered_http import metered_client
+        return {"http_client": metered_client(metrics_role, openai=True, **extra)}
+    if extra:
+        from openai import DefaultHttpxClient
+        return {"http_client": DefaultHttpxClient(**extra)}
+    return {}
 
 
 def create_openai_client(cfg: Any, metrics_role: Optional[str] = None):
@@ -50,6 +60,8 @@ def create_openai_client(cfg: Any, metrics_role: Optional[str] = None):
     provider = (getattr(cfg, "provider", None) or "").lower().strip()
     base_url = getattr(cfg, "base_url", None) or None
     api_key = getattr(cfg, "api_key", None) or None
+    ca_file = getattr(cfg, "ca_file", None) or None
+    setting = "rag.parsing.vision.ca_file"  # the only role config with a ca_file
 
     if provider == "azure":
         from openai import AzureOpenAI
@@ -65,7 +77,7 @@ def create_openai_client(cfg: Any, metrics_role: Optional[str] = None):
             api_version=getattr(cfg, "api_version", None) or "2024-12-01-preview",
             azure_endpoint=endpoint,
             **_timeout_and_retries(cfg),
-            **_http_client(metrics_role),
+            **_http_client(metrics_role, ca_file, setting),
         )
 
     if provider == "openai":
@@ -73,13 +85,13 @@ def create_openai_client(cfg: Any, metrics_role: Optional[str] = None):
         if not api_key:
             raise ValueError("OpenAI api_key is required (set api_key: \"${OPENAI_API_KEY}\")")
         return OpenAI(api_key=api_key, base_url=base_url, **_timeout_and_retries(cfg),
-                      **_http_client(metrics_role))
+                      **_http_client(metrics_role, ca_file, setting))
 
     if provider in ("openai-compatible", "vllm", "ollama"):
         if not base_url:
             raise ValueError(f"{provider} requires base_url (e.g., http://localhost:8000/v1)")
         return OpenAI(api_key=api_key or "not-needed", base_url=base_url, **_timeout_and_retries(cfg),
-                      **_http_client(metrics_role))
+                      **_http_client(metrics_role, ca_file, setting))
 
     raise ValueError(
         f"Unsupported LLM provider: '{provider}'. Supported: {', '.join(SUPPORTED_PROVIDERS)}"

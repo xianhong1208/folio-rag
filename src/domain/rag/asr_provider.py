@@ -15,7 +15,7 @@ provider is injected into DocumentLoader (``create_asr_provider`` builds it from
 - DisabledAsrProvider: ``rag.asr.enabled: false``.
 
 The providers removed in 1.5 (``docling-whisper``, ``fireredasr``) are refused when the
-configuration is loaded (``AsrConfig``), with a pointer to docs/migrate-asr.md.
+configuration is loaded (``AsrConfig``), with a pointer to docs/migrate-1.5.md.
 
 Model-agnostic pre/post-processing (leading-silence trimming, hallucination filtering) does not live
 inside a provider — it stays in document_loader's audio dispatch layer (audio_defense).
@@ -23,7 +23,6 @@ inside a provider — it stays in document_loader's audio dispatch layer (audio_
 
 from __future__ import annotations
 
-import ssl
 import tempfile
 import time
 import zlib
@@ -65,17 +64,10 @@ MAX_SINGLE_UPLOAD_BYTES = 24 * 1024 * 1024
 
 def tls_verify(ca_file: Optional[str]):
     """httpx ``verify`` for the endpoint: the default bundle (httpx honours SSL_CERT_FILE),
-    plus ``rag.asr.ca_file`` when set, for a server with its own CA such as Forgeyard's.
-    Adding to the default trust keeps every public CA working; a missing or unreadable
-    file is an error, never a silent fallback to unverified TLS."""
-    if not ca_file:
-        return True
-    ctx = httpx.create_ssl_context()
-    try:
-        ctx.load_verify_locations(cafile=ca_file)
-    except (OSError, ssl.SSLError) as e:
-        raise RuntimeError(f"rag.asr.ca_file {ca_file!r} could not be loaded: {e}") from e
-    return ctx
+    plus ``rag.asr.ca_file`` when set, for a server with its own CA such as Forgeyard's
+    (src/utils/tls.py; a missing or unreadable file is an error)."""
+    from src.utils.tls import tls_verify as _verify
+    return _verify(ca_file, "rag.asr.ca_file")
 
 
 class TranscriptRejected(RuntimeError):

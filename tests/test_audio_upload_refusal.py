@@ -100,7 +100,7 @@ class TestEndpoints:
                                              files={"file": ("meeting.mp3", b"ID3", "audio/mpeg")})
         assert r.status_code == 422
         detail = r.json()["detail"]
-        assert "meeting.mp3" in detail and "ASR_BASE_URL" in detail and "docs/migrate-asr.md" in detail
+        assert "meeting.mp3" in detail and "ASR_BASE_URL" in detail and "docs/migrate-1.5.md" in detail
         store.assert_not_called()
 
     def test_rest_upload_of_a_document_is_unaffected(self):

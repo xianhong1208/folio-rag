@@ -30,6 +30,7 @@ from src.log import get_api_logger
 from src.utils.names import content_disposition, sanitize_filename
 from db.filedb import FileNameConflictError, FileTooLargeError, UnsupportedFileTypeError
 from src.domain.rag.asr_provider import SpeechToTextUnavailableError
+from src.domain.rag.cloud_parser import ImagesNeedVisionError
 from db.file_with_index_db import FileWithIndexDB
 
 logger = get_api_logger()
@@ -57,7 +58,8 @@ def _upload_source(file: UploadFile):
         409: {"model": ErrorDetailResponse, "description": "a file with the same name already exists in the folder"},
         400: {"model": ErrorDetailResponse, "description": "validation failed (file too large, unsupported format, etc.)"},
         422: {"model": ErrorDetailResponse,
-              "description": "audio while speech-to-text is disabled or not configured (rag.asr)"},
+              "description": "audio while speech-to-text is disabled or not configured (rag.asr), "
+                             "or an image while no vision model is configured (rag.parsing.vision)"},
         500: {"model": ErrorDetailResponse},
     },
 )
@@ -166,6 +168,9 @@ async def upload_file(
         raise HTTPException(status_code=413, detail=str(e))
     except SpeechToTextUnavailableError as e:
         logger.info(f"Upload rejected (speech-to-text): {file.filename!r} → folder {folder_id}")
+        raise HTTPException(status_code=422, detail=str(e))
+    except ImagesNeedVisionError as e:
+        logger.info(f"Upload rejected (no vision model): {file.filename!r} → folder {folder_id}")
         raise HTTPException(status_code=422, detail=str(e))
     except ValueError as e:
         logger.info(f"Upload rejected: {file.filename!r} → folder {folder_id}: {e}")

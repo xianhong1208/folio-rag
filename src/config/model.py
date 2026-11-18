@@ -466,19 +466,10 @@ class RerankConfig(BaseModel):
     gap_threshold: float = 0.5
 
 
-class DoclingConfig(BaseModel):
-    """Docling document-parsing configuration."""
-    device: str = "cpu"  # "cpu", "cuda", "cuda:0", "cuda:4", etc.
-    ocr_enabled: bool = True  # whether to enable OCR (needed for scanned PDFs)
-    # OCR model tier (PP-OCRv6): tiny / small / medium (medium most accurate, slower).
-    # Weights at assets/docling_models/RapidOcr/torch/PP-OCRv6/{det,rec}/...; missing files fail at load.
-    ocr_model_scale: str = "small"
-    hf_offline: bool = False  # offline-deployment switch: True -> set HF_HUB_OFFLINE=1, and fail startup if a local model/tokenizer isn't found under assets/
-    compile_models: bool = False  # torch.compile model optimization (faster inference but ~120s slower startup; suits rarely-restarted environments)
-
-
-# Speech-to-text moved out of the process in 1.5; the guide says how to point Folio at an endpoint.
-ASR_MIGRATION_GUIDE = "docs/migrate-asr.md"
+# Folio 1.5 runs no speech-to-text, OCR or layout model itself; the guide says how to point it
+# at OpenAI-compatible endpoints (e.g. Forgeyard) instead.
+MIGRATION_GUIDE = "docs/migrate-1.5.md"
+ASR_MIGRATION_GUIDE = MIGRATION_GUIDE
 REMOVED_ASR_PROVIDERS = ("docling-whisper", "fireredasr")
 
 
@@ -492,7 +483,7 @@ def removed_asr_provider_message(provider: str) -> str:
 class AsrConfig(BaseModel):
     """Speech-to-text: an OpenAI-compatible ``POST {base_url}/audio/transcriptions`` endpoint.
 
-    Folio 1.5 runs no speech-to-text model itself (docs/migrate-asr.md). Without a base_url the
+    Folio 1.5 runs no speech-to-text model itself (docs/migrate-1.5.md). Without a base_url the
     service starts and audio uploads are refused with a message saying what to set.
     Trimming/hallucination filtering stays always-on in code (audio_defense).
     """
@@ -536,7 +527,7 @@ class AsrConfig(BaseModel):
 
 
 class VisionModelConfig(BaseModel):
-    """Vision-capable chat model used to transcribe PDF pages / images (cloud parsing).
+    """Vision-capable chat model that reads PDF pages and images (rag.parsing).
 
     Called through the OpenAI-compatible ``POST {base_url}/chat/completions`` with an
     ``image_url`` data-URI part; ``azure`` uses the Azure OpenAI client instead.
@@ -547,20 +538,45 @@ class VisionModelConfig(BaseModel):
     api_key: OptStr = Field(None, repr=False)
     api_version: Optional[str] = None
     azure_deployment: Optional[str] = None
+    # Extra CA certificate (PEM) trusted for base_url, for a server with its own CA such as
+    # Forgeyard's. Added to the default trust store; SSL_CERT_FILE replaces it instead.
+    ca_file: OptStr = None
     timeout: float = Field(120.0, gt=0)
     max_retries: int = Field(3, ge=0, le=10)
     max_tokens: int = Field(4096, ge=256)
 
+    def configured(self) -> bool:
+        """A model name and somewhere to send it: base_url, or the provider's own default
+        endpoint (openai)."""
+        if not (self.model or self.azure_deployment):
+            return False
+        return bool(self.base_url) or (self.provider or "").strip().lower() == "openai"
+
+
+# rag.parsing.pdf values: auto = the vision model when rag.parsing.vision is configured,
+# else the text layer; vision = always the vision model (refused without one); text = always
+# the text layer, even with a vision model configured.
+PDF_PARSING_MODES = ("auto", "vision", "text")
+# Values and keys removed in 1.5 (the in-process docling layout / TableFormer / OCR models).
+REMOVED_PDF_MODES = ("local", "cloud")
+
+
+def removed_parsing_message(what: str) -> str:
+    return (f"{what} was removed in Folio 1.5: PDFs and images are no longer parsed by in-process "
+            "docling models (layout, TableFormer, OCR). Use rag.parsing.pdf: auto | vision | text — "
+            "auto reads every page with rag.parsing.vision (an OpenAI-compatible vision model such "
+            "as Qwen3-VL on Forgeyard) when it is configured, and the PDF's text layer otherwise; "
+            f"images need rag.parsing.vision. See {MIGRATION_GUIDE}.")
+
 
 class ParsingConfig(BaseModel):
-    """Where PDFs and images are parsed.
+    """How PDFs and images are read.
 
-    ``local`` = in-process docling (layout / TableFormer / OCR models); ``cloud`` = every
-    page is rendered and transcribed to Markdown by ``vision``. Unset follows the profile
-    (``cloud`` profile → cloud, otherwise local).
+    With ``vision`` configured, every PDF page and every image is transcribed to Markdown by
+    that model. Without it, PDFs are read from their text layer (a page with no text layer
+    becomes a visible marker) and images are refused at upload. ``pdf`` can force either way.
     """
-    pdf: Optional[Literal["local", "cloud"]] = None
-    images: Optional[Literal["local", "cloud"]] = None
+    pdf: Literal["auto", "vision", "text"] = "auto"
     vision: Optional[VisionModelConfig] = None
     dpi: int = Field(150, ge=72, le=300)  # page render resolution sent to the vision model
     max_concurrency: int = Field(4, ge=1, le=32)  # pages in flight per file
@@ -574,6 +590,23 @@ class ParsingConfig(BaseModel):
     on_page_failure: Literal["mark", "fail"] = "mark"
     min_success_ratio: float = Field(0.5, ge=0.0, le=1.0)
     prompt: Optional[str] = None  # override the built-in language-neutral transcription prompt
+
+    @model_validator(mode="before")
+    @classmethod
+    def _refuse_removed_keys(cls, data):
+        if isinstance(data, dict) and "images" in data:
+            raise ValueError(removed_parsing_message(f"rag.parsing.images ({data['images']!r})"))
+        return data
+
+    @field_validator("pdf", mode="before")
+    @classmethod
+    def _known_pdf_mode(cls, v):
+        name = (str(v).strip().lower() if v is not None else "auto") or "auto"
+        if name in REMOVED_PDF_MODES:
+            raise ValueError(removed_parsing_message(f"rag.parsing.pdf: {name}"))
+        if name not in PDF_PARSING_MODES:
+            raise ValueError(f"rag.parsing.pdf {v!r}: use auto, vision or text")
+        return name
 
 
 # Upper bound for rag.indexing.max_concurrent_jobs (and FOLIO_INDEXING_CONCURRENCY).
@@ -636,10 +669,21 @@ class RAGConfig(BaseModel):
     contextual_llm: Optional[LLMRoleConfig] = None
     contextual_retrieval: Optional[ContextualRetrievalConfig] = None
     rerank: Optional[RerankConfig] = None
-    docling: Optional[DoclingConfig] = None
     parsing: Optional[ParsingConfig] = None
     asr: Optional[AsrConfig] = None
     indexing: Optional[IndexingConfig] = None
+
+    @model_validator(mode="before")
+    @classmethod
+    def _refuse_docling_section(cls, data):
+        """rag.docling configured the in-process PDF/image models removed in 1.5. An old
+        section stops the start rather than being ignored: its owner expects OCR."""
+        if isinstance(data, dict) and data.get("docling") is not None:
+            keys = ", ".join(sorted(data["docling"])) if isinstance(data["docling"], dict) else ""
+            raise ValueError(removed_parsing_message(
+                f"rag.docling{f' ({keys})' if keys else ''}") + " Delete the rag.docling section "
+                "(for hf_offline, set HF_HUB_OFFLINE=1 in the environment instead).")
+        return data
 
     @model_validator(mode="after")
     def _apply_profile_defaults(self) -> "RAGConfig":
@@ -686,8 +730,8 @@ __all__ = [
     "LLMRoleConfig",
     "ContextualRetrievalConfig",
     "RerankConfig",
-    "DoclingConfig",
     "VisionModelConfig",
+    "PDF_PARSING_MODES",
     "ParsingConfig",
     "AsrConfig",
     "IndexingConfig",

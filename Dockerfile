@@ -5,7 +5,7 @@
 #   docker build -t folio:local .         # build it from this checkout
 #
 # What is in it: the core install (`uv sync --no-dev` + the jieba extra), no torch, no GPU stack, no local models.
-# Embeddings, the LLM, the reranker, the vision model (PDFs and images) and speech-to-text are OpenAI-compatible
+# Embeddings, the LLM, the reranker, the optional vision model (PDFs and images) and speech-to-text are OpenAI-compatible
 # endpoints such as Forgeyard or vLLM, set through environment variables (.env.example, "Docker"). For the in-process
 # models (rag.profile local / hybrid) run Folio from source instead (README, Installation).
 #

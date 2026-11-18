@@ -23,8 +23,8 @@ the old name, and nothing needs migrating.
 **1.4.1:** folders belong to the person, not to one token, so every personal access token and OAuth
 sign-in of one MCP Gate user sees the same folders; signing out ends the console session on the
 server; answers come in the question's language. See the [CHANGELOG](CHANGELOG.md), and the
-[ROADMAP](ROADMAP.md) for what comes next (1.5: a Docker image, backups, and OCR and speech through
-an OpenAI-compatible API).
+[ROADMAP](ROADMAP.md) for what comes next (1.5: a Docker image, backups, and documents and speech
+read through OpenAI-compatible APIs).
 
 > **Changed in 1.5 (on `dev`, not released yet):** `config/config.yaml` is split into six files
 > under `config/` with every secret and per-machine value in `.env`, and the old file is no longer
@@ -32,16 +32,14 @@ an OpenAI-compatible API).
 > `scripts/split_config.py` converts a 1.4 config: see
 > [Upgrading from 1.4](docs/configuration.md#upgrading-from-14).
 
-> **Removed in 1.5 (on `dev`):** the built-in speech-to-text (FireRedASR, docling-whisper) and
-> `POST /v1/transcriptions/general`. Audio now goes only to an OpenAI-compatible transcription
-> endpoint (`rag.asr`, e.g. whisper-large-v3-turbo on
-> [Forgeyard](https://github.com/xianhong1208/forgeyard)); a config that still names an old
-> provider stops the start, and audio uploads are refused until an endpoint is set. See
-> [Moving speech-to-text to an endpoint](docs/migrate-asr.md).
->
-> **Still announced:** the built-in OCR and the other `/v1` media endpoints (`/v1/ocr/general`,
-> `/v1/models`) keep working and warn in the log; `/v1` responses carry a `Deprecation` header.
-> See [what replaces them](docs/api.md#removed-in-15-built-in-ocr-speech-to-text-and-the-v1-media-endpoints).
+> **Removed in 1.5 (on `dev`):** every in-process OCR, layout and speech model, and the `/v1`
+> media endpoints (now 410 Gone). PDFs and images are read by an OpenAI-compatible **vision model**
+> when you set one (`rag.parsing.vision`, e.g. Qwen3-VL on
+> [Forgeyard](https://github.com/xianhong1208/forgeyard)); without one, PDFs are read from their
+> text layer (a scanned page becomes a marker) and image uploads are refused. Audio goes to an
+> OpenAI-compatible transcription endpoint (`rag.asr`, e.g. whisper-large-v3-turbo). A config that
+> still has `rag.docling`, `rag.parsing.images`, `rag.parsing.pdf: local`/`cloud` or an old speech
+> provider stops the start. See [Upgrading to 1.5](docs/migrate-1.5.md).
 
 ## Key features
 
@@ -57,8 +55,9 @@ an OpenAI-compatible API).
 - **Per-person folders.** You only see the folders of your MCP Gate account, over MCP, REST and the
   console alike.
 - **Many formats.** PDF, Office (including legacy and RTF), OpenDocument, HTML and MHTML, Markdown,
-  EPUB, email, images with OCR, and audio (transcribed by an OpenAI-compatible endpoint, with
-  Simplified Chinese turned into Traditional).
+  EPUB, email, scanned PDFs and images (read by a vision model such as Qwen3-VL, tables kept as
+  tables; without one, PDFs are read from their text layer), and audio (transcribed by an
+  OpenAI-compatible endpoint, with Simplified Chinese turned into Traditional).
 - **Measured, not guessed.** A public 205-question golden set and an evaluation harness; the
   console scores your own folders on Recall@k, MRR and nDCG@k.
 - **A console** at `/admin`: folders and files, a Search Playground with the per-signal trace, index
@@ -161,14 +160,14 @@ its source file and heading.
 
 | Profile | Models | Install |
 |---|---|---|
-| `local` (default) | Anything goes. The shipped config calls self-hosted embedding, LLM and reranker endpoints, and runs CKIP segmentation and Docling parsing with OCR in-process; speech-to-text is always an endpoint | `uv sync --extra local --group rocm-r714 \| cuda \| cpu` |
+| `local` (default) | Anything goes. The shipped config calls self-hosted embedding, LLM and reranker endpoints, and runs CKIP segmentation in-process; the vision model and speech-to-text are always endpoints | `uv sync --extra local --group rocm-r714 \| cuda \| cpu` |
 | `hybrid` | The same, for a mix of self-hosted and cloud endpoints; API keys written literally in the config files are warned about | as `local` |
 | `cloud` | Every role is an HTTP endpoint and keys must be `${ENV}` references; no torch and no model downloads | `uv sync` |
 
 Set it with `rag.profile`; see [Cloud profile](docs/configuration.md#cloud-profile). The **Docker
 image** is the `cloud` profile, with a compose file for PostgreSQL + pgvector and an optional MCP
-Gate; the in-process models need an install from source. Keep the console and the unauthenticated
-`/v1` media endpoints on a trusted network or behind a reverse proxy with HTTPS; `/mcp` and
+Gate; the in-process models need an install from source. Keep the console on a trusted network or
+behind a reverse proxy with HTTPS; `/mcp` and
 `/api/rag/*` need a valid token. The [deploy guide](docs/deploy.md) has nginx and Caddy examples,
 backups and upgrades. The database and `storage/` (the uploads) belong together: startup refuses
 when one of them is missing, [rather than starting without the data](docs/deploy.md#when-one-piece-is-missing).
@@ -180,7 +179,7 @@ when one of them is missing, [rather than starting without the data](docs/deploy
 | [How it works](docs/how-it-works.md) | the pipeline, retrieval in detail (BM25, segmentation, reranking, latency, relevance cutoff), measuring retrieval, every feature in detail |
 | [Deploying Folio](docs/deploy.md) | the Docker image and compose file, model endpoints (Forgeyard, vLLM), the issuer and audience with MCP Gate, a reverse proxy with HTTPS, backups, upgrades |
 | [Configuration](docs/configuration.md) | the six config files and `.env`, every setting you are likely to touch, the cloud profile, upgrading from 1.4 |
-| [Moving speech-to-text to an endpoint](docs/migrate-asr.md) | 1.5: pointing Folio at Forgeyard or another OpenAI-compatible transcription endpoint, a private CA, Traditional Chinese output |
+| [Upgrading to 1.5](docs/migrate-1.5.md) | the vision model for PDFs and images (Qwen3-VL on Forgeyard) or the text layer, speech-to-text through an endpoint, a private CA, what happens to an old configuration |
 | [Authentication](docs/auth.md) | folder ownership by MCP Gate user, and the token revocation feed |
 | [Console](docs/console.md) | signing in, the two permission tiers, each page, re-indexing after an upgrade or an embedding model change |
 | [API reference](docs/api.md) | MCP, REST, console and health endpoints |

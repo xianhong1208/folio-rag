@@ -5,7 +5,9 @@ the six files and the generated ``.env`` lines produce equals what the old file 
 except for the removed LLM roles (``rag.answer_llm``, ``rag.eval_llm``), the module
 wiring (now in code) and a removed in-process speech-to-text provider (``rag.asr.provider``
 ``fireredasr`` / ``docling-whisper`` becomes ``openai-compatible`` with a note: audio is
-refused until ``ASR_BASE_URL`` is set, see docs/migrate-asr.md). ``check`` proves it field by field and reports field names only.
+refused until ``ASR_BASE_URL`` is set) and the in-process PDF/image parsing settings
+(``rag.docling``, ``rag.parsing.images``, ``rag.parsing.pdf: local | cloud``; see
+docs/migrate-1.5.md). ``check`` proves it field by field and reports field names only.
 
 Per-machine and secret values (``layout.ENV_SETTINGS``) are written as ``${VAR:-default}``
 references with safe defaults; the actual value goes to the ``.env`` lines when the
@@ -175,11 +177,39 @@ def _replace_removed_asr_provider(raw: Dict[str, Any], notes: Optional[List[str]
                          f"(e.g. Forgeyard); until then audio uploads are refused. See {ASR_MIGRATION_GUIDE}")
 
 
+def _replace_removed_parsing(raw: Dict[str, Any], notes: Optional[List[str]] = None) -> None:
+    """1.5 runs no docling PDF/image model: ``rag.docling`` goes, and so do
+    ``rag.parsing.images`` and ``rag.parsing.pdf: local | cloud`` (pdf then defaults to auto:
+    the vision model when rag.parsing.vision is configured, else the text layer)."""
+    from src.config.model import MIGRATION_GUIDE, REMOVED_PDF_MODES
+    rag = raw.get("rag") if isinstance(raw.get("rag"), dict) else None
+    if rag is None:
+        return
+    said = []
+    if "docling" in rag:
+        rag.pop("docling")
+        said.append("rag.docling (device, OCR, offline and compile settings of the in-process models) "
+                    "was dropped; for hf_offline set HF_HUB_OFFLINE=1 in .env")
+    parsing = rag.get("parsing") if isinstance(rag.get("parsing"), dict) else None
+    if parsing is not None:
+        if "images" in parsing:
+            said.append(f"rag.parsing.images ({parsing.pop('images')!r}) was dropped: images need "
+                        "rag.parsing.vision and are refused without it")
+        if str(parsing.get("pdf") or "").strip().lower() in REMOVED_PDF_MODES:
+            said.append(f"rag.parsing.pdf ({parsing.pop('pdf')!r}) was dropped: auto reads PDFs with "
+                        "rag.parsing.vision when it is configured, else from their text layer")
+    if said and notes is not None:
+        notes.append("In-process PDF/image parsing was removed in Folio 1.5: " + "; ".join(said)
+                     + f". Set VISION_BASE_URL, VISION_API_KEY and VISION_MODEL in .env to read scanned "
+                     f"pages and images (e.g. Qwen3-VL on Forgeyard). See {MIGRATION_GUIDE}")
+
+
 def split_legacy(old_raw: Dict[str, Any], env: Mapping[str, str]) -> SplitResult:
     """Split an old config tree (as read from YAML, unexpanded) into the six files."""
     raw = copy.deepcopy(old_raw or {})
     notes: List[str] = []
     _replace_removed_asr_provider(raw, notes)
+    _replace_removed_parsing(raw, notes)
     env_lines: Dict[str, str] = {}
     for path, setting in ENV_SETTINGS.items():
         loc = _locate(raw, path)
@@ -224,6 +254,7 @@ def legacy_config_dict(old_raw: Dict[str, Any], env: Mapping[str, str]) -> Dict[
         for sec in REMOVED_SECTIONS:
             rag.pop(sec.split(".", 1)[1], None)
     _replace_removed_asr_provider(data)
+    _replace_removed_parsing(data)
     return ConfigModel(**data).model_dump()
 
 
