@@ -4,12 +4,41 @@ from typing import Optional, List, Dict, Any
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 from uuid import UUID
 
+from src.domain.rag.doc_filter import DocumentFilter
+from src.domain.rag.doc_meta import DocMetaError, normalize_metadata, normalize_tags
 from src.domain.rag.query_limits import MAX_QUERY_CHARS
 
 class UpdateFileRequest(BaseModel):
-    """Update-file request model."""
-    description: Optional[str] = None
-    tags: Optional[List[str]] = None
+    """Update-file request model. A field left out is left as it is; ``tags`` and
+    ``metadata`` replace the stored list / object as a whole (``[]`` / ``{}`` clear them)."""
+    description: Optional[str] = Field(None, max_length=10000)
+    tags: Optional[List[Any]] = Field(
+        None, description="Tags (trimmed, at most 64 characters each and 32 per file, "
+                          "duplicates differing only in case dropped)")
+    metadata: Optional[Dict[str, Any]] = Field(
+        None, description="Flat object: keys [a-z0-9_]{1,40}, at most 32; values string "
+                          "(≤ 500 chars), number, boolean or YYYY-MM-DD date",
+        examples=[{"client": "Acme", "year": 2024, "signed": "2024-03-01"}])
+
+    @field_validator("tags")
+    @classmethod
+    def _tags(cls, v):
+        if v is None:
+            return v
+        try:
+            return normalize_tags(v)
+        except DocMetaError as e:
+            raise ValueError(str(e)) from None
+
+    @field_validator("metadata", mode="before")
+    @classmethod
+    def _metadata(cls, v):
+        if v is None:
+            return v
+        try:
+            return normalize_metadata(v)
+        except DocMetaError as e:
+            raise ValueError(str(e)) from None
 
 
 class BatchDeleteRequest(BaseModel):
@@ -151,6 +180,16 @@ class QueryRequest(BaseModel):
             "Replace several hit chunks of one section with the whole section (the same rule "
             "the MCP search tool uses). None = follow `config.rag.retrieval.auto_merging.enabled`."
         ),
+    )
+    filters: Optional[DocumentFilter] = Field(
+        default=None,
+        description=(
+            "Search only this folder's documents that match: tags_any / tags_all, file_type, "
+            "uploaded_after / uploaded_before, name_contains, metadata conditions (see "
+            "docs/api.md#document-filters). No matching document = no results. Unknown fields "
+            "or operators are a 422."
+        ),
+        examples=[{"tags_any": ["invoice"], "metadata": {"year": {"gte": 2024}}}],
     )
 
     model_config = {
@@ -378,6 +417,7 @@ class FileResource(BaseModel):
     mime_type: Optional[str] = Field(None)
     description: Optional[str] = Field(None)
     tags: Optional[List[str]] = Field(None)
+    metadata: Optional[Dict[str, Any]] = Field(None, description="Flat key/value metadata")
     content_hash: Optional[str] = Field(None, description="sha256 hex (used for D3 idempotency)")
     upload_time: Optional[datetime] = Field(None, description="Serialized to an ISO string")
     updated_time: Optional[datetime] = Field(None, description="Serialized to an ISO string")

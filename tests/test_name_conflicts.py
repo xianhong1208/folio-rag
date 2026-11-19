@@ -165,7 +165,7 @@ class TestFileNames:
                                  mime_type="text/plain", description=None, tags=None,
                                  upload_time=SimpleNamespace(isoformat=lambda: "t"), updated_time=None)
 
-        def store(folder_, content, name, description, tags):
+        def store(folder_, content, name, description, tags, metadata=None):
             if name == "a.txt":
                 raise FileNameConflictError(f"A file named '{name}' is already in this folder.")
             return {"file_size": 1}, record

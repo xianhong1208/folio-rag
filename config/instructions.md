@@ -62,7 +62,7 @@ already includes auto-merge + context expansion and usually returns enough conte
 - `_hint`: suggested next step
 
 `list` mode:
-- `files[]`: contains file_id, file_name, estimated_tokens, indexed_status
+- `files[]`: contains file_id, file_name, estimated_tokens, indexed_status, description, tags and metadata (the labels the owner gave each document)
 
 `read` mode:
 - `content`: full file content (markdown format)

@@ -1,6 +1,6 @@
 
 from datetime import datetime
-from typing import Optional, List
+from typing import Any, Dict, List, Optional
 from pydantic import BaseModel
 from uuid import UUID
 
@@ -15,6 +15,7 @@ class FileConfigData(BaseModel):
     mime_type: Optional[str] = None
     description: Optional[str] = None
     tags: Optional[List[str]] = None
+    metadata: Optional[Dict[str, Any]] = None
     upload_time: datetime
     updated_time: datetime
 

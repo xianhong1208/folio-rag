@@ -26,6 +26,7 @@ from src.api.router.response import (
 from src.adapter.file import FileAdapter
 from src.adapter.folder import FolderAdapter
 from src.adapter.rag import get_rag_adapter
+from src.domain.rag.doc_meta import DocMetaError, parse_metadata_json, parse_tag_string
 from src.log import get_api_logger
 from src.utils.names import content_disposition, sanitize_filename
 from db.filedb import FileNameConflictError, FileTooLargeError, UnsupportedFileTypeError
@@ -68,6 +69,7 @@ async def upload_file(
     file: UploadFile = File(...),
     description: Optional[str] = Form(None),
     tags: Optional[str] = Form(None),
+    metadata: Optional[str] = Form(None),
     auto_index: bool = Form(True),
     user_token: str = Depends(extract_token),
 ):
@@ -77,6 +79,7 @@ async def upload_file(
         file: The file to upload
         description: File description (optional)
         tags: File tags (optional; comma-separated string, e.g. "tag1,tag2,tag3")
+        metadata: File metadata (optional; a JSON object, e.g. '{"client": "Acme", "year": 2024}')
         auto_index: Whether to automatically index the file into the vector store; defaults to True
     """
 
@@ -87,18 +90,20 @@ async def upload_file(
         result = await FolderAdapter.get_folder(id=folder_id, user_token=user_token)
         if not result:
             raise HTTPException(status_code=404, detail=f"folder {folder_id} not found")
+        try:
+            tags_list = parse_tag_string(tags)
+            metadata_obj = parse_metadata_json(metadata)
+        except DocMetaError as e:
+            raise HTTPException(status_code=422, detail=str(e))
         file_content, file_size = _upload_source(file)
-
-        tags_list = None
-        if tags:
-            tags_list = [tag.strip() for tag in tags.split(',') if tag.strip()]
 
         file_data = {
             'file_content': file_content,
             'file_size': file_size,
             'file_name': sanitize_filename(file.filename),
             'description': description,
-            'tags': tags_list
+            'tags': tags_list,
+            'metadata': metadata_obj,
         }
 
         upload_result = await FileAdapter.upload_file(
@@ -274,6 +279,7 @@ async def download_file(
         404: {"model": ErrorDetailResponse, "description": "folder / file not found"},
         409: {"model": ErrorDetailResponse, "description": "rename collides with an existing name"},
         400: {"model": ErrorDetailResponse, "description": "invalid parameters"},
+        422: {"model": ErrorDetailResponse, "description": "a tag or metadata value breaks the rules"},
     },
 )
 async def update_file(
@@ -282,7 +288,12 @@ async def update_file(
     requests: UpdateFileRequest,
     user_token: str = Depends(extract_token),
 ):
-    """Update the metadata of a specified file."""
+    """Update a file's description, tags and metadata.
+
+    A field left out stays as it is; ``tags`` and ``metadata`` replace the stored
+    list / object (``[]`` / ``{}`` clear them). Cached search results of the folder
+    are dropped, so a filtered search sees the change at once.
+    """
     try:
         result = await FolderAdapter.get_folder(id=folder_id, user_token=user_token)
         if not result:
@@ -293,7 +304,8 @@ async def update_file(
             file_id=file_id,
             user_token=user_token,
             description=requests.description,
-            tags=requests.tags
+            tags=requests.tags,
+            metadata=requests.metadata,
         )
 
         logger.info(f"File metadata updated successfully: file_id={file_id}, folder_id={folder_id}")

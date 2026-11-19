@@ -421,3 +421,31 @@ def test_cex38_import_unpacks_inside_the_storage_root(tmp_path, monkeypatch):
     assert seen["dest"].name.startswith("import-")
     assert not seen["dest"].exists()
     assert oct((storage / ".folio-work").stat().st_mode & 0o777) == "0o700"
+
+
+class TestImportedLabels:
+    def test_columns_include_tags_and_metadata(self):
+        assert "tags" in F.FILE_COLUMNS and "metadata" in F.FILE_COLUMNS
+        assert "description" in F.FILE_COLUMNS
+        assert "id" not in F.FILE_COLUMNS and "folder_id" not in F.FILE_COLUMNS
+        assert "file_path" not in F.FILE_COLUMNS
+
+    def test_valid_labels_pass_through_the_rules(self):
+        assert F.imported_labels([" a ", "A", "b"], {"year": 2024, "due": "2024-01-31"}) == (
+            ["a", "b"], {"year": 2024, "due": "2024-01-31"}, True)
+
+    def test_an_export_from_before_1_6(self):
+        assert F.imported_labels(None, None) == ([], {}, True)
+
+    def test_invalid_values_are_left_out_and_reported(self):
+        tags, meta, ok = F.imported_labels(["ok", "x" * 65, 3],
+                                           {"good": 1, "Bad Key": 2, "nested": {"a": 1}})
+        assert (tags, meta, ok) == (["ok"], {"good": 1}, False)
+
+    def test_wrong_shapes(self):
+        assert F.imported_labels("a,b", ["x"]) == ([], {}, False)
+
+    def test_too_many(self):
+        tags, meta, ok = F.imported_labels([f"t{i}" for i in range(40)],
+                                           {f"k{i}": i for i in range(40)})
+        assert len(tags) == 32 and len(meta) == 32 and not ok
