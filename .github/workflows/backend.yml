@@ -89,10 +89,10 @@ jobs:
         # Audio transcription shells out to ffmpeg (resample, silence detection, trim);
         # the tests that exercise it run the real binary.
         run: sudo apt-get update -q && sudo apt-get install -y -q --no-install-recommends ffmpeg
-      - name: Install (local model stack + jieba, CPU torch group, locked)
+      - name: Install (local model stack + jieba, locked)
         # The unit suite covers the in-process providers too, so it needs the `local`
-        # extra (and `jieba` for the optional segmenter); torch comes from the cpu group.
-        run: uv sync --frozen --extra local --extra jieba --group cpu
+        # extra (CPU torch included) and `jieba` for the optional segmenter.
+        run: uv sync --frozen --extra local --extra jieba
       - name: Unit tests (fails below [tool.coverage.report] fail_under)
         # Integration tests skip themselves unless RAG_RUN_DB_ITESTS=1.
         run: uv run --no-sync pytest --cov --cov-report=term --cov-report=json:reports/coverage.json
@@ -139,8 +139,8 @@ jobs:
           path: .hf-cache
           key: hf-${{ runner.os }}-${{ hashFiles('pyproject.toml') }}
           restore-keys: hf-${{ runner.os }}-
-      - name: Install (local model stack + jieba, CPU torch group, locked)
-        run: uv sync --frozen --extra local --extra jieba --group cpu
+      - name: Install (local model stack + jieba, locked)
+        run: uv sync --frozen --extra local --extra jieba
       - name: Integration tests
         run: uv run --no-sync pytest tests/integration -p no:cacheprovider
 

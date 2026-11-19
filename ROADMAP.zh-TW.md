@@ -93,7 +93,6 @@ contextual retrieval),涵蓋了 RAG 的兩個典型弱點:chunk 破碎與精準�
 
 - **需要 PostgreSQL 與 pgvector。** 沒有 SQLite 的退路:混合檢索與每個資料夾的資料表都依賴它。
 - 設定的 DSN 走**同步 SQLAlchemy**(psycopg2);不要用 `+asyncpg`。
-- **GPU 要自己選,** 用 `uv sync --extra local --group rocm-r714 | cuda | cpu`。
 - **撤銷不是即時的,而且預設關閉。** Token 是離線驗證。沒開 `auth.revocation` 時,被撤銷的 token 會用到
   到期為止;開了之後,會用到下一次輪詢 MCP Gate 為止(預設 30 秒)。在 `fail_mode: open` 下,MCP Gate
   連不上期間做的撤銷,要等它恢復連線後才生效。

@@ -16,7 +16,7 @@ What is planned next, and why Graph RAG and "LLM Wiki" are paused: [`ROADMAP.md`
 Run these before opening a pull request; CI runs the same ones.
 
 ```bash
-uv sync --extra local --extra jieba --group cpu     # what CI installs
+uv sync --extra local --extra jieba                 # what CI installs
 uv run --no-sync pytest --cov                       # unit tests; fails below 91% overall coverage
 uv run --no-sync python scripts/check_coverage_floor.py reports/coverage.json   # every file at least 50%
 uvx ruff check .                                    # correctness rules (E4, E7, E9, F)

@@ -85,7 +85,7 @@ Docker 映像檔自己的 `models.yaml` 還會讀幾個變數（模型名稱、�
 | `rag.profile` | `local` | `local` · `hybrid` · `cloud` —— 見[雲端 profile](#雲端-profile)。 |
 | `rag.<role>.{timeout,max_retries}` | 各角色不同 | 每個模型角色的請求逾時與重試（429 / 5xx / 逾時,含退避）。 |
 
-GPU 選擇是 `uv sync --extra local --group {rocm-r714|cuda|cpu}` 的取捨 —— 見 `pyproject.toml` 開頭,每個 group 對應到各自的 PyTorch index。`cuda` 安裝 CUDA 13.0 版本,需要 NVIDIA driver 580 以上。
+安裝時不再選 GPU(自 1.5.1 起):`uv sync --extra local` 從 PyTorch 的 CPU index 安裝 CPU 版 torch,行程內模型(CKIP、HuggingFace embedding)都跑在 CPU 上。`rag.retrieval.ckip_device`(`CKIP_DEVICE`)只接受 `cpu`;設成 `cuda`、`cuda:N` 或 `auto` 會讓啟動停止([升級到 1.5.1](migrate-1.5.zh-TW.md#升級到-151))。需要 GPU 的模型請放在 OpenAI 相容端點後面。
 
 ## 雲端 profile
 
@@ -192,6 +192,11 @@ profile 做了什麼:
 **計算 chunk token 數**從不下載任何東西:有 `assets/hf_tokenizers/<org>--<model>` 就用它,否則用 `resources/tokenizers/` 內附的 XLM-RoBERTa tokenizer（multilingual-e5 與 bge-m3 用的就是它）,所以全新 clone 搭配 OpenAI 或 Azure embedding 也能直接用。
 
 **解析失敗看得到。** docling 轉換只得到部分結果時會重試一次;仍缺的頁碼會記在檔案上(主控台顯示 *Partial*,REST 狀態回 `warning`)。視覺模型轉錄失敗的 PDF 頁面、以及只以「沒有文字層」標記索引的頁面,也列在同一個警告裡。
+
+## 升級到 1.5.1
+
+1.5.1 用 `uv sync --extra local` 安裝行程內模型,裝的是 CPU 版 torch;`--group cuda | rocm-r714 | cpu`
+已移除,帶上它會失敗。`CKIP_DEVICE` 只接受 `cpu`。設定檔不需要改。詳見[升級到 1.5.1](migrate-1.5.zh-TW.md#升級到-151)。
 
 ## 從 1.4 升級
 

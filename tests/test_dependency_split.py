@@ -88,17 +88,15 @@ def test_core_renders_pdfs_with_pypdfium2_not_agpl_pymupdf():
     assert not core & {"pymupdf", "fitz", "pymupdfb"}
 
 
-def test_only_gpu_packages_come_from_gpu_indexes():
-    """PyPI is the first index: a package PyPI has is never locked to a GPU wheel index.
-
-    The AMD index is not explicit (torch[device-all]'s ROCm runtime libraries live there), so
-    without PyPI ahead of it uv locked jinja2, markupsafe, mpmath, networkx and sympy to it for
-    every install. Its markupsafe has no arm64 wheel, which broke the linux/arm64 image."""
+def test_only_torch_comes_from_another_index():
+    """Every package but torch comes from PyPI. torch is the only one mapped to PyTorch's CPU
+    index (explicit); until 1.5.0 a non-explicit AMD index locked jinja2, markupsafe, mpmath,
+    networkx and sympy to it, and its markupsafe had no arm64 wheel, which broke the
+    linux/arm64 image."""
     lock = tomllib.loads((Path(__file__).resolve().parents[1] / "uv.lock").read_text())
-    gpu_only = re.compile(r"^(torch|triton|rocm(-.+)?|amd-torch-device-.+|nvidia-.+|pytorch-triton-rocm)$")
     stray = sorted(
         f"{p['name']} {p['version']}" for p in lock["package"]
         if "pypi.org" not in p.get("source", {}).get("registry", "pypi.org")
-        and not gpu_only.match(p["name"])
+        and p["name"] != "torch"
     )
-    assert stray == [], f"locked to a GPU wheel index instead of PyPI: {stray}"
+    assert stray == [], f"locked to a non-PyPI index: {stray}"
