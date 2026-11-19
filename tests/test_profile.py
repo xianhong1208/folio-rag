@@ -403,6 +403,8 @@ def test_yaml_hybrid_literal_key_warns_but_loads(tmp_path, monkeypatch, _clean_c
 def test_parsing_config_defaults():
     p = ParsingConfig()
     assert p.pdf == "auto" and p.on_page_failure == "mark" and p.max_pages_per_file == 500
+    # 200 dpi: a low-resolution scan at 150 dpi lost a whole block on Qwen3-VL-8B (evals/README.md)
+    assert p.dpi == 200
     assert p.vision is None and VisionModelConfig().ca_file is None
 
 

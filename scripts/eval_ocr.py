@@ -90,7 +90,7 @@ def transcribe(client, model: str, png: bytes, max_tokens: int) -> str:
 def main(argv=None) -> int:
     ap = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
     ap.add_argument("--degrade", action="store_true", help="score degraded scans instead of clean renders")
-    ap.add_argument("--dpi", type=int, default=150, help="render resolution (Folio's rag.parsing.dpi)")
+    ap.add_argument("--dpi", type=int, default=200, help="render resolution (Folio's rag.parsing.dpi)")
     ap.add_argument("--max-tokens", type=int, default=4096)
     ap.add_argument("--out", type=Path, help="write per-page results as JSON")
     ap.add_argument("--save-text", type=Path, help="directory for each page's transcription")

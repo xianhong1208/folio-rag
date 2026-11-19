@@ -578,7 +578,7 @@ class ParsingConfig(BaseModel):
     """
     pdf: Literal["auto", "vision", "text"] = "auto"
     vision: Optional[VisionModelConfig] = None
-    dpi: int = Field(150, ge=72, le=300)  # page render resolution sent to the vision model
+    dpi: int = Field(200, ge=72, le=300)  # page render resolution sent to the vision model (A4 at 200 ≈ 3.9 MP)
     max_concurrency: int = Field(4, ge=1, le=32)  # pages in flight per file
     # Trailing characters of the previous page passed with each page, so headings, lists
     # and tables that continue across a page break are recognised as continuations.

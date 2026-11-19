@@ -80,7 +80,7 @@ OCR 只會拆成零散文字的表格、圖表與手寫,並把 GPU 記憶體、�
 **Docker:** 以唯讀方式掛載 CA(`- ./forgeyard-ca.pem:/etc/folio/forgeyard-ca.pem:ro`),並在 `.env` 設定同樣的四個變數。
 
 **速度與成本。** 整個伺服器同時最多處理 `rag.parsing.max_concurrency`(預設 4)頁,每頁附上前一頁的結尾,讓跨頁的表格與
-段落保持完整。`max_pages_per_file`(500)與 `max_pages_per_day`(不限)控制成本;`dpi`(150)決定轉成圖片的解析度。
+段落保持完整。`max_pages_per_file`(500)與 `max_pages_per_day`(不限)控制成本;`dpi`(200)決定轉成圖片的解析度。
 Forgeyard 的金鑰可能限制每個請求的圖片數與影像 token 數:Folio 每個請求只送一頁,長邊最多 2048 像素。
 
 ### 設定
@@ -93,7 +93,7 @@ Forgeyard 的金鑰可能限制每個請求的圖片數與影像 token 數:Folio
 | `rag.parsing.vision.base_url` | `VISION_BASE_URL` | 空 | 通常以 `/v1` 結尾。 |
 | `rag.parsing.vision.api_key` | `VISION_API_KEY` | 空 | 以 `Authorization: Bearer` 送出。 |
 | `rag.parsing.vision.ca_file` | `VISION_CA_FILE` | 空 | 端點額外信任的 CA(PEM)。 |
-| `rag.parsing.max_concurrency` / `dpi` / `context_chars` | — | `4` / `150` / `800` | 同時處理的頁數、解析度、前一頁的上下文長度。 |
+| `rag.parsing.max_concurrency` / `dpi` / `context_chars` | — | `4` / `200` / `800` | 同時處理的頁數、解析度、前一頁的上下文長度。 |
 | `rag.parsing.max_pages_per_file` / `max_pages_per_day` | — | `500` / `0`(不限) | 成本上限。 |
 | `rag.parsing.on_page_failure` / `min_success_ratio` | — | `mark` / `0.5` | 重試後仍失敗的頁面:加上標記,或讓整個檔案失敗。 |
 

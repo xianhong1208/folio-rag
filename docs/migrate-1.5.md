@@ -95,7 +95,7 @@ set the same four variables in `.env`.
 **Pacing.** Up to `rag.parsing.max_concurrency` pages (default 4) are in flight at once across
 the whole server, each
 with the end of the previous page so tables and paragraphs that cross a page break stay whole.
-`max_pages_per_file` (500) and `max_pages_per_day` (unlimited) cap the cost; `dpi` (150) sets
+`max_pages_per_file` (500) and `max_pages_per_day` (unlimited) cap the cost; `dpi` (200) sets
 the render resolution. A Forgeyard key may limit images per request and image tokens: Folio sends
 one page per request, at most 2048 px on its longer side.
 
@@ -109,7 +109,7 @@ one page per request, at most 2048 px on its longer side.
 | `rag.parsing.vision.base_url` | `VISION_BASE_URL` | empty | Usually ends in `/v1`. |
 | `rag.parsing.vision.api_key` | `VISION_API_KEY` | empty | Sent as `Authorization: Bearer`. |
 | `rag.parsing.vision.ca_file` | `VISION_CA_FILE` | empty | Extra CA (PEM) for the endpoint. |
-| `rag.parsing.max_concurrency` / `dpi` / `context_chars` | — | `4` / `150` / `800` | Pages in flight, render resolution, previous-page context. |
+| `rag.parsing.max_concurrency` / `dpi` / `context_chars` | — | `4` / `200` / `800` | Pages in flight, render resolution, previous-page context. |
 | `rag.parsing.max_pages_per_file` / `max_pages_per_day` | — | `500` / `0` (unlimited) | Cost caps. |
 | `rag.parsing.on_page_failure` / `min_success_ratio` | — | `mark` / `0.5` | A page that still fails: marked, or the whole file fails. |
 
