@@ -263,6 +263,14 @@ conflicts = [
 
 
 # Wheel index sources.
+# PyPI comes first. uv takes a package from the first index that has it, so the AMD index below
+# (not explicit) only supplies what PyPI does not have: the ROCm runtime libraries that
+# torch[device-all] pulls in. Without this, jinja2, markupsafe, mpmath, networkx and sympy were
+# locked to the AMD index for every install, the core one included, and its markupsafe has no
+# arm64 wheel, which broke the linux/arm64 Docker image.
+[[tool.uv.index]]
+name = "pypi"
+url = "https://pypi.org/simple"
 [[tool.uv.index]]
 name = "pytorch-rocm-multiarch"
 url = "https://repo.amd.com/rocm/whl-multi-arch/"

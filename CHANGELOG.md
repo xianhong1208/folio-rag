@@ -6,6 +6,9 @@ to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Fixed
+- **The `linux/arm64` Docker image could not be built, so 1.5.0 was not published to Docker Hub.** The AMD ROCm wheel index is not explicit (torch's ROCm runtime libraries live there), and uv takes a package from the first index that has it, so `jinja2`, `markupsafe`, `mpmath`, `networkx` and `sympy` were locked to that index for every install, the core one and the Docker image included. Its `markupsafe` has no arm64 wheel. PyPI is now the first index, so the AMD index only supplies what PyPI lacks; the five packages keep their versions and come from PyPI, and nothing else in the lock changes. A test fails if any package other than torch, triton and the ROCm / CUDA runtime libraries is locked to a GPU wheel index.
+
 ## [1.5.0] — 2026-11-19
 
 ### Added
