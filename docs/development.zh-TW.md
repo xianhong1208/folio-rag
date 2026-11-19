@@ -16,7 +16,7 @@
 開 pull request 前先跑過這些;CI 跑的是同一組。
 
 ```bash
-uv sync --extra local --extra jieba --group cpu     # CI 安裝的組合
+uv sync --extra local --extra jieba                 # CI 安裝的組合
 uv run --no-sync pytest --cov                       # 單元測試;整體覆蓋率低於 91% 就失敗
 uv run --no-sync python scripts/check_coverage_floor.py reports/coverage.json   # 每個檔案至少 50%
 uvx ruff check .                                    # 正確性規則(E4、E7、E9、F)

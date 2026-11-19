@@ -12,6 +12,8 @@ Folio 1.5 不再自己執行任何 OCR、版面、表格或語音轉文字模型
 
 docling 本身仍用於 Office、OpenDocument、HTML、Markdown、電子郵件與電子書檔案:這些格式不需要模型。
 
+1.5.1 另外改了安裝方式:不再有 GPU 版本(見文末的[升級到 1.5.1](#升級到-151))。
+
 ## PDF 與圖片
 
 原因:在公開評測 PDF 的 8 頁上(乾淨與劣化的掃描、中文與英文),Forgeyard 提供的 Qwen3-VL-8B 每一頁都沒有認錯字,
@@ -220,3 +222,31 @@ curl --cacert forgeyard-ca.pem https://<forgeyard-host>:7860/v1/audio/transcript
   -H "Authorization: Bearer $ASR_API_KEY" \
   -F model=whisper-large-v3-turbo -F file=@meeting.mp3
 ```
+
+## 升級到 1.5.1
+
+1.5.1 的行程內模型只有一種安裝方式:`uv sync --extra local`,裝的是 **CPU 版 torch**。`cuda`、`rocm-r714`
+與 `cpu` 這三個 dependency group 都移除了,AMD 與 CUDA 的 wheel index 也一併移除。自 1.5.0 起,Folio 自己執行的
+模型只剩 CKIP 斷詞,以及選用的 HuggingFace embedding(`rag.embedding.provider: huggingface`);CKIP 預設本來就
+跑在 CPU 上,其餘需要 GPU 的模型(embedding、LLM、reranker、視覺模型、語音轉文字)都是端點。CUDA 版的安裝
+多帶了約 4–5 GB 沒有人用的 NVIDIA 函式庫。
+
+| 之前(1.5.0) | 1.5.1 |
+|---|---|
+| `uv sync --extra local --group cuda` | `uv sync --extra local` |
+| `uv sync --extra local --group rocm-r714` | `uv sync --extra local` |
+| `uv sync --extra local --group cpu` | `uv sync --extra local` |
+| `uv sync`(cloud profile) | `uv sync`(不變) |
+
+若使用 jieba 分詞器,照舊加上 `--extra jieba`。舊指令現在會失敗並顯示
+``error: Group `cuda` is not defined in the project's `dependency-groups` table``:拿掉 `--group` 即可。
+`uv sync --extra local` 會把既有 `.venv` 裡的 CUDA 或 ROCm 版 torch 與其函式庫移除,改裝 CPU 版;之後照常
+啟動 Folio(`uv run --no-sync python main.py` 或 `uv run python main.py`)。
+
+**`CKIP_DEVICE`(`rag.retrieval.ckip_device`)只接受 `cpu`。** 設成 `cuda`、`cuda:N` 或 `auto` 會讓啟動停止,
+並在訊息中指出是哪個設定,而不是默默改用 CPU;請設 `CKIP_DEVICE=cpu`,或從 `.env` 刪掉這一行。預設值本來就是
+`cpu`,從沒設定過的人不需要做任何事。
+
+若你曾在 GPU 上使用 `rag.embedding.provider: huggingface`,現在 embedding 會在 CPU 上計算。較大的模型請放到
+OpenAI 相容端點後面(Forgeyard、vLLM、TEI),改設 `rag.embedding.provider: openai-compatible`;只有端點跑的是
+同一個模型時,向量才會相同。

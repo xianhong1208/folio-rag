@@ -1,19 +1,11 @@
+"""Guard tests — one CPU install (1.5.1): no GPU dependency groups, torch only in `local`.
 
-"""Guard tests — consistency of the three PyTorch dependency-group lists (PEP 735 + uv).
-
-torch picks its GPU build via a dependency group (cuda / cpu /
-rocm-r714). For a group to work correctly it must appear in all three places at
-once:
-  (1) [dependency-groups]   — declares the torch version
-  (2) [tool.uv] conflicts   — mutual-exclusion guard (omit it → two torch sets
-                              overwrite each other, and uv does not warn)
-  (3) [tool.uv.sources]     — maps torch to the right index (torchvision / torchaudio left
-                              in 1.5 with docling's in-process models)
-
-The pyproject header states that the conflicts list is the sole guard and uv
-will not warn if a group is missing from it. This test automates that sole
-guard, so adding a new ROCm build cannot silently miss one place. Pure parsing
-of pyproject.toml, no external dependencies.
+Up to 1.5.0 torch picked its GPU build through PEP 735 dependency groups (`cuda`, `cpu`,
+`rocm-r714`), each mapped to its own wheel index and kept apart by `[tool.uv] conflicts`.
+1.5.1 runs only CKIP and HuggingFace embeddings in-process, both on the CPU, so there is one
+torch: the CPU build from PyTorch's CPU index, installed by `uv sync --extra local`. These
+tests keep the GPU groups, their indexes and their conflicts from coming back, and keep the
+lock free of CUDA and ROCm packages. Pure parsing of pyproject.toml and uv.lock.
 """
 
 import re
@@ -22,91 +14,70 @@ from pathlib import Path
 
 import pytest
 
-_TORCH_STACK = ("torch",)
+ROOT = Path(__file__).resolve().parents[1]
+CPU_INDEX = "https://download.pytorch.org/whl/cpu"
 
 
-def _load_pyproject() -> dict:
-    path = Path(__file__).resolve().parents[1] / "pyproject.toml"
-    with path.open("rb") as f:
-        return tomllib.load(f)
-
-
-def _dep_name(spec: str) -> str:
-    """Extract the package name from a dep string: 'torch[device-all]==2.13.0+rocm7.14.0' → 'torch'."""
-    m = re.match(r"^\s*([A-Za-z0-9._-]+)", spec)
-    return m.group(1).lower() if m else ""
-
-
-def _torch_groups(data: dict) -> set[str]:
-    """Return the groups that declare torch — only these need mutual exclusion + source mapping.
-
-    Non-torch groups (should a dev/lint one be added later) are not pinned by
-    this test.
-    """
-    groups = data.get("dependency-groups", {})
-    return {
-        name
-        for name, specs in groups.items()
-        if any(_dep_name(s) == "torch" for s in specs if isinstance(s, str))
-    }
-
-
-def _conflict_groups(data: dict) -> set[str]:
-    result: set[str] = set()
-    for cluster in data["tool"]["uv"].get("conflicts", []):
-        for item in cluster:
-            if "group" in item:
-                result.add(item["group"])
-    return result
-
-
-def _source_groups(data: dict, package: str) -> set[str]:
-    entries = data["tool"]["uv"].get("sources", {}).get(package, [])
-    return {e["group"] for e in entries if "group" in e}
+def _name(spec: str) -> str:
+    """'torch[device-all]==2.13.0+rocm7.14.0' → 'torch'."""
+    return re.match(r"\s*([A-Za-z0-9._-]+)", spec).group(1).lower()
 
 
 @pytest.fixture(scope="module")
 def pyproject() -> dict:
-    return _load_pyproject()
+    with (ROOT / "pyproject.toml").open("rb") as f:
+        return tomllib.load(f)
 
 
-def test_torch_groups_present(pyproject):
-    """Precondition: torch groups are actually parsed (otherwise later assertions run empty and pass falsely)."""
-    groups = _torch_groups(pyproject)
-    assert groups, "no dependency-group declaring torch was parsed"
-    # Should currently cover at least these; adding others won't fail the test, but a missing existing one matters
-    assert {"cuda", "cpu"} <= groups, f"expected cuda/cpu to be torch groups, got {groups}"
+@pytest.fixture(scope="module")
+def lock() -> dict:
+    return tomllib.loads((ROOT / "uv.lock").read_text(encoding="utf-8"))
 
 
-def test_every_torch_group_in_conflicts(pyproject):
-    """Every torch group must be in the conflicts list — omit one and two torch sets install together and overwrite each other."""
-    torch_groups = _torch_groups(pyproject)
-    conflict_groups = _conflict_groups(pyproject)
-    missing = torch_groups - conflict_groups
-    assert not missing, (
-        f"torch groups {sorted(missing)} are missing from the [tool.uv] conflicts list; "
-        f"enabled together they overwrite each other and uv does not warn. Add them to the conflicts list."
-    )
+def test_no_gpu_dependency_groups(pyproject):
+    """No dependency group installs torch (or anything else): `--group cuda|rocm-r714|cpu` is
+    gone, and an old command fails at once instead of installing a second torch."""
+    groups = pyproject.get("dependency-groups", {})
+    assert not groups.keys() & {"cuda", "cpu", "rocm-r714", "rocm-r713"}, sorted(groups)
+    with_torch = [g for g, specs in groups.items() if any(_name(s) == "torch" for s in specs if isinstance(s, str))]
+    assert with_torch == [], f"torch must come from the local extra, not a group: {with_torch}"
+    assert "conflicts" not in pyproject["tool"]["uv"], "no mutually exclusive groups are left to guard"
 
 
-def test_conflicts_only_reference_real_groups(pyproject):
-    """Reverse: conflicts must not reference a nonexistent group (e.g. a leftover old per-gfx alias)."""
-    declared = set(pyproject.get("dependency-groups", {}))
-    stale = _conflict_groups(pyproject) - declared
-    assert not stale, f"conflicts reference groups that do not exist: {sorted(stale)} (left over from a removed group?)"
+def test_torch_only_in_the_local_extra(pyproject):
+    project = pyproject["project"]
+    assert "torch" not in {_name(d) for d in project["dependencies"]}
+    for extra, specs in project["optional-dependencies"].items():
+        assert ("torch" in {_name(d) for d in specs}) == (extra == "local"), extra
 
 
-@pytest.mark.parametrize("package", _TORCH_STACK)
-def test_every_torch_group_has_source_mapping(pyproject, package):
-    """Every torch group must have an index source mapping for torch.
+def test_torch_comes_from_the_cpu_index_only(pyproject):
+    """One explicit index (PyTorch's CPU wheels) and torch the only package mapped to it. No
+    AMD or CUDA index; everything else, torch's own dependencies included, comes from PyPI."""
+    uv = pyproject["tool"]["uv"]
+    indexes = uv.get("index", [])
+    assert [(i["url"].rstrip("/"), i.get("explicit")) for i in indexes] == [(CPU_INDEX, True)], indexes
+    assert uv.get("sources") == {"torch": {"index": indexes[0]["name"]}}
+    assert "index-strategy" not in uv, "unsafe-best-match was only needed for the AMD index"
 
-    A missing source mapping → the package resolves from the default PyPI, where
-    ROCm's +rocmX.Y.Z local version is not found → sync fails outright (at least
-    it breaks on the spot rather than silently using the wrong index).
-    """
-    torch_groups = _torch_groups(pyproject)
-    mapped = _source_groups(pyproject, package)
-    missing = torch_groups - mapped
-    assert not missing, (
-        f"{package} has no [tool.uv.sources] index mapping for groups {sorted(missing)}"
-    )
+
+def test_lock_has_no_gpu_packages(lock):
+    names = {p["name"] for p in lock["package"]}
+    gpu = sorted(n for n in names if re.match(r"^(nvidia-.+|cuda-.+|triton|pytorch-triton.*|rocm(-.+)?|amd-torch-.+)$", n))
+    assert gpu == [], f"CUDA / ROCm packages in the lock: {gpu}"
+
+
+def test_locked_torch_is_the_cpu_build(lock):
+    """Linux x86_64 and aarch64 get +cpu wheels; macOS gets the CPU index's arm64 wheel (Apple
+    builds carry no CUDA). Both from the CPU index."""
+    torches = [p for p in lock["package"] if p["name"] == "torch"]
+    assert torches
+    files = []
+    for p in torches:
+        assert p["source"] == {"registry": CPU_INDEX}, p["source"]
+        assert p["version"].startswith("2.14."), p["version"]
+        assert "+" not in p["version"] or p["version"].endswith("+cpu"), p["version"]
+        files += [w["url"].rsplit("/", 1)[1].replace("%2B", "+") for w in p.get("wheels", [])]
+    for platform in ("manylinux_2_28_x86_64", "manylinux_2_28_aarch64", "macosx_14_0_arm64"):
+        assert any(f.endswith(f"cp312-cp312-{platform}.whl") for f in files), (platform, files)
+    assert all("+cpu" in f for f in files if "linux" in f), files

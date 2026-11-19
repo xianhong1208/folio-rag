@@ -390,7 +390,7 @@ The volumes are kept across `docker compose down` and `up`; only `docker compose
 
 ## Running from source
 
-For the in-process models (`rag.profile: local` or `hybrid`, GPU or CPU), install with uv and run
+For the in-process models (`rag.profile: local` or `hybrid`, on the CPU), install with uv and run
 `python main.py`, as in the README's [Installation](../README.md#installation). The rest of this guide
 applies the same way: PostgreSQL with pgvector (the compose file's `db` service works on its own:
 `docker compose up -d db`, with its port published), the issuer and the audience, the reverse proxy,

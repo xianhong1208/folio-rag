@@ -15,6 +15,9 @@ Folio 1.5 runs no OCR, layout, table or speech-to-text model of its own. Two thi
 Docling itself stays for Office, OpenDocument, HTML, Markdown, e-mail and e-book files: those
 backends need no model.
 
+1.5.1 also changes the install: there are no GPU builds any more
+([Upgrading to 1.5.1](#upgrading-to-151) at the end).
+
 ## PDFs and images
 
 Why: on 8 pages of the public eval PDFs (clean and degraded scans, Chinese and English),
@@ -256,3 +259,35 @@ curl --cacert forgeyard-ca.pem https://<forgeyard-host>:7860/v1/audio/transcript
   -H "Authorization: Bearer $ASR_API_KEY" \
   -F model=whisper-large-v3-turbo -F file=@meeting.mp3
 ```
+
+## Upgrading to 1.5.1
+
+1.5.1 has one install for the in-process models: `uv sync --extra local`, with the **CPU build of
+torch**. The `cuda`, `rocm-r714` and `cpu` dependency groups are gone, and so are the AMD and CUDA
+wheel indexes. Since 1.5.0 the only models Folio runs itself are CKIP word segmentation and,
+optionally, HuggingFace embeddings (`rag.embedding.provider: huggingface`); CKIP ran on the CPU by
+default, and everything that wants a GPU (embeddings, LLM, reranker, vision, speech-to-text) is an
+endpoint. A CUDA install carried about 4–5 GB of NVIDIA libraries that nothing used.
+
+| Before (1.5.0) | 1.5.1 |
+|---|---|
+| `uv sync --extra local --group cuda` | `uv sync --extra local` |
+| `uv sync --extra local --group rocm-r714` | `uv sync --extra local` |
+| `uv sync --extra local --group cpu` | `uv sync --extra local` |
+| `uv sync` (cloud profile) | `uv sync` (unchanged) |
+
+Add `--extra jieba` as before if you use that segmenter. An old command now fails with
+``error: Group `cuda` is not defined in the project's `dependency-groups` table``: drop the
+`--group` flag. `uv sync --extra local` removes the CUDA or ROCm torch and its libraries from an
+existing `.venv` and installs the CPU build; then start Folio as usual
+(`uv run --no-sync python main.py`, or `uv run python main.py`).
+
+**`CKIP_DEVICE` (`rag.retrieval.ckip_device`) accepts only `cpu`.** `cuda`, `cuda:N` and `auto`
+stop the start with a message naming the setting, rather than silently running on the CPU; set
+`CKIP_DEVICE=cpu` or delete the line from `.env`. The default was already `cpu`, so a
+configuration that never set it needs nothing.
+
+If you used `rag.embedding.provider: huggingface` on a GPU, the embeddings now run on the CPU.
+For a large model, serve it behind an OpenAI-compatible endpoint (Forgeyard, vLLM, TEI) and set
+`rag.embedding.provider: openai-compatible` instead; the vectors stay the same only if the
+endpoint runs the same model.

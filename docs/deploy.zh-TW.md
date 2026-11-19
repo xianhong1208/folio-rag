@@ -366,7 +366,7 @@ Folio 啟動時會檢查資料庫和 `storage/` 是不是同一套資料；少�
 
 ## 從原始碼執行
 
-要在程序內跑模型（`rag.profile: local` 或 `hybrid`，GPU 或 CPU），請用 uv 安裝後執行 `python main.py`，
+要在程序內跑模型（`rag.profile: local` 或 `hybrid`，跑在 CPU 上），請用 uv 安裝後執行 `python main.py`，
 見 README 的[安裝](../README.zh-TW.md#安裝)。本指南其餘部分同樣適用：PostgreSQL 加 pgvector（compose 檔
 的 `db` 服務可以單獨使用：`docker compose up -d db`，並對外開放它的連接埠）、issuer 與 audience、反向
 代理，以及資料庫和 `storage/` 一起備份。

@@ -21,12 +21,7 @@ from src.config.dotenv import load_dotenv as _load_dotenv  # noqa: E402
 
 _load_dotenv(Path(__file__).resolve().parent / ".env")
 
-# Let the PyTorch CUDA allocator grow segments instead of fragmenting them: on a card
-# shared with vLLM, fragmentation alone causes out-of-memory errors in the in-process
-# models (HuggingFace embeddings, CKIP). Must be set before torch is imported; a user
-# value wins.
 import os as _os
-_os.environ.setdefault("PYTORCH_CUDA_ALLOC_CONF", "expandable_segments:True")
 
 
 # Disable core dumps for this process by default. At interpreter shutdown a native

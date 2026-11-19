@@ -92,7 +92,7 @@ The settings you are likely to touch:
 | `rag.profile` | `local` | `local` · `hybrid` · `cloud` — see [Cloud profile](#cloud-profile). |
 | `rag.<role>.{timeout,max_retries}` | per role | Request timeout and retries (429 / 5xx / timeouts, with backoff) for each model role. |
 
-GPU selection is a `uv sync --extra local --group {rocm-r714|cuda|cpu}` choice — see the top of `pyproject.toml`, where each group is mapped to its PyTorch index. `cuda` installs the CUDA 13.0 build, which needs an NVIDIA driver 580 or newer.
+There is no GPU choice at install time (since 1.5.1): `uv sync --extra local` installs the CPU build of torch from PyTorch's CPU index, and the in-process models (CKIP, HuggingFace embeddings) run on the CPU. `rag.retrieval.ckip_device` (`CKIP_DEVICE`) accepts only `cpu`; `cuda`, `cuda:N` and `auto` stop the start ([Upgrading to 1.5.1](migrate-1.5.md#upgrading-to-151)). Models that want a GPU run behind an OpenAI-compatible endpoint.
 
 ## Cloud profile
 
@@ -217,6 +217,12 @@ not billing.
 **Chunk token counting** never downloads anything: it uses `assets/hf_tokenizers/<org>--<model>` when present, else the bundled XLM-RoBERTa tokenizer in `resources/tokenizers/` (the tokenizer of multilingual-e5 and bge-m3), so a fresh clone with OpenAI or Azure embeddings works out of the box.
 
 **Parsing failures are visible.** A docling conversion that comes back partial is retried once, and pages still missing are listed on the file (a *Partial* badge in the console, `warning` in the REST status). The same warning lists PDF pages the vision model could not transcribe, and pages indexed only as a "no text layer" marker.
+
+## Upgrading to 1.5.1
+
+1.5.1 installs the in-process models with `uv sync --extra local` and the CPU build of torch; the
+`--group cuda | rocm-r714 | cpu` flag is gone and now fails. `CKIP_DEVICE` accepts only `cpu`. No
+configuration file changes. Details: [Upgrading to 1.5.1](migrate-1.5.md#upgrading-to-151).
 
 ## Upgrading from 1.4
 

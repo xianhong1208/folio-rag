@@ -347,8 +347,9 @@ class RAGRetrievalConfig(BaseModel):
     # Changing it flags existing folders for Rebuild FTS (no re-embedding needed).
     # An empty value (FOLIO_SEGMENTER unset in config/retrieval.yaml) means unset.
     segmenter: Annotated[Optional[Literal["ckip", "jieba", "bigram"]], BeforeValidator(_blank_to_none)] = None
-    # Device for the CKIP segmenter: cpu | cuda | cuda:N | auto (cuda:0 when available).
-    ckip_device: str = "cpu"
+    # Device for the CKIP segmenter. Only cpu since 1.5.1: Folio installs the CPU build of
+    # torch, and cuda / cuda:N / auto are refused at load (docs/migrate-1.5.md).
+    ckip_device: Literal["cpu"] = "cpu"
     # "rrf" = Reciprocal Rank Fusion (BM25 affects ordering); "concat" = llama_index native
     # (dense dominates, effectively vector-only; legacy).
     hybrid_fusion: str = "rrf"
@@ -377,6 +378,16 @@ class RAGRetrievalConfig(BaseModel):
     # Max concurrent queries (REST + MCP share one semaphore; excess is queued). 8 keeps every
     # connection pool (5+10 each) within headroom.
     max_concurrent_queries: int = 8
+
+    @field_validator("ckip_device", mode="before")
+    @classmethod
+    def _cpu_only(cls, v):
+        name = (str(v).strip().lower() if v is not None else "cpu") or "cpu"
+        if name in ("cuda", "auto") or name.startswith("cuda:"):
+            raise ValueError(removed_gpu_device_message(f"rag.retrieval.ckip_device {v!r} (env CKIP_DEVICE)"))
+        if name != "cpu":
+            raise ValueError(f"rag.retrieval.ckip_device {v!r}: the only value is cpu")
+        return name
 
 
 class RAGVectorStoreConfig(BaseModel):
@@ -470,6 +481,13 @@ class RerankConfig(BaseModel):
 # at OpenAI-compatible endpoints (e.g. Forgeyard) instead.
 MIGRATION_GUIDE = "docs/migrate-1.5.md"
 ASR_MIGRATION_GUIDE = MIGRATION_GUIDE
+
+
+def removed_gpu_device_message(what: str) -> str:
+    return (f"{what} was removed in Folio 1.5.1: Folio installs the CPU build of torch (no "
+            "--group cuda / rocm-r714 any more), so the in-process CKIP segmenter runs on the CPU. "
+            "Set CKIP_DEVICE=cpu or delete it from .env, and serve GPU models behind an "
+            f"OpenAI-compatible endpoint. See {MIGRATION_GUIDE} (Upgrading to 1.5.1).")
 REMOVED_ASR_PROVIDERS = ("docling-whisper", "fireredasr")
 
 

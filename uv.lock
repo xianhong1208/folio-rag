@@ -2,23 +2,14 @@ version = 1
 revision = 3
 requires-python = "==3.12.*"
 resolution-markers = [
-    "(platform_machine != 'aarch64' and extra != 'group-9-folio-rag-cpu' and extra != 'group-9-folio-rag-cuda' and extra == 'group-9-folio-rag-rocm-r714') or (platform_python_implementation != 'CPython' and extra != 'group-9-folio-rag-cpu' and extra != 'group-9-folio-rag-cuda' and extra == 'group-9-folio-rag-rocm-r714') or (sys_platform != 'linux' and extra != 'group-9-folio-rag-cpu' and extra != 'group-9-folio-rag-cuda' and extra == 'group-9-folio-rag-rocm-r714')",
-    "platform_machine == 'aarch64' and platform_python_implementation == 'CPython' and sys_platform == 'linux' and extra != 'group-9-folio-rag-cpu' and extra != 'group-9-folio-rag-cuda' and extra == 'group-9-folio-rag-rocm-r714'",
-    "extra != 'group-9-folio-rag-cpu' and extra == 'group-9-folio-rag-cuda' and extra != 'group-9-folio-rag-rocm-r714'",
-    "(platform_machine != 'aarch64' and sys_platform == 'linux' and extra == 'group-9-folio-rag-cpu' and extra != 'group-9-folio-rag-cuda' and extra != 'group-9-folio-rag-rocm-r714') or (platform_python_implementation != 'CPython' and sys_platform == 'linux' and extra == 'group-9-folio-rag-cpu' and extra != 'group-9-folio-rag-cuda' and extra != 'group-9-folio-rag-rocm-r714') or (sys_platform != 'darwin' and sys_platform != 'linux' and extra == 'group-9-folio-rag-cpu' and extra != 'group-9-folio-rag-cuda' and extra != 'group-9-folio-rag-rocm-r714')",
-    "platform_machine == 'aarch64' and platform_python_implementation == 'CPython' and sys_platform == 'linux' and extra == 'group-9-folio-rag-cpu' and extra != 'group-9-folio-rag-cuda' and extra != 'group-9-folio-rag-rocm-r714'",
-    "sys_platform == 'darwin' and extra == 'group-9-folio-rag-cpu' and extra != 'group-9-folio-rag-cuda' and extra != 'group-9-folio-rag-rocm-r714'",
-    "(platform_machine != 'aarch64' and extra != 'group-9-folio-rag-cpu' and extra != 'group-9-folio-rag-cuda' and extra != 'group-9-folio-rag-rocm-r714') or (platform_python_implementation != 'CPython' and extra != 'group-9-folio-rag-cpu' and extra != 'group-9-folio-rag-cuda' and extra != 'group-9-folio-rag-rocm-r714') or (sys_platform != 'linux' and extra != 'group-9-folio-rag-cpu' and extra != 'group-9-folio-rag-cuda' and extra != 'group-9-folio-rag-rocm-r714')",
-    "platform_machine == 'aarch64' and platform_python_implementation == 'CPython' and sys_platform == 'linux' and extra != 'group-9-folio-rag-cpu' and extra != 'group-9-folio-rag-cuda' and extra != 'group-9-folio-rag-rocm-r714'",
+    "platform_machine != 'arm64' or sys_platform != 'darwin'",
+    "platform_machine == 'arm64' and sys_platform == 'darwin'",
 ]
 required-markers = [
     "platform_machine == 'x86_64' and sys_platform == 'linux'",
+    "platform_machine == 'aarch64' and sys_platform == 'linux'",
+    "platform_machine == 'arm64' and sys_platform == 'darwin'",
 ]
-conflicts = [[
-    { package = "folio-rag", group = "cpu" },
-    { package = "folio-rag", group = "cuda" },
-    { package = "folio-rag", group = "rocm-r714" },
-]]
 
 [manifest]
 constraints = [
@@ -119,327 +110,6 @@ dependencies = [
 sdist = { url = "https://files.pythonhosted.org/packages/6e/b6/2a81d7724c0c124edc5ec7a167e85858b6fd31b9611c6fb8ecf617b7e2d3/alembic-1.17.1.tar.gz", hash = "sha256:8a289f6778262df31571d29cca4c7fbacd2f0f582ea0816f4c399b6da7528486", size = 1981285, upload-time = "2025-10-29T00:23:16.667Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/a5/32/7df1d81ec2e50fb661944a35183d87e62d3f6c6d9f8aff64a4f245226d55/alembic-1.17.1-py3-none-any.whl", hash = "sha256:cbc2386e60f89608bb63f30d2d6cc66c7aaed1fe105bd862828600e5ad167023", size = 247848, upload-time = "2025-10-29T00:23:18.79Z" },
-]
-
-[[package]]
-name = "amd-torch-device-gfx1010"
-version = "2.13.0+rocm7.14.0"
-source = { registry = "https://repo.amd.com/rocm/whl-multi-arch/" }
-dependencies = [
-    { name = "rocm-sdk-device-gfx1010" },
-    { name = "torch", version = "2.13.0+rocm7.14.0", source = { registry = "https://repo.amd.com/rocm/whl-multi-arch/" } },
-]
-wheels = [
-    { url = "https://repo.amd.com/rocm/whl-multi-arch/amd_torch_device_gfx1010-2.13.0%2Brocm7.14.0-cp312-cp312-linux_x86_64.whl" },
-]
-
-[[package]]
-name = "amd-torch-device-gfx1011"
-version = "2.13.0+rocm7.14.0"
-source = { registry = "https://repo.amd.com/rocm/whl-multi-arch/" }
-dependencies = [
-    { name = "rocm-sdk-device-gfx1011" },
-    { name = "torch", version = "2.13.0+rocm7.14.0", source = { registry = "https://repo.amd.com/rocm/whl-multi-arch/" } },
-]
-wheels = [
-    { url = "https://repo.amd.com/rocm/whl-multi-arch/amd_torch_device_gfx1011-2.13.0%2Brocm7.14.0-cp312-cp312-linux_x86_64.whl" },
-]
-
-[[package]]
-name = "amd-torch-device-gfx1012"
-version = "2.13.0+rocm7.14.0"
-source = { registry = "https://repo.amd.com/rocm/whl-multi-arch/" }
-dependencies = [
-    { name = "rocm-sdk-device-gfx1012" },
-    { name = "torch", version = "2.13.0+rocm7.14.0", source = { registry = "https://repo.amd.com/rocm/whl-multi-arch/" } },
-]
-wheels = [
-    { url = "https://repo.amd.com/rocm/whl-multi-arch/amd_torch_device_gfx1012-2.13.0%2Brocm7.14.0-cp312-cp312-linux_x86_64.whl" },
-]
-
-[[package]]
-name = "amd-torch-device-gfx1030"
-version = "2.13.0+rocm7.14.0"
-source = { registry = "https://repo.amd.com/rocm/whl-multi-arch/" }
-dependencies = [
-    { name = "rocm-sdk-device-gfx1030" },
-    { name = "torch", version = "2.13.0+rocm7.14.0", source = { registry = "https://repo.amd.com/rocm/whl-multi-arch/" } },
-]
-wheels = [
-    { url = "https://repo.amd.com/rocm/whl-multi-arch/amd_torch_device_gfx1030-2.13.0%2Brocm7.14.0-cp312-cp312-linux_x86_64.whl" },
-]
-
-[[package]]
-name = "amd-torch-device-gfx1031"
-version = "2.13.0+rocm7.14.0"
-source = { registry = "https://repo.amd.com/rocm/whl-multi-arch/" }
-dependencies = [
-    { name = "rocm-sdk-device-gfx1031" },
-    { name = "torch", version = "2.13.0+rocm7.14.0", source = { registry = "https://repo.amd.com/rocm/whl-multi-arch/" } },
-]
-wheels = [
-    { url = "https://repo.amd.com/rocm/whl-multi-arch/amd_torch_device_gfx1031-2.13.0%2Brocm7.14.0-cp312-cp312-linux_x86_64.whl" },
-]
-
-[[package]]
-name = "amd-torch-device-gfx1032"
-version = "2.13.0+rocm7.14.0"
-source = { registry = "https://repo.amd.com/rocm/whl-multi-arch/" }
-dependencies = [
-    { name = "rocm-sdk-device-gfx1032" },
-    { name = "torch", version = "2.13.0+rocm7.14.0", source = { registry = "https://repo.amd.com/rocm/whl-multi-arch/" } },
-]
-wheels = [
-    { url = "https://repo.amd.com/rocm/whl-multi-arch/amd_torch_device_gfx1032-2.13.0%2Brocm7.14.0-cp312-cp312-linux_x86_64.whl" },
-]
-
-[[package]]
-name = "amd-torch-device-gfx1033"
-version = "2.13.0+rocm7.14.0"
-source = { registry = "https://repo.amd.com/rocm/whl-multi-arch/" }
-dependencies = [
-    { name = "rocm-sdk-device-gfx1033" },
-    { name = "torch", version = "2.13.0+rocm7.14.0", source = { registry = "https://repo.amd.com/rocm/whl-multi-arch/" } },
-]
-wheels = [
-    { url = "https://repo.amd.com/rocm/whl-multi-arch/amd_torch_device_gfx1033-2.13.0%2Brocm7.14.0-cp312-cp312-linux_x86_64.whl" },
-]
-
-[[package]]
-name = "amd-torch-device-gfx1034"
-version = "2.13.0+rocm7.14.0"
-source = { registry = "https://repo.amd.com/rocm/whl-multi-arch/" }
-dependencies = [
-    { name = "rocm-sdk-device-gfx1034" },
-    { name = "torch", version = "2.13.0+rocm7.14.0", source = { registry = "https://repo.amd.com/rocm/whl-multi-arch/" } },
-]
-wheels = [
-    { url = "https://repo.amd.com/rocm/whl-multi-arch/amd_torch_device_gfx1034-2.13.0%2Brocm7.14.0-cp312-cp312-linux_x86_64.whl" },
-]
-
-[[package]]
-name = "amd-torch-device-gfx1035"
-version = "2.13.0+rocm7.14.0"
-source = { registry = "https://repo.amd.com/rocm/whl-multi-arch/" }
-dependencies = [
-    { name = "rocm-sdk-device-gfx1035" },
-    { name = "torch", version = "2.13.0+rocm7.14.0", source = { registry = "https://repo.amd.com/rocm/whl-multi-arch/" } },
-]
-wheels = [
-    { url = "https://repo.amd.com/rocm/whl-multi-arch/amd_torch_device_gfx1035-2.13.0%2Brocm7.14.0-cp312-cp312-linux_x86_64.whl" },
-]
-
-[[package]]
-name = "amd-torch-device-gfx1036"
-version = "2.13.0+rocm7.14.0"
-source = { registry = "https://repo.amd.com/rocm/whl-multi-arch/" }
-dependencies = [
-    { name = "rocm-sdk-device-gfx1036" },
-    { name = "torch", version = "2.13.0+rocm7.14.0", source = { registry = "https://repo.amd.com/rocm/whl-multi-arch/" } },
-]
-wheels = [
-    { url = "https://repo.amd.com/rocm/whl-multi-arch/amd_torch_device_gfx1036-2.13.0%2Brocm7.14.0-cp312-cp312-linux_x86_64.whl" },
-]
-
-[[package]]
-name = "amd-torch-device-gfx1100"
-version = "2.13.0+rocm7.14.0"
-source = { registry = "https://repo.amd.com/rocm/whl-multi-arch/" }
-dependencies = [
-    { name = "rocm-sdk-device-gfx1100" },
-    { name = "torch", version = "2.13.0+rocm7.14.0", source = { registry = "https://repo.amd.com/rocm/whl-multi-arch/" } },
-]
-wheels = [
-    { url = "https://repo.amd.com/rocm/whl-multi-arch/amd_torch_device_gfx1100-2.13.0%2Brocm7.14.0-cp312-cp312-linux_x86_64.whl" },
-]
-
-[[package]]
-name = "amd-torch-device-gfx1101"
-version = "2.13.0+rocm7.14.0"
-source = { registry = "https://repo.amd.com/rocm/whl-multi-arch/" }
-dependencies = [
-    { name = "rocm-sdk-device-gfx1101" },
-    { name = "torch", version = "2.13.0+rocm7.14.0", source = { registry = "https://repo.amd.com/rocm/whl-multi-arch/" } },
-]
-wheels = [
-    { url = "https://repo.amd.com/rocm/whl-multi-arch/amd_torch_device_gfx1101-2.13.0%2Brocm7.14.0-cp312-cp312-linux_x86_64.whl" },
-]
-
-[[package]]
-name = "amd-torch-device-gfx1102"
-version = "2.13.0+rocm7.14.0"
-source = { registry = "https://repo.amd.com/rocm/whl-multi-arch/" }
-dependencies = [
-    { name = "rocm-sdk-device-gfx1102" },
-    { name = "torch", version = "2.13.0+rocm7.14.0", source = { registry = "https://repo.amd.com/rocm/whl-multi-arch/" } },
-]
-wheels = [
-    { url = "https://repo.amd.com/rocm/whl-multi-arch/amd_torch_device_gfx1102-2.13.0%2Brocm7.14.0-cp312-cp312-linux_x86_64.whl" },
-]
-
-[[package]]
-name = "amd-torch-device-gfx1103"
-version = "2.13.0+rocm7.14.0"
-source = { registry = "https://repo.amd.com/rocm/whl-multi-arch/" }
-dependencies = [
-    { name = "rocm-sdk-device-gfx1103" },
-    { name = "torch", version = "2.13.0+rocm7.14.0", source = { registry = "https://repo.amd.com/rocm/whl-multi-arch/" } },
-]
-wheels = [
-    { url = "https://repo.amd.com/rocm/whl-multi-arch/amd_torch_device_gfx1103-2.13.0%2Brocm7.14.0-cp312-cp312-linux_x86_64.whl" },
-]
-
-[[package]]
-name = "amd-torch-device-gfx110x"
-version = "2.13.0+rocm7.14.0"
-source = { registry = "https://repo.amd.com/rocm/whl-multi-arch/" }
-dependencies = [
-    { name = "torch", version = "2.13.0+rocm7.14.0", source = { registry = "https://repo.amd.com/rocm/whl-multi-arch/" } },
-]
-wheels = [
-    { url = "https://repo.amd.com/rocm/whl-multi-arch/amd_torch_device_gfx110x-2.13.0%2Brocm7.14.0-cp312-cp312-linux_x86_64.whl" },
-]
-
-[[package]]
-name = "amd-torch-device-gfx1150"
-version = "2.13.0+rocm7.14.0"
-source = { registry = "https://repo.amd.com/rocm/whl-multi-arch/" }
-dependencies = [
-    { name = "rocm-sdk-device-gfx1150" },
-    { name = "torch", version = "2.13.0+rocm7.14.0", source = { registry = "https://repo.amd.com/rocm/whl-multi-arch/" } },
-]
-wheels = [
-    { url = "https://repo.amd.com/rocm/whl-multi-arch/amd_torch_device_gfx1150-2.13.0%2Brocm7.14.0-cp312-cp312-linux_x86_64.whl" },
-]
-
-[[package]]
-name = "amd-torch-device-gfx1151"
-version = "2.13.0+rocm7.14.0"
-source = { registry = "https://repo.amd.com/rocm/whl-multi-arch/" }
-dependencies = [
-    { name = "rocm-sdk-device-gfx1151" },
-    { name = "torch", version = "2.13.0+rocm7.14.0", source = { registry = "https://repo.amd.com/rocm/whl-multi-arch/" } },
-]
-wheels = [
-    { url = "https://repo.amd.com/rocm/whl-multi-arch/amd_torch_device_gfx1151-2.13.0%2Brocm7.14.0-cp312-cp312-linux_x86_64.whl" },
-]
-
-[[package]]
-name = "amd-torch-device-gfx1152"
-version = "2.13.0+rocm7.14.0"
-source = { registry = "https://repo.amd.com/rocm/whl-multi-arch/" }
-dependencies = [
-    { name = "rocm-sdk-device-gfx1152" },
-    { name = "torch", version = "2.13.0+rocm7.14.0", source = { registry = "https://repo.amd.com/rocm/whl-multi-arch/" } },
-]
-wheels = [
-    { url = "https://repo.amd.com/rocm/whl-multi-arch/amd_torch_device_gfx1152-2.13.0%2Brocm7.14.0-cp312-cp312-linux_x86_64.whl" },
-]
-
-[[package]]
-name = "amd-torch-device-gfx1153"
-version = "2.13.0+rocm7.14.0"
-source = { registry = "https://repo.amd.com/rocm/whl-multi-arch/" }
-dependencies = [
-    { name = "rocm-sdk-device-gfx1153" },
-    { name = "torch", version = "2.13.0+rocm7.14.0", source = { registry = "https://repo.amd.com/rocm/whl-multi-arch/" } },
-]
-wheels = [
-    { url = "https://repo.amd.com/rocm/whl-multi-arch/amd_torch_device_gfx1153-2.13.0%2Brocm7.14.0-cp312-cp312-linux_x86_64.whl" },
-]
-
-[[package]]
-name = "amd-torch-device-gfx115x"
-version = "2.13.0+rocm7.14.0"
-source = { registry = "https://repo.amd.com/rocm/whl-multi-arch/" }
-dependencies = [
-    { name = "torch", version = "2.13.0+rocm7.14.0", source = { registry = "https://repo.amd.com/rocm/whl-multi-arch/" } },
-]
-wheels = [
-    { url = "https://repo.amd.com/rocm/whl-multi-arch/amd_torch_device_gfx115x-2.13.0%2Brocm7.14.0-cp312-cp312-linux_x86_64.whl" },
-]
-
-[[package]]
-name = "amd-torch-device-gfx12-0"
-version = "2.13.0+rocm7.14.0"
-source = { registry = "https://repo.amd.com/rocm/whl-multi-arch/" }
-dependencies = [
-    { name = "torch", version = "2.13.0+rocm7.14.0", source = { registry = "https://repo.amd.com/rocm/whl-multi-arch/" } },
-]
-wheels = [
-    { url = "https://repo.amd.com/rocm/whl-multi-arch/amd_torch_device_gfx12_0-2.13.0%2Brocm7.14.0-cp312-cp312-linux_x86_64.whl" },
-]
-
-[[package]]
-name = "amd-torch-device-gfx1200"
-version = "2.13.0+rocm7.14.0"
-source = { registry = "https://repo.amd.com/rocm/whl-multi-arch/" }
-dependencies = [
-    { name = "rocm-sdk-device-gfx1200" },
-    { name = "torch", version = "2.13.0+rocm7.14.0", source = { registry = "https://repo.amd.com/rocm/whl-multi-arch/" } },
-]
-wheels = [
-    { url = "https://repo.amd.com/rocm/whl-multi-arch/amd_torch_device_gfx1200-2.13.0%2Brocm7.14.0-cp312-cp312-linux_x86_64.whl" },
-]
-
-[[package]]
-name = "amd-torch-device-gfx1201"
-version = "2.13.0+rocm7.14.0"
-source = { registry = "https://repo.amd.com/rocm/whl-multi-arch/" }
-dependencies = [
-    { name = "rocm-sdk-device-gfx1201" },
-    { name = "torch", version = "2.13.0+rocm7.14.0", source = { registry = "https://repo.amd.com/rocm/whl-multi-arch/" } },
-]
-wheels = [
-    { url = "https://repo.amd.com/rocm/whl-multi-arch/amd_torch_device_gfx1201-2.13.0%2Brocm7.14.0-cp312-cp312-linux_x86_64.whl" },
-]
-
-[[package]]
-name = "amd-torch-device-gfx908"
-version = "2.13.0+rocm7.14.0"
-source = { registry = "https://repo.amd.com/rocm/whl-multi-arch/" }
-dependencies = [
-    { name = "rocm-sdk-device-gfx908" },
-    { name = "torch", version = "2.13.0+rocm7.14.0", source = { registry = "https://repo.amd.com/rocm/whl-multi-arch/" } },
-]
-wheels = [
-    { url = "https://repo.amd.com/rocm/whl-multi-arch/amd_torch_device_gfx908-2.13.0%2Brocm7.14.0-cp312-cp312-linux_x86_64.whl" },
-]
-
-[[package]]
-name = "amd-torch-device-gfx90a"
-version = "2.13.0+rocm7.14.0"
-source = { registry = "https://repo.amd.com/rocm/whl-multi-arch/" }
-dependencies = [
-    { name = "rocm-sdk-device-gfx90a" },
-    { name = "torch", version = "2.13.0+rocm7.14.0", source = { registry = "https://repo.amd.com/rocm/whl-multi-arch/" } },
-]
-wheels = [
-    { url = "https://repo.amd.com/rocm/whl-multi-arch/amd_torch_device_gfx90a-2.13.0%2Brocm7.14.0-cp312-cp312-linux_x86_64.whl" },
-]
-
-[[package]]
-name = "amd-torch-device-gfx942"
-version = "2.13.0+rocm7.14.0"
-source = { registry = "https://repo.amd.com/rocm/whl-multi-arch/" }
-dependencies = [
-    { name = "rocm-sdk-device-gfx942" },
-    { name = "torch", version = "2.13.0+rocm7.14.0", source = { registry = "https://repo.amd.com/rocm/whl-multi-arch/" } },
-]
-wheels = [
-    { url = "https://repo.amd.com/rocm/whl-multi-arch/amd_torch_device_gfx942-2.13.0%2Brocm7.14.0-cp312-cp312-linux_x86_64.whl" },
-]
-
-[[package]]
-name = "amd-torch-device-gfx950"
-version = "2.13.0+rocm7.14.0"
-source = { registry = "https://repo.amd.com/rocm/whl-multi-arch/" }
-dependencies = [
-    { name = "rocm-sdk-device-gfx950" },
-    { name = "torch", version = "2.13.0+rocm7.14.0", source = { registry = "https://repo.amd.com/rocm/whl-multi-arch/" } },
-]
-wheels = [
-    { url = "https://repo.amd.com/rocm/whl-multi-arch/amd_torch_device_gfx950-2.13.0%2Brocm7.14.0-cp312-cp312-linux_x86_64.whl" },
 ]
 
 [[package]]
@@ -616,7 +286,7 @@ name = "cffi"
 version = "2.1.1"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
-    { name = "pycparser", marker = "implementation_name != 'PyPy' or (extra == 'group-9-folio-rag-cpu' and extra == 'group-9-folio-rag-cuda') or (extra == 'group-9-folio-rag-cpu' and extra == 'group-9-folio-rag-rocm-r714') or (extra == 'group-9-folio-rag-cuda' and extra == 'group-9-folio-rag-rocm-r714')" },
+    { name = "pycparser", marker = "implementation_name != 'PyPy'" },
 ]
 sdist = { url = "https://files.pythonhosted.org/packages/9e/ef/008a1939e372c06329a3fce4279c02f328488f3526744906eeec3da7ad5f/cffi-2.1.1.tar.gz", hash = "sha256:dd31f52ea1086513bb9df30f8fcee9b8918323ae067a3d5b78bc826a000712be", size = 530807, upload-time = "2026-08-03T21:21:18.939Z" }
 wheels = [
@@ -680,11 +350,8 @@ name = "ckip-transformers"
 version = "0.3.4"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
-    { name = "torch", version = "2.13.0+rocm7.14.0", source = { registry = "https://repo.amd.com/rocm/whl-multi-arch/" }, marker = "(extra == 'group-9-folio-rag-cpu' and extra == 'group-9-folio-rag-cuda') or (extra != 'group-9-folio-rag-cuda' and extra == 'group-9-folio-rag-rocm-r714') or (extra != 'group-9-folio-rag-cpu' and extra == 'group-9-folio-rag-rocm-r714')" },
-    { name = "torch", version = "2.14.0", source = { registry = "https://download.pytorch.org/whl/cpu" }, marker = "(sys_platform == 'darwin' and extra == 'group-9-folio-rag-cpu') or (extra == 'group-9-folio-rag-cpu' and extra == 'group-9-folio-rag-cuda') or (extra == 'group-9-folio-rag-cpu' and extra == 'group-9-folio-rag-rocm-r714') or (extra == 'group-9-folio-rag-cuda' and extra == 'group-9-folio-rag-rocm-r714')" },
-    { name = "torch", version = "2.14.0", source = { registry = "https://pypi.org/simple" }, marker = "(extra == 'group-9-folio-rag-cpu' and extra == 'group-9-folio-rag-cuda') or (extra == 'group-9-folio-rag-cpu' and extra == 'group-9-folio-rag-rocm-r714') or (extra == 'group-9-folio-rag-cuda' and extra == 'group-9-folio-rag-rocm-r714') or (extra != 'group-9-folio-rag-cpu' and extra != 'group-9-folio-rag-cuda' and extra != 'group-9-folio-rag-rocm-r714')" },
-    { name = "torch", version = "2.14.0+cpu", source = { registry = "https://download.pytorch.org/whl/cpu" }, marker = "(sys_platform != 'darwin' and extra == 'group-9-folio-rag-cpu') or (extra == 'group-9-folio-rag-cpu' and extra == 'group-9-folio-rag-cuda') or (extra == 'group-9-folio-rag-cpu' and extra == 'group-9-folio-rag-rocm-r714') or (extra == 'group-9-folio-rag-cuda' and extra == 'group-9-folio-rag-rocm-r714')" },
-    { name = "torch", version = "2.14.1+cu130", source = { registry = "https://download.pytorch.org/whl/cu130" }, marker = "extra == 'group-9-folio-rag-cuda' or (extra == 'group-9-folio-rag-cpu' and extra == 'group-9-folio-rag-rocm-r714')" },
+    { name = "torch", version = "2.14.1", source = { registry = "https://download.pytorch.org/whl/cpu" }, marker = "platform_machine == 'arm64' and sys_platform == 'darwin'" },
+    { name = "torch", version = "2.14.1+cpu", source = { registry = "https://download.pytorch.org/whl/cpu" }, marker = "platform_machine != 'arm64' or sys_platform != 'darwin'" },
     { name = "tqdm" },
     { name = "transformers" },
 ]
@@ -749,7 +416,7 @@ name = "cryptography"
 version = "50.0.1"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
-    { name = "cffi", marker = "platform_python_implementation != 'PyPy' or (extra == 'group-9-folio-rag-cpu' and extra == 'group-9-folio-rag-cuda') or (extra == 'group-9-folio-rag-cpu' and extra == 'group-9-folio-rag-rocm-r714') or (extra == 'group-9-folio-rag-cuda' and extra == 'group-9-folio-rag-rocm-r714')" },
+    { name = "cffi", marker = "platform_python_implementation != 'PyPy'" },
 ]
 sdist = { url = "https://files.pythonhosted.org/packages/bb/ad/5d6702db60b1e40b41ef513b6967ff5848f307d50f8449baf1634f5908f1/cryptography-50.0.1.tar.gz", hash = "sha256:5dd9bda1c12b4162f6ff568eeb5e0ff956c28d14406e875cfe8a63a2d414ff20", size = 880381, upload-time = "2026-08-25T19:45:45.499Z" }
 wheels = [
@@ -779,77 +446,6 @@ wheels = [
     { url = "https://files.pythonhosted.org/packages/63/8e/f1f955e0921dd2b6d22eae7e8d24a4c4b638d10735ffbf6a71f99eb0fcb8/cryptography-50.0.1-cp39-abi3-musllinux_1_2_aarch64.whl", hash = "sha256:fd3718b960d0b5dd213cdf03f3bcb7000e69dda0de8b956061947ff6bcff5558", size = 4888413, upload-time = "2026-08-25T19:45:20.4Z" },
     { url = "https://files.pythonhosted.org/packages/1f/ab/89e2b798d2c3925f82e2bb72d5979f3d2f6da2dd22ef4a8cd8b70d920039/cryptography-50.0.1-cp39-abi3-musllinux_1_2_x86_64.whl", hash = "sha256:2a93d05e34d5f67fba6f891fe85d929999baa7195e853923ea6d7576c9e68c5e", size = 5044355, upload-time = "2026-08-25T19:45:22.353Z" },
     { url = "https://files.pythonhosted.org/packages/99/89/87ef49ffe383ef4e147d27b7bf2088fb0b54ea409dd87b5a89442e5828a5/cryptography-50.0.1-cp39-abi3-win_amd64.whl", hash = "sha256:55d16b1ef3ee0958d893a977b19777887e546c9954ea81b200c3301a864013f2", size = 3875429, upload-time = "2026-08-25T19:45:24.418Z" },
-]
-
-[[package]]
-name = "cuda-bindings"
-version = "13.4.1"
-source = { registry = "https://pypi.org/simple" }
-dependencies = [
-    { name = "cuda-pathfinder", marker = "extra == 'group-9-folio-rag-cuda' or (extra == 'group-9-folio-rag-cpu' and extra == 'group-9-folio-rag-rocm-r714') or (extra != 'group-9-folio-rag-cpu' and extra != 'group-9-folio-rag-rocm-r714')" },
-]
-wheels = [
-    { url = "https://files.pythonhosted.org/packages/d6/d0/76d0e45d98bf4933bf48eac6bbeb17464684540f69edec41fc37c7a422b0/cuda_bindings-13.4.1-cp312-cp312-manylinux_2_24_aarch64.manylinux_2_28_aarch64.whl", hash = "sha256:84ee88862e2e6ac39a5434c061f7f4389fbefbc418487d0670c86601d517d038", size = 6479976, upload-time = "2026-09-10T01:16:54.622Z" },
-    { url = "https://files.pythonhosted.org/packages/43/56/d7b219516980f3333e232c13d727e8f4dc59afc5381cbbcfbc1215014c81/cuda_bindings-13.4.1-cp312-cp312-manylinux_2_24_x86_64.manylinux_2_28_x86_64.whl", hash = "sha256:f444d7e488cbc47e79b7be0d1cfe97201f3e1f186a18ee10f2e4da3265975b16", size = 7170956, upload-time = "2026-09-10T01:16:56.854Z" },
-    { url = "https://files.pythonhosted.org/packages/cb/e6/59ea896aa979beeb0c31d20843ecc05fd67edad9aabc669178e28171008b/cuda_bindings-13.4.1-cp312-cp312-win_amd64.whl", hash = "sha256:154e7be4002ab8822e5c7a0b2275155bd4d065c5a7cf4b2479b291c73dc37cbf", size = 6330134, upload-time = "2026-09-10T01:16:59.387Z" },
-    { url = "https://files.pythonhosted.org/packages/21/c9/f841893bf09ec2b23b6f95cc73119c6a099da342fa667189bc0ecbf22407/cuda_bindings-13.4.1-cp312-cp312-win_arm64.whl", hash = "sha256:c945befbc9c9d1337b69568ccc73e1c5a6c695ce061f9c9fac2472e97660dc00", size = 5329144, upload-time = "2026-09-10T01:17:01.733Z" },
-]
-
-[[package]]
-name = "cuda-pathfinder"
-version = "1.8.1"
-source = { registry = "https://pypi.org/simple" }
-wheels = [
-    { url = "https://files.pythonhosted.org/packages/9d/e6/22df83f82f9bc26cb1c42265cf14d34d4908dba2a0f261bd7b28244acb00/cuda_pathfinder-1.8.1-py3-none-any.whl", hash = "sha256:ae0137ff9e56ea97499bcbf54f5f2778ec25f3266715ac86da192a795af982a8", size = 62552, upload-time = "2026-09-02T16:55:28.64Z" },
-]
-
-[[package]]
-name = "cuda-toolkit"
-version = "13.0.3.0"
-source = { registry = "https://pypi.org/simple" }
-wheels = [
-    { url = "https://files.pythonhosted.org/packages/d1/c7/a79086a62c98befcdb8349656c6f114e2db3b8b2422f6e25c97a7f2a9a3c/cuda_toolkit-13.0.3.0-py2.py3-none-any.whl", hash = "sha256:d693caaa261214ddd7dbb60d68e71cbed884e68c2be7509778f3051da0b91c3f", size = 2512, upload-time = "2026-04-14T00:50:08.173Z" },
-]
-
-[package.optional-dependencies]
-cublas = [
-    { name = "nvidia-cublas", marker = "(platform_machine == 'aarch64' and sys_platform == 'linux' and extra == 'group-9-folio-rag-cuda') or (platform_machine == 'x86_64' and sys_platform == 'linux' and extra == 'group-9-folio-rag-cuda') or (platform_machine == 'AMD64' and sys_platform == 'win32' and extra == 'group-9-folio-rag-cuda') or (platform_machine == 'aarch64' and sys_platform == 'linux' and extra != 'group-9-folio-rag-cpu' and extra != 'group-9-folio-rag-rocm-r714') or (platform_machine == 'x86_64' and sys_platform == 'linux' and extra != 'group-9-folio-rag-cpu' and extra != 'group-9-folio-rag-rocm-r714') or (platform_machine == 'AMD64' and sys_platform == 'win32' and extra != 'group-9-folio-rag-cpu' and extra != 'group-9-folio-rag-rocm-r714') or (sys_platform != 'linux' and sys_platform != 'win32' and extra == 'group-9-folio-rag-cpu' and extra == 'group-9-folio-rag-cuda') or (sys_platform != 'linux' and sys_platform != 'win32' and extra == 'group-9-folio-rag-cpu' and extra == 'group-9-folio-rag-rocm-r714') or (sys_platform != 'linux' and sys_platform != 'win32' and extra == 'group-9-folio-rag-cuda' and extra == 'group-9-folio-rag-rocm-r714') or (sys_platform == 'linux' and extra == 'group-9-folio-rag-cuda' and extra == 'group-9-folio-rag-rocm-r714') or (sys_platform == 'linux' and extra == 'group-9-folio-rag-cpu' and extra == 'group-9-folio-rag-cuda') or (sys_platform == 'linux' and extra == 'group-9-folio-rag-cpu' and extra == 'group-9-folio-rag-rocm-r714') or (sys_platform == 'win32' and extra == 'group-9-folio-rag-cuda' and extra == 'group-9-folio-rag-rocm-r714') or (sys_platform == 'win32' and extra == 'group-9-folio-rag-cpu' and extra == 'group-9-folio-rag-cuda') or (sys_platform == 'win32' and extra == 'group-9-folio-rag-cpu' and extra == 'group-9-folio-rag-rocm-r714')" },
-    { name = "nvidia-cuda-nvrtc", marker = "(platform_machine == 'aarch64' and sys_platform == 'linux' and extra == 'group-9-folio-rag-cuda') or (platform_machine == 'x86_64' and sys_platform == 'linux' and extra == 'group-9-folio-rag-cuda') or (platform_machine == 'AMD64' and sys_platform == 'win32' and extra == 'group-9-folio-rag-cuda') or (platform_machine == 'aarch64' and sys_platform == 'linux' and extra != 'group-9-folio-rag-cpu' and extra != 'group-9-folio-rag-rocm-r714') or (platform_machine == 'x86_64' and sys_platform == 'linux' and extra != 'group-9-folio-rag-cpu' and extra != 'group-9-folio-rag-rocm-r714') or (platform_machine == 'AMD64' and sys_platform == 'win32' and extra != 'group-9-folio-rag-cpu' and extra != 'group-9-folio-rag-rocm-r714') or (sys_platform != 'linux' and sys_platform != 'win32' and extra == 'group-9-folio-rag-cpu' and extra == 'group-9-folio-rag-cuda') or (sys_platform != 'linux' and sys_platform != 'win32' and extra == 'group-9-folio-rag-cpu' and extra == 'group-9-folio-rag-rocm-r714') or (sys_platform != 'linux' and sys_platform != 'win32' and extra == 'group-9-folio-rag-cuda' and extra == 'group-9-folio-rag-rocm-r714') or (sys_platform == 'linux' and extra == 'group-9-folio-rag-cuda' and extra == 'group-9-folio-rag-rocm-r714') or (sys_platform == 'linux' and extra == 'group-9-folio-rag-cpu' and extra == 'group-9-folio-rag-cuda') or (sys_platform == 'linux' and extra == 'group-9-folio-rag-cpu' and extra == 'group-9-folio-rag-rocm-r714') or (sys_platform == 'win32' and extra == 'group-9-folio-rag-cuda' and extra == 'group-9-folio-rag-rocm-r714') or (sys_platform == 'win32' and extra == 'group-9-folio-rag-cpu' and extra == 'group-9-folio-rag-cuda') or (sys_platform == 'win32' and extra == 'group-9-folio-rag-cpu' and extra == 'group-9-folio-rag-rocm-r714')" },
-]
-cudart = [
-    { name = "nvidia-cuda-runtime", marker = "(platform_machine == 'aarch64' and sys_platform == 'linux' and extra == 'group-9-folio-rag-cuda') or (platform_machine == 'x86_64' and sys_platform == 'linux' and extra == 'group-9-folio-rag-cuda') or (platform_machine == 'AMD64' and sys_platform == 'win32' and extra == 'group-9-folio-rag-cuda') or (platform_machine == 'aarch64' and sys_platform == 'linux' and extra != 'group-9-folio-rag-cpu' and extra != 'group-9-folio-rag-rocm-r714') or (platform_machine == 'x86_64' and sys_platform == 'linux' and extra != 'group-9-folio-rag-cpu' and extra != 'group-9-folio-rag-rocm-r714') or (platform_machine == 'AMD64' and sys_platform == 'win32' and extra != 'group-9-folio-rag-cpu' and extra != 'group-9-folio-rag-rocm-r714') or (sys_platform != 'linux' and sys_platform != 'win32' and extra == 'group-9-folio-rag-cpu' and extra == 'group-9-folio-rag-cuda') or (sys_platform != 'linux' and sys_platform != 'win32' and extra == 'group-9-folio-rag-cpu' and extra == 'group-9-folio-rag-rocm-r714') or (sys_platform != 'linux' and sys_platform != 'win32' and extra == 'group-9-folio-rag-cuda' and extra == 'group-9-folio-rag-rocm-r714') or (sys_platform == 'linux' and extra == 'group-9-folio-rag-cuda' and extra == 'group-9-folio-rag-rocm-r714') or (sys_platform == 'linux' and extra == 'group-9-folio-rag-cpu' and extra == 'group-9-folio-rag-cuda') or (sys_platform == 'linux' and extra == 'group-9-folio-rag-cpu' and extra == 'group-9-folio-rag-rocm-r714') or (sys_platform == 'win32' and extra == 'group-9-folio-rag-cuda' and extra == 'group-9-folio-rag-rocm-r714') or (sys_platform == 'win32' and extra == 'group-9-folio-rag-cpu' and extra == 'group-9-folio-rag-cuda') or (sys_platform == 'win32' and extra == 'group-9-folio-rag-cpu' and extra == 'group-9-folio-rag-rocm-r714')" },
-]
-cufft = [
-    { name = "nvidia-cufft", marker = "(platform_machine == 'aarch64' and sys_platform == 'linux' and extra == 'group-9-folio-rag-cuda') or (platform_machine == 'x86_64' and sys_platform == 'linux' and extra == 'group-9-folio-rag-cuda') or (platform_machine == 'AMD64' and sys_platform == 'win32' and extra == 'group-9-folio-rag-cuda') or (platform_machine == 'aarch64' and sys_platform == 'linux' and extra != 'group-9-folio-rag-cpu' and extra != 'group-9-folio-rag-rocm-r714') or (platform_machine == 'x86_64' and sys_platform == 'linux' and extra != 'group-9-folio-rag-cpu' and extra != 'group-9-folio-rag-rocm-r714') or (platform_machine == 'AMD64' and sys_platform == 'win32' and extra != 'group-9-folio-rag-cpu' and extra != 'group-9-folio-rag-rocm-r714') or (sys_platform != 'linux' and sys_platform != 'win32' and extra == 'group-9-folio-rag-cpu' and extra == 'group-9-folio-rag-cuda') or (sys_platform != 'linux' and sys_platform != 'win32' and extra == 'group-9-folio-rag-cpu' and extra == 'group-9-folio-rag-rocm-r714') or (sys_platform != 'linux' and sys_platform != 'win32' and extra == 'group-9-folio-rag-cuda' and extra == 'group-9-folio-rag-rocm-r714') or (sys_platform == 'linux' and extra == 'group-9-folio-rag-cuda' and extra == 'group-9-folio-rag-rocm-r714') or (sys_platform == 'linux' and extra == 'group-9-folio-rag-cpu' and extra == 'group-9-folio-rag-cuda') or (sys_platform == 'linux' and extra == 'group-9-folio-rag-cpu' and extra == 'group-9-folio-rag-rocm-r714') or (sys_platform == 'win32' and extra == 'group-9-folio-rag-cuda' and extra == 'group-9-folio-rag-rocm-r714') or (sys_platform == 'win32' and extra == 'group-9-folio-rag-cpu' and extra == 'group-9-folio-rag-cuda') or (sys_platform == 'win32' and extra == 'group-9-folio-rag-cpu' and extra == 'group-9-folio-rag-rocm-r714')" },
-    { name = "nvidia-nvjitlink", marker = "(platform_machine == 'aarch64' and sys_platform == 'linux' and extra == 'group-9-folio-rag-cuda') or (platform_machine == 'x86_64' and sys_platform == 'linux' and extra == 'group-9-folio-rag-cuda') or (platform_machine == 'AMD64' and sys_platform == 'win32' and extra == 'group-9-folio-rag-cuda') or (platform_machine == 'aarch64' and sys_platform == 'linux' and extra != 'group-9-folio-rag-cpu' and extra != 'group-9-folio-rag-rocm-r714') or (platform_machine == 'x86_64' and sys_platform == 'linux' and extra != 'group-9-folio-rag-cpu' and extra != 'group-9-folio-rag-rocm-r714') or (platform_machine == 'AMD64' and sys_platform == 'win32' and extra != 'group-9-folio-rag-cpu' and extra != 'group-9-folio-rag-rocm-r714') or (sys_platform != 'linux' and sys_platform != 'win32' and extra == 'group-9-folio-rag-cpu' and extra == 'group-9-folio-rag-cuda') or (sys_platform != 'linux' and sys_platform != 'win32' and extra == 'group-9-folio-rag-cpu' and extra == 'group-9-folio-rag-rocm-r714') or (sys_platform != 'linux' and sys_platform != 'win32' and extra == 'group-9-folio-rag-cuda' and extra == 'group-9-folio-rag-rocm-r714') or (sys_platform == 'linux' and extra == 'group-9-folio-rag-cuda' and extra == 'group-9-folio-rag-rocm-r714') or (sys_platform == 'linux' and extra == 'group-9-folio-rag-cpu' and extra == 'group-9-folio-rag-cuda') or (sys_platform == 'linux' and extra == 'group-9-folio-rag-cpu' and extra == 'group-9-folio-rag-rocm-r714') or (sys_platform == 'win32' and extra == 'group-9-folio-rag-cuda' and extra == 'group-9-folio-rag-rocm-r714') or (sys_platform == 'win32' and extra == 'group-9-folio-rag-cpu' and extra == 'group-9-folio-rag-cuda') or (sys_platform == 'win32' and extra == 'group-9-folio-rag-cpu' and extra == 'group-9-folio-rag-rocm-r714')" },
-]
-cufile = [
-    { name = "nvidia-cufile", marker = "(platform_machine != 'aarch64' and platform_machine != 'x86_64' and extra == 'group-9-folio-rag-cpu' and extra == 'group-9-folio-rag-cuda') or (platform_machine != 'aarch64' and platform_machine != 'x86_64' and extra == 'group-9-folio-rag-cpu' and extra == 'group-9-folio-rag-rocm-r714') or (platform_machine != 'aarch64' and platform_machine != 'x86_64' and extra == 'group-9-folio-rag-cuda' and extra == 'group-9-folio-rag-rocm-r714') or (platform_machine == 'aarch64' and sys_platform == 'linux' and extra == 'group-9-folio-rag-cuda') or (platform_machine == 'x86_64' and sys_platform == 'linux' and extra == 'group-9-folio-rag-cuda') or (platform_machine == 'aarch64' and sys_platform == 'linux' and extra != 'group-9-folio-rag-cpu' and extra != 'group-9-folio-rag-rocm-r714') or (platform_machine == 'x86_64' and sys_platform == 'linux' and extra != 'group-9-folio-rag-cpu' and extra != 'group-9-folio-rag-rocm-r714') or (platform_machine == 'aarch64' and extra == 'group-9-folio-rag-cpu' and extra == 'group-9-folio-rag-cuda') or (platform_machine == 'aarch64' and extra == 'group-9-folio-rag-cpu' and extra == 'group-9-folio-rag-rocm-r714') or (platform_machine == 'x86_64' and extra == 'group-9-folio-rag-cpu' and extra == 'group-9-folio-rag-cuda') or (platform_machine == 'x86_64' and extra == 'group-9-folio-rag-cpu' and extra == 'group-9-folio-rag-rocm-r714') or (sys_platform != 'linux' and extra == 'group-9-folio-rag-cpu' and extra == 'group-9-folio-rag-cuda') or (sys_platform != 'linux' and extra == 'group-9-folio-rag-cpu' and extra == 'group-9-folio-rag-rocm-r714') or (sys_platform != 'linux' and extra == 'group-9-folio-rag-cuda' and extra == 'group-9-folio-rag-rocm-r714')" },
-]
-cupti = [
-    { name = "nvidia-cuda-cupti", marker = "(platform_machine == 'aarch64' and sys_platform == 'linux' and extra == 'group-9-folio-rag-cuda') or (platform_machine == 'x86_64' and sys_platform == 'linux' and extra == 'group-9-folio-rag-cuda') or (platform_machine == 'AMD64' and sys_platform == 'win32' and extra == 'group-9-folio-rag-cuda') or (platform_machine == 'aarch64' and sys_platform == 'linux' and extra != 'group-9-folio-rag-cpu' and extra != 'group-9-folio-rag-rocm-r714') or (platform_machine == 'x86_64' and sys_platform == 'linux' and extra != 'group-9-folio-rag-cpu' and extra != 'group-9-folio-rag-rocm-r714') or (platform_machine == 'AMD64' and sys_platform == 'win32' and extra != 'group-9-folio-rag-cpu' and extra != 'group-9-folio-rag-rocm-r714') or (sys_platform != 'linux' and sys_platform != 'win32' and extra == 'group-9-folio-rag-cpu' and extra == 'group-9-folio-rag-cuda') or (sys_platform != 'linux' and sys_platform != 'win32' and extra == 'group-9-folio-rag-cpu' and extra == 'group-9-folio-rag-rocm-r714') or (sys_platform != 'linux' and sys_platform != 'win32' and extra == 'group-9-folio-rag-cuda' and extra == 'group-9-folio-rag-rocm-r714') or (sys_platform == 'linux' and extra == 'group-9-folio-rag-cuda' and extra == 'group-9-folio-rag-rocm-r714') or (sys_platform == 'linux' and extra == 'group-9-folio-rag-cpu' and extra == 'group-9-folio-rag-cuda') or (sys_platform == 'linux' and extra == 'group-9-folio-rag-cpu' and extra == 'group-9-folio-rag-rocm-r714') or (sys_platform == 'win32' and extra == 'group-9-folio-rag-cuda' and extra == 'group-9-folio-rag-rocm-r714') or (sys_platform == 'win32' and extra == 'group-9-folio-rag-cpu' and extra == 'group-9-folio-rag-cuda') or (sys_platform == 'win32' and extra == 'group-9-folio-rag-cpu' and extra == 'group-9-folio-rag-rocm-r714')" },
-]
-curand = [
-    { name = "nvidia-curand", marker = "(platform_machine == 'aarch64' and sys_platform == 'linux' and extra == 'group-9-folio-rag-cuda') or (platform_machine == 'x86_64' and sys_platform == 'linux' and extra == 'group-9-folio-rag-cuda') or (platform_machine == 'AMD64' and sys_platform == 'win32' and extra == 'group-9-folio-rag-cuda') or (platform_machine == 'aarch64' and sys_platform == 'linux' and extra != 'group-9-folio-rag-cpu' and extra != 'group-9-folio-rag-rocm-r714') or (platform_machine == 'x86_64' and sys_platform == 'linux' and extra != 'group-9-folio-rag-cpu' and extra != 'group-9-folio-rag-rocm-r714') or (platform_machine == 'AMD64' and sys_platform == 'win32' and extra != 'group-9-folio-rag-cpu' and extra != 'group-9-folio-rag-rocm-r714') or (sys_platform != 'linux' and sys_platform != 'win32' and extra == 'group-9-folio-rag-cpu' and extra == 'group-9-folio-rag-cuda') or (sys_platform != 'linux' and sys_platform != 'win32' and extra == 'group-9-folio-rag-cpu' and extra == 'group-9-folio-rag-rocm-r714') or (sys_platform != 'linux' and sys_platform != 'win32' and extra == 'group-9-folio-rag-cuda' and extra == 'group-9-folio-rag-rocm-r714') or (sys_platform == 'linux' and extra == 'group-9-folio-rag-cuda' and extra == 'group-9-folio-rag-rocm-r714') or (sys_platform == 'linux' and extra == 'group-9-folio-rag-cpu' and extra == 'group-9-folio-rag-cuda') or (sys_platform == 'linux' and extra == 'group-9-folio-rag-cpu' and extra == 'group-9-folio-rag-rocm-r714') or (sys_platform == 'win32' and extra == 'group-9-folio-rag-cuda' and extra == 'group-9-folio-rag-rocm-r714') or (sys_platform == 'win32' and extra == 'group-9-folio-rag-cpu' and extra == 'group-9-folio-rag-cuda') or (sys_platform == 'win32' and extra == 'group-9-folio-rag-cpu' and extra == 'group-9-folio-rag-rocm-r714')" },
-]
-cusolver = [
-    { name = "nvidia-cublas", marker = "(platform_machine == 'aarch64' and sys_platform == 'linux' and extra == 'group-9-folio-rag-cuda') or (platform_machine == 'x86_64' and sys_platform == 'linux' and extra == 'group-9-folio-rag-cuda') or (platform_machine == 'AMD64' and sys_platform == 'win32' and extra == 'group-9-folio-rag-cuda') or (platform_machine == 'aarch64' and sys_platform == 'linux' and extra != 'group-9-folio-rag-cpu' and extra != 'group-9-folio-rag-rocm-r714') or (platform_machine == 'x86_64' and sys_platform == 'linux' and extra != 'group-9-folio-rag-cpu' and extra != 'group-9-folio-rag-rocm-r714') or (platform_machine == 'AMD64' and sys_platform == 'win32' and extra != 'group-9-folio-rag-cpu' and extra != 'group-9-folio-rag-rocm-r714') or (sys_platform != 'linux' and sys_platform != 'win32' and extra == 'group-9-folio-rag-cpu' and extra == 'group-9-folio-rag-cuda') or (sys_platform != 'linux' and sys_platform != 'win32' and extra == 'group-9-folio-rag-cpu' and extra == 'group-9-folio-rag-rocm-r714') or (sys_platform != 'linux' and sys_platform != 'win32' and extra == 'group-9-folio-rag-cuda' and extra == 'group-9-folio-rag-rocm-r714') or (sys_platform == 'linux' and extra == 'group-9-folio-rag-cuda' and extra == 'group-9-folio-rag-rocm-r714') or (sys_platform == 'linux' and extra == 'group-9-folio-rag-cpu' and extra == 'group-9-folio-rag-cuda') or (sys_platform == 'linux' and extra == 'group-9-folio-rag-cpu' and extra == 'group-9-folio-rag-rocm-r714') or (sys_platform == 'win32' and extra == 'group-9-folio-rag-cuda' and extra == 'group-9-folio-rag-rocm-r714') or (sys_platform == 'win32' and extra == 'group-9-folio-rag-cpu' and extra == 'group-9-folio-rag-cuda') or (sys_platform == 'win32' and extra == 'group-9-folio-rag-cpu' and extra == 'group-9-folio-rag-rocm-r714')" },
-    { name = "nvidia-cusolver", marker = "(platform_machine == 'aarch64' and sys_platform == 'linux' and extra == 'group-9-folio-rag-cuda') or (platform_machine == 'x86_64' and sys_platform == 'linux' and extra == 'group-9-folio-rag-cuda') or (platform_machine == 'AMD64' and sys_platform == 'win32' and extra == 'group-9-folio-rag-cuda') or (platform_machine == 'aarch64' and sys_platform == 'linux' and extra != 'group-9-folio-rag-cpu' and extra != 'group-9-folio-rag-rocm-r714') or (platform_machine == 'x86_64' and sys_platform == 'linux' and extra != 'group-9-folio-rag-cpu' and extra != 'group-9-folio-rag-rocm-r714') or (platform_machine == 'AMD64' and sys_platform == 'win32' and extra != 'group-9-folio-rag-cpu' and extra != 'group-9-folio-rag-rocm-r714') or (sys_platform != 'linux' and sys_platform != 'win32' and extra == 'group-9-folio-rag-cpu' and extra == 'group-9-folio-rag-cuda') or (sys_platform != 'linux' and sys_platform != 'win32' and extra == 'group-9-folio-rag-cpu' and extra == 'group-9-folio-rag-rocm-r714') or (sys_platform != 'linux' and sys_platform != 'win32' and extra == 'group-9-folio-rag-cuda' and extra == 'group-9-folio-rag-rocm-r714') or (sys_platform == 'linux' and extra == 'group-9-folio-rag-cuda' and extra == 'group-9-folio-rag-rocm-r714') or (sys_platform == 'linux' and extra == 'group-9-folio-rag-cpu' and extra == 'group-9-folio-rag-cuda') or (sys_platform == 'linux' and extra == 'group-9-folio-rag-cpu' and extra == 'group-9-folio-rag-rocm-r714') or (sys_platform == 'win32' and extra == 'group-9-folio-rag-cuda' and extra == 'group-9-folio-rag-rocm-r714') or (sys_platform == 'win32' and extra == 'group-9-folio-rag-cpu' and extra == 'group-9-folio-rag-cuda') or (sys_platform == 'win32' and extra == 'group-9-folio-rag-cpu' and extra == 'group-9-folio-rag-rocm-r714')" },
-    { name = "nvidia-cusparse", marker = "(platform_machine == 'aarch64' and sys_platform == 'linux' and extra == 'group-9-folio-rag-cuda') or (platform_machine == 'x86_64' and sys_platform == 'linux' and extra == 'group-9-folio-rag-cuda') or (platform_machine == 'AMD64' and sys_platform == 'win32' and extra == 'group-9-folio-rag-cuda') or (platform_machine == 'aarch64' and sys_platform == 'linux' and extra != 'group-9-folio-rag-cpu' and extra != 'group-9-folio-rag-rocm-r714') or (platform_machine == 'x86_64' and sys_platform == 'linux' and extra != 'group-9-folio-rag-cpu' and extra != 'group-9-folio-rag-rocm-r714') or (platform_machine == 'AMD64' and sys_platform == 'win32' and extra != 'group-9-folio-rag-cpu' and extra != 'group-9-folio-rag-rocm-r714') or (sys_platform != 'linux' and sys_platform != 'win32' and extra == 'group-9-folio-rag-cpu' and extra == 'group-9-folio-rag-cuda') or (sys_platform != 'linux' and sys_platform != 'win32' and extra == 'group-9-folio-rag-cpu' and extra == 'group-9-folio-rag-rocm-r714') or (sys_platform != 'linux' and sys_platform != 'win32' and extra == 'group-9-folio-rag-cuda' and extra == 'group-9-folio-rag-rocm-r714') or (sys_platform == 'linux' and extra == 'group-9-folio-rag-cuda' and extra == 'group-9-folio-rag-rocm-r714') or (sys_platform == 'linux' and extra == 'group-9-folio-rag-cpu' and extra == 'group-9-folio-rag-cuda') or (sys_platform == 'linux' and extra == 'group-9-folio-rag-cpu' and extra == 'group-9-folio-rag-rocm-r714') or (sys_platform == 'win32' and extra == 'group-9-folio-rag-cuda' and extra == 'group-9-folio-rag-rocm-r714') or (sys_platform == 'win32' and extra == 'group-9-folio-rag-cpu' and extra == 'group-9-folio-rag-cuda') or (sys_platform == 'win32' and extra == 'group-9-folio-rag-cpu' and extra == 'group-9-folio-rag-rocm-r714')" },
-    { name = "nvidia-nvjitlink", marker = "(platform_machine == 'aarch64' and sys_platform == 'linux' and extra == 'group-9-folio-rag-cuda') or (platform_machine == 'x86_64' and sys_platform == 'linux' and extra == 'group-9-folio-rag-cuda') or (platform_machine == 'AMD64' and sys_platform == 'win32' and extra == 'group-9-folio-rag-cuda') or (platform_machine == 'aarch64' and sys_platform == 'linux' and extra != 'group-9-folio-rag-cpu' and extra != 'group-9-folio-rag-rocm-r714') or (platform_machine == 'x86_64' and sys_platform == 'linux' and extra != 'group-9-folio-rag-cpu' and extra != 'group-9-folio-rag-rocm-r714') or (platform_machine == 'AMD64' and sys_platform == 'win32' and extra != 'group-9-folio-rag-cpu' and extra != 'group-9-folio-rag-rocm-r714') or (sys_platform != 'linux' and sys_platform != 'win32' and extra == 'group-9-folio-rag-cpu' and extra == 'group-9-folio-rag-cuda') or (sys_platform != 'linux' and sys_platform != 'win32' and extra == 'group-9-folio-rag-cpu' and extra == 'group-9-folio-rag-rocm-r714') or (sys_platform != 'linux' and sys_platform != 'win32' and extra == 'group-9-folio-rag-cuda' and extra == 'group-9-folio-rag-rocm-r714') or (sys_platform == 'linux' and extra == 'group-9-folio-rag-cuda' and extra == 'group-9-folio-rag-rocm-r714') or (sys_platform == 'linux' and extra == 'group-9-folio-rag-cpu' and extra == 'group-9-folio-rag-cuda') or (sys_platform == 'linux' and extra == 'group-9-folio-rag-cpu' and extra == 'group-9-folio-rag-rocm-r714') or (sys_platform == 'win32' and extra == 'group-9-folio-rag-cuda' and extra == 'group-9-folio-rag-rocm-r714') or (sys_platform == 'win32' and extra == 'group-9-folio-rag-cpu' and extra == 'group-9-folio-rag-cuda') or (sys_platform == 'win32' and extra == 'group-9-folio-rag-cpu' and extra == 'group-9-folio-rag-rocm-r714')" },
-]
-cusparse = [
-    { name = "nvidia-cusparse", marker = "(platform_machine == 'aarch64' and sys_platform == 'linux' and extra == 'group-9-folio-rag-cuda') or (platform_machine == 'x86_64' and sys_platform == 'linux' and extra == 'group-9-folio-rag-cuda') or (platform_machine == 'AMD64' and sys_platform == 'win32' and extra == 'group-9-folio-rag-cuda') or (platform_machine == 'aarch64' and sys_platform == 'linux' and extra != 'group-9-folio-rag-cpu' and extra != 'group-9-folio-rag-rocm-r714') or (platform_machine == 'x86_64' and sys_platform == 'linux' and extra != 'group-9-folio-rag-cpu' and extra != 'group-9-folio-rag-rocm-r714') or (platform_machine == 'AMD64' and sys_platform == 'win32' and extra != 'group-9-folio-rag-cpu' and extra != 'group-9-folio-rag-rocm-r714') or (sys_platform != 'linux' and sys_platform != 'win32' and extra == 'group-9-folio-rag-cpu' and extra == 'group-9-folio-rag-cuda') or (sys_platform != 'linux' and sys_platform != 'win32' and extra == 'group-9-folio-rag-cpu' and extra == 'group-9-folio-rag-rocm-r714') or (sys_platform != 'linux' and sys_platform != 'win32' and extra == 'group-9-folio-rag-cuda' and extra == 'group-9-folio-rag-rocm-r714') or (sys_platform == 'linux' and extra == 'group-9-folio-rag-cuda' and extra == 'group-9-folio-rag-rocm-r714') or (sys_platform == 'linux' and extra == 'group-9-folio-rag-cpu' and extra == 'group-9-folio-rag-cuda') or (sys_platform == 'linux' and extra == 'group-9-folio-rag-cpu' and extra == 'group-9-folio-rag-rocm-r714') or (sys_platform == 'win32' and extra == 'group-9-folio-rag-cuda' and extra == 'group-9-folio-rag-rocm-r714') or (sys_platform == 'win32' and extra == 'group-9-folio-rag-cpu' and extra == 'group-9-folio-rag-cuda') or (sys_platform == 'win32' and extra == 'group-9-folio-rag-cpu' and extra == 'group-9-folio-rag-rocm-r714')" },
-    { name = "nvidia-nvjitlink", marker = "(platform_machine == 'aarch64' and sys_platform == 'linux' and extra == 'group-9-folio-rag-cuda') or (platform_machine == 'x86_64' and sys_platform == 'linux' and extra == 'group-9-folio-rag-cuda') or (platform_machine == 'AMD64' and sys_platform == 'win32' and extra == 'group-9-folio-rag-cuda') or (platform_machine == 'aarch64' and sys_platform == 'linux' and extra != 'group-9-folio-rag-cpu' and extra != 'group-9-folio-rag-rocm-r714') or (platform_machine == 'x86_64' and sys_platform == 'linux' and extra != 'group-9-folio-rag-cpu' and extra != 'group-9-folio-rag-rocm-r714') or (platform_machine == 'AMD64' and sys_platform == 'win32' and extra != 'group-9-folio-rag-cpu' and extra != 'group-9-folio-rag-rocm-r714') or (sys_platform != 'linux' and sys_platform != 'win32' and extra == 'group-9-folio-rag-cpu' and extra == 'group-9-folio-rag-cuda') or (sys_platform != 'linux' and sys_platform != 'win32' and extra == 'group-9-folio-rag-cpu' and extra == 'group-9-folio-rag-rocm-r714') or (sys_platform != 'linux' and sys_platform != 'win32' and extra == 'group-9-folio-rag-cuda' and extra == 'group-9-folio-rag-rocm-r714') or (sys_platform == 'linux' and extra == 'group-9-folio-rag-cuda' and extra == 'group-9-folio-rag-rocm-r714') or (sys_platform == 'linux' and extra == 'group-9-folio-rag-cpu' and extra == 'group-9-folio-rag-cuda') or (sys_platform == 'linux' and extra == 'group-9-folio-rag-cpu' and extra == 'group-9-folio-rag-rocm-r714') or (sys_platform == 'win32' and extra == 'group-9-folio-rag-cuda' and extra == 'group-9-folio-rag-rocm-r714') or (sys_platform == 'win32' and extra == 'group-9-folio-rag-cpu' and extra == 'group-9-folio-rag-cuda') or (sys_platform == 'win32' and extra == 'group-9-folio-rag-cpu' and extra == 'group-9-folio-rag-rocm-r714')" },
-]
-nvjitlink = [
-    { name = "nvidia-nvjitlink", marker = "(platform_machine == 'aarch64' and sys_platform == 'linux' and extra == 'group-9-folio-rag-cuda') or (platform_machine == 'x86_64' and sys_platform == 'linux' and extra == 'group-9-folio-rag-cuda') or (platform_machine == 'AMD64' and sys_platform == 'win32' and extra == 'group-9-folio-rag-cuda') or (platform_machine == 'aarch64' and sys_platform == 'linux' and extra != 'group-9-folio-rag-cpu' and extra != 'group-9-folio-rag-rocm-r714') or (platform_machine == 'x86_64' and sys_platform == 'linux' and extra != 'group-9-folio-rag-cpu' and extra != 'group-9-folio-rag-rocm-r714') or (platform_machine == 'AMD64' and sys_platform == 'win32' and extra != 'group-9-folio-rag-cpu' and extra != 'group-9-folio-rag-rocm-r714') or (sys_platform != 'linux' and sys_platform != 'win32' and extra == 'group-9-folio-rag-cpu' and extra == 'group-9-folio-rag-cuda') or (sys_platform != 'linux' and sys_platform != 'win32' and extra == 'group-9-folio-rag-cpu' and extra == 'group-9-folio-rag-rocm-r714') or (sys_platform != 'linux' and sys_platform != 'win32' and extra == 'group-9-folio-rag-cuda' and extra == 'group-9-folio-rag-rocm-r714') or (sys_platform == 'linux' and extra == 'group-9-folio-rag-cuda' and extra == 'group-9-folio-rag-rocm-r714') or (sys_platform == 'linux' and extra == 'group-9-folio-rag-cpu' and extra == 'group-9-folio-rag-cuda') or (sys_platform == 'linux' and extra == 'group-9-folio-rag-cpu' and extra == 'group-9-folio-rag-rocm-r714') or (sys_platform == 'win32' and extra == 'group-9-folio-rag-cuda' and extra == 'group-9-folio-rag-rocm-r714') or (sys_platform == 'win32' and extra == 'group-9-folio-rag-cpu' and extra == 'group-9-folio-rag-cuda') or (sys_platform == 'win32' and extra == 'group-9-folio-rag-cpu' and extra == 'group-9-folio-rag-rocm-r714')" },
-]
-nvrtc = [
-    { name = "nvidia-cuda-nvrtc", marker = "(platform_machine == 'aarch64' and sys_platform == 'linux' and extra == 'group-9-folio-rag-cuda') or (platform_machine == 'x86_64' and sys_platform == 'linux' and extra == 'group-9-folio-rag-cuda') or (platform_machine == 'AMD64' and sys_platform == 'win32' and extra == 'group-9-folio-rag-cuda') or (platform_machine == 'aarch64' and sys_platform == 'linux' and extra != 'group-9-folio-rag-cpu' and extra != 'group-9-folio-rag-rocm-r714') or (platform_machine == 'x86_64' and sys_platform == 'linux' and extra != 'group-9-folio-rag-cpu' and extra != 'group-9-folio-rag-rocm-r714') or (platform_machine == 'AMD64' and sys_platform == 'win32' and extra != 'group-9-folio-rag-cpu' and extra != 'group-9-folio-rag-rocm-r714') or (sys_platform != 'linux' and sys_platform != 'win32' and extra == 'group-9-folio-rag-cpu' and extra == 'group-9-folio-rag-cuda') or (sys_platform != 'linux' and sys_platform != 'win32' and extra == 'group-9-folio-rag-cpu' and extra == 'group-9-folio-rag-rocm-r714') or (sys_platform != 'linux' and sys_platform != 'win32' and extra == 'group-9-folio-rag-cuda' and extra == 'group-9-folio-rag-rocm-r714') or (sys_platform == 'linux' and extra == 'group-9-folio-rag-cuda' and extra == 'group-9-folio-rag-rocm-r714') or (sys_platform == 'linux' and extra == 'group-9-folio-rag-cpu' and extra == 'group-9-folio-rag-cuda') or (sys_platform == 'linux' and extra == 'group-9-folio-rag-cpu' and extra == 'group-9-folio-rag-rocm-r714') or (sys_platform == 'win32' and extra == 'group-9-folio-rag-cuda' and extra == 'group-9-folio-rag-rocm-r714') or (sys_platform == 'win32' and extra == 'group-9-folio-rag-cpu' and extra == 'group-9-folio-rag-cuda') or (sys_platform == 'win32' and extra == 'group-9-folio-rag-cpu' and extra == 'group-9-folio-rag-rocm-r714')" },
-]
-nvtx = [
-    { name = "nvidia-nvtx", marker = "(platform_machine == 'aarch64' and sys_platform == 'linux' and extra == 'group-9-folio-rag-cuda') or (platform_machine == 'x86_64' and sys_platform == 'linux' and extra == 'group-9-folio-rag-cuda') or (platform_machine == 'AMD64' and sys_platform == 'win32' and extra == 'group-9-folio-rag-cuda') or (platform_machine == 'aarch64' and sys_platform == 'linux' and extra != 'group-9-folio-rag-cpu' and extra != 'group-9-folio-rag-rocm-r714') or (platform_machine == 'x86_64' and sys_platform == 'linux' and extra != 'group-9-folio-rag-cpu' and extra != 'group-9-folio-rag-rocm-r714') or (platform_machine == 'AMD64' and sys_platform == 'win32' and extra != 'group-9-folio-rag-cpu' and extra != 'group-9-folio-rag-rocm-r714') or (sys_platform != 'linux' and sys_platform != 'win32' and extra == 'group-9-folio-rag-cpu' and extra == 'group-9-folio-rag-cuda') or (sys_platform != 'linux' and sys_platform != 'win32' and extra == 'group-9-folio-rag-cpu' and extra == 'group-9-folio-rag-rocm-r714') or (sys_platform != 'linux' and sys_platform != 'win32' and extra == 'group-9-folio-rag-cuda' and extra == 'group-9-folio-rag-rocm-r714') or (sys_platform == 'linux' and extra == 'group-9-folio-rag-cuda' and extra == 'group-9-folio-rag-rocm-r714') or (sys_platform == 'linux' and extra == 'group-9-folio-rag-cpu' and extra == 'group-9-folio-rag-cuda') or (sys_platform == 'linux' and extra == 'group-9-folio-rag-cpu' and extra == 'group-9-folio-rag-rocm-r714') or (sys_platform == 'win32' and extra == 'group-9-folio-rag-cuda' and extra == 'group-9-folio-rag-rocm-r714') or (sys_platform == 'win32' and extra == 'group-9-folio-rag-cpu' and extra == 'group-9-folio-rag-cuda') or (sys_platform == 'win32' and extra == 'group-9-folio-rag-cpu' and extra == 'group-9-folio-rag-rocm-r714')" },
 ]
 
 [[package]]
@@ -974,7 +570,7 @@ dependencies = [
     { name = "docling-core" },
     { name = "pillow" },
     { name = "pydantic" },
-    { name = "pywin32", marker = "sys_platform == 'win32' or (extra == 'group-9-folio-rag-cpu' and extra == 'group-9-folio-rag-cuda') or (extra == 'group-9-folio-rag-cpu' and extra == 'group-9-folio-rag-rocm-r714') or (extra == 'group-9-folio-rag-cuda' and extra == 'group-9-folio-rag-rocm-r714')" },
+    { name = "pywin32", marker = "sys_platform == 'win32'" },
 ]
 sdist = { url = "https://files.pythonhosted.org/packages/4b/9a/e4386991b1f2c19bc0da294c5e5bc58ad373c69ec44f29c99208ff9d1c49/docling_parse-7.24.2.tar.gz", hash = "sha256:8b4e98e0a836dbe7e48e3f041a552ac252bd437ed0a52a62cf4a5f6f8fe73cb0", size = 7159741, upload-time = "2026-10-29T16:48:04.27Z" }
 wheels = [
@@ -1249,20 +845,9 @@ jieba = [
 local = [
     { name = "ckip-transformers" },
     { name = "llama-index-embeddings-huggingface" },
+    { name = "torch", version = "2.14.1", source = { registry = "https://download.pytorch.org/whl/cpu" }, marker = "platform_machine == 'arm64' and sys_platform == 'darwin'" },
+    { name = "torch", version = "2.14.1+cpu", source = { registry = "https://download.pytorch.org/whl/cpu" }, marker = "platform_machine != 'arm64' or sys_platform != 'darwin'" },
     { name = "transformers" },
-]
-
-[package.dev-dependencies]
-cpu = [
-    { name = "torch", version = "2.14.0", source = { registry = "https://download.pytorch.org/whl/cpu" }, marker = "(sys_platform == 'darwin' and extra == 'group-9-folio-rag-cpu') or (extra == 'group-9-folio-rag-cpu' and extra == 'group-9-folio-rag-cuda') or (extra == 'group-9-folio-rag-cpu' and extra == 'group-9-folio-rag-rocm-r714') or (extra == 'group-9-folio-rag-cuda' and extra == 'group-9-folio-rag-rocm-r714')" },
-    { name = "torch", version = "2.14.0+cpu", source = { registry = "https://download.pytorch.org/whl/cpu" }, marker = "(sys_platform != 'darwin' and extra == 'group-9-folio-rag-cpu') or (extra == 'group-9-folio-rag-cpu' and extra == 'group-9-folio-rag-cuda') or (extra == 'group-9-folio-rag-cpu' and extra == 'group-9-folio-rag-rocm-r714') or (extra == 'group-9-folio-rag-cuda' and extra == 'group-9-folio-rag-rocm-r714')" },
-]
-cuda = [
-    { name = "torch", version = "2.14.1+cu130", source = { registry = "https://download.pytorch.org/whl/cu130" } },
-    { name = "triton", version = "3.8.0", source = { registry = "https://download.pytorch.org/whl/cu130" } },
-]
-rocm-r714 = [
-    { name = "torch", version = "2.13.0+rocm7.14.0", source = { registry = "https://repo.amd.com/rocm/whl-multi-arch/" }, extra = ["device-all"], marker = "(extra == 'group-9-folio-rag-cpu' and extra == 'group-9-folio-rag-cuda') or (extra != 'group-9-folio-rag-cuda' and extra == 'group-9-folio-rag-rocm-r714') or (extra != 'group-9-folio-rag-cpu' and extra == 'group-9-folio-rag-rocm-r714')" },
 ]
 
 [package.metadata]
@@ -1315,20 +900,13 @@ requires-dist = [
     { name = "sqlalchemy", specifier = "==2.0.44" },
     { name = "tiktoken", specifier = "==0.12.0" },
     { name = "tokenizers", specifier = ">=0.20.0" },
+    { name = "torch", marker = "extra == 'local'", specifier = ">=2.14.0,<2.15", index = "https://download.pytorch.org/whl/cpu" },
     { name = "transformers", marker = "extra == 'local'", specifier = ">=5.22.0,<6.0.0" },
     { name = "tree-sitter", specifier = ">=0.25.0,<0.27.0" },
     { name = "urllib3", specifier = ">=2.6.3" },
     { name = "uvicorn", specifier = "==0.38.0" },
 ]
 provides-extras = ["local", "jieba"]
-
-[package.metadata.requires-dev]
-cpu = [{ name = "torch", specifier = ">=2.8.0", index = "https://download.pytorch.org/whl/cpu", conflict = { package = "folio-rag", group = "cpu" } }]
-cuda = [
-    { name = "torch", specifier = ">=2.14.0,<2.15", index = "https://download.pytorch.org/whl/cu130", conflict = { package = "folio-rag", group = "cuda" } },
-    { name = "triton", specifier = ">=3.8.0,<3.9", index = "https://download.pytorch.org/whl/cu130", conflict = { package = "folio-rag", group = "cuda" } },
-]
-rocm-r714 = [{ name = "torch", extras = ["device-all"], specifier = "==2.13.0+rocm7.14.0", index = "https://repo.amd.com/rocm/whl-multi-arch/", conflict = { package = "folio-rag", group = "rocm-r714" } }]
 
 [[package]]
 name = "frozenlist"
@@ -1488,11 +1066,11 @@ name = "httpx2"
 version = "2.16.0"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
-    { name = "anyio", marker = "sys_platform != 'emscripten' or (extra == 'group-9-folio-rag-cpu' and extra == 'group-9-folio-rag-cuda') or (extra == 'group-9-folio-rag-cpu' and extra == 'group-9-folio-rag-rocm-r714') or (extra == 'group-9-folio-rag-cuda' and extra == 'group-9-folio-rag-rocm-r714')" },
-    { name = "httpcore2", marker = "sys_platform != 'emscripten' or (extra == 'group-9-folio-rag-cpu' and extra == 'group-9-folio-rag-cuda') or (extra == 'group-9-folio-rag-cpu' and extra == 'group-9-folio-rag-rocm-r714') or (extra == 'group-9-folio-rag-cuda' and extra == 'group-9-folio-rag-rocm-r714')" },
-    { name = "httpx2-jsfetch", marker = "sys_platform == 'emscripten' or (extra == 'group-9-folio-rag-cpu' and extra == 'group-9-folio-rag-cuda') or (extra == 'group-9-folio-rag-cpu' and extra == 'group-9-folio-rag-rocm-r714') or (extra == 'group-9-folio-rag-cuda' and extra == 'group-9-folio-rag-rocm-r714')" },
+    { name = "anyio", marker = "sys_platform != 'emscripten'" },
+    { name = "httpcore2", marker = "sys_platform != 'emscripten'" },
+    { name = "httpx2-jsfetch", marker = "sys_platform == 'emscripten'" },
     { name = "idna" },
-    { name = "truststore", marker = "sys_platform != 'emscripten' or (extra == 'group-9-folio-rag-cpu' and extra == 'group-9-folio-rag-cuda') or (extra == 'group-9-folio-rag-cpu' and extra == 'group-9-folio-rag-rocm-r714') or (extra == 'group-9-folio-rag-cuda' and extra == 'group-9-folio-rag-rocm-r714')" },
+    { name = "truststore", marker = "sys_platform != 'emscripten'" },
     { name = "typing-extensions" },
 ]
 sdist = { url = "https://files.pythonhosted.org/packages/43/73/5ca2cedf5e4e50423d1c258877865a6b62793633b561c58499f8aeb33b7e/httpx2-2.16.0.tar.gz", hash = "sha256:0d54c98128e8f2ff7fbbde0fca8c359e5f032edeaaaac443cdb7f31f685bcd7f", size = 103116, upload-time = "2026-10-21T07:09:46.348Z" }
@@ -1517,7 +1095,7 @@ dependencies = [
     { name = "click" },
     { name = "filelock" },
     { name = "fsspec" },
-    { name = "hf-xet", marker = "platform_machine == 'AMD64' or platform_machine == 'aarch64' or platform_machine == 'amd64' or platform_machine == 'arm64' or platform_machine == 'x86_64' or (extra == 'group-9-folio-rag-cpu' and extra == 'group-9-folio-rag-cuda') or (extra == 'group-9-folio-rag-cpu' and extra == 'group-9-folio-rag-rocm-r714') or (extra == 'group-9-folio-rag-cuda' and extra == 'group-9-folio-rag-rocm-r714')" },
+    { name = "hf-xet", marker = "platform_machine == 'AMD64' or platform_machine == 'aarch64' or platform_machine == 'amd64' or platform_machine == 'arm64' or platform_machine == 'x86_64'" },
     { name = "httpx" },
     { name = "packaging" },
     { name = "pyyaml" },
@@ -1893,8 +1471,8 @@ name = "loguru"
 version = "0.7.3"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
-    { name = "colorama", marker = "sys_platform == 'win32' or (extra == 'group-9-folio-rag-cpu' and extra == 'group-9-folio-rag-cuda') or (extra == 'group-9-folio-rag-cpu' and extra == 'group-9-folio-rag-rocm-r714') or (extra == 'group-9-folio-rag-cuda' and extra == 'group-9-folio-rag-rocm-r714')" },
-    { name = "win32-setctime", marker = "sys_platform == 'win32' or (extra == 'group-9-folio-rag-cpu' and extra == 'group-9-folio-rag-cuda') or (extra == 'group-9-folio-rag-cpu' and extra == 'group-9-folio-rag-rocm-r714') or (extra == 'group-9-folio-rag-cuda' and extra == 'group-9-folio-rag-rocm-r714')" },
+    { name = "colorama", marker = "sys_platform == 'win32'" },
+    { name = "win32-setctime", marker = "sys_platform == 'win32'" },
 ]
 sdist = { url = "https://files.pythonhosted.org/packages/3a/05/a1dae3dffd1116099471c643b8924f5aa6524411dc6c63fdae648c4f1aca/loguru-0.7.3.tar.gz", hash = "sha256:19480589e77d47b8d85b2c827ad95d49bf31b0dcde16593892eb51dd18706eb6", size = 63559, upload-time = "2024-12-06T11:20:56.608Z" }
 wheels = [
@@ -2013,12 +1591,12 @@ dependencies = [
     { name = "pydantic" },
     { name = "pyjwt", extra = ["crypto"] },
     { name = "python-multipart" },
-    { name = "pywin32", marker = "sys_platform == 'win32' or (extra == 'group-9-folio-rag-cpu' and extra == 'group-9-folio-rag-cuda') or (extra == 'group-9-folio-rag-cpu' and extra == 'group-9-folio-rag-rocm-r714') or (extra == 'group-9-folio-rag-cuda' and extra == 'group-9-folio-rag-rocm-r714')" },
+    { name = "pywin32", marker = "sys_platform == 'win32'" },
     { name = "sse-starlette" },
     { name = "starlette" },
     { name = "typing-extensions" },
     { name = "typing-inspection" },
-    { name = "uvicorn", marker = "sys_platform != 'emscripten' or (extra == 'group-9-folio-rag-cpu' and extra == 'group-9-folio-rag-cuda') or (extra == 'group-9-folio-rag-cpu' and extra == 'group-9-folio-rag-rocm-r714') or (extra == 'group-9-folio-rag-cuda' and extra == 'group-9-folio-rag-rocm-r714')" },
+    { name = "uvicorn", marker = "sys_platform != 'emscripten'" },
 ]
 sdist = { url = "https://files.pythonhosted.org/packages/9d/8d/e0d339616f4810e9051d4aba6887afab289ab1f81875fe908b606cdfd0e3/mcp-2.3.0.tar.gz", hash = "sha256:8b147a50441cf059dc88c684e0aeed3687f0aa0f39c6cde7b90330effd2b34d8", size = 4171955, upload-time = "2026-10-02T22:06:56.091Z" }
 wheels = [
@@ -2186,171 +1764,6 @@ wheels = [
     { url = "https://files.pythonhosted.org/packages/73/e3/04ecc41e71462276ee867ccbef26a4448638eadecf1bc56772c9ed6d0255/numpy-2.3.4-cp312-cp312-win32.whl", hash = "sha256:a49d797192a8d950ca59ee2d0337a4d804f713bb5c3c50e8db26d49666e351dc", size = 6291380, upload-time = "2025-10-15T16:16:03.938Z" },
     { url = "https://files.pythonhosted.org/packages/3d/a8/566578b10d8d0e9955b1b6cd5db4e9d4592dd0026a941ff7994cedda030a/numpy-2.3.4-cp312-cp312-win_amd64.whl", hash = "sha256:985f1e46358f06c2a09921e8921e2c98168ed4ae12ccd6e5e87a4f1857923f32", size = 12787999, upload-time = "2025-10-15T16:16:05.801Z" },
     { url = "https://files.pythonhosted.org/packages/58/22/9c903a957d0a8071b607f5b1bff0761d6e608b9a965945411f867d515db1/numpy-2.3.4-cp312-cp312-win_arm64.whl", hash = "sha256:4635239814149e06e2cb9db3dd584b2fa64316c96f10656983b8026a82e6e4db", size = 10197412, upload-time = "2025-10-15T16:16:07.854Z" },
-]
-
-[[package]]
-name = "nvidia-cublas"
-version = "13.1.1.3"
-source = { registry = "https://pypi.org/simple" }
-dependencies = [
-    { name = "nvidia-cuda-nvrtc", marker = "extra == 'group-9-folio-rag-cuda' or (extra == 'group-9-folio-rag-cpu' and extra == 'group-9-folio-rag-rocm-r714') or (extra != 'group-9-folio-rag-cpu' and extra != 'group-9-folio-rag-rocm-r714')" },
-]
-wheels = [
-    { url = "https://files.pythonhosted.org/packages/a7/a1/0bd24ee8c8d03adac032fd2909426a00c88f8c57961b1277ded97f91119f/nvidia_cublas-13.1.1.3-py3-none-manylinux_2_27_aarch64.whl", hash = "sha256:b7a210458267ac818974c53038fbec2e969d5c99f305ab15c72522fa9f001dd5", size = 542848918, upload-time = "2026-04-08T18:46:22.985Z" },
-    { url = "https://files.pythonhosted.org/packages/3b/cd/154ca20c38269e05eff77c1464e6c1da89f50a6390b565e9d82e06bc11e1/nvidia_cublas-13.1.1.3-py3-none-manylinux_2_27_x86_64.whl", hash = "sha256:37936a16db8fe4ac1f065c2139360608a543a09275cb1a1af612e08cfa065436", size = 423138758, upload-time = "2026-04-08T18:46:58.655Z" },
-    { url = "https://files.pythonhosted.org/packages/45/9e/2f562daf80eb8f7a685fb7bea4fda71f6048e4f359d6fdd1b6e70206cb2f/nvidia_cublas-13.1.1.3-py3-none-win_amd64.whl", hash = "sha256:b6cdce694e47ff6aadf0a69df1cab6628d696f5ff56e8d16af50309d855fa20f", size = 404358158, upload-time = "2026-04-08T18:47:26.987Z" },
-]
-
-[[package]]
-name = "nvidia-cuda-cupti"
-version = "13.0.85"
-source = { registry = "https://pypi.org/simple" }
-wheels = [
-    { url = "https://files.pythonhosted.org/packages/2a/2a/80353b103fc20ce05ef51e928daed4b6015db4aaa9162ed0997090fe2250/nvidia_cuda_cupti-13.0.85-py3-none-manylinux_2_25_aarch64.whl", hash = "sha256:796bd679890ee55fb14a94629b698b6db54bcfd833d391d5e94017dd9d7d3151", size = 10310827, upload-time = "2025-09-04T08:26:42.012Z" },
-    { url = "https://files.pythonhosted.org/packages/33/6d/737d164b4837a9bbd202f5ae3078975f0525a55730fe871d8ed4e3b952b0/nvidia_cuda_cupti-13.0.85-py3-none-manylinux_2_25_x86_64.whl", hash = "sha256:4eb01c08e859bf924d222250d2e8f8b8ff6d3db4721288cf35d14252a4d933c8", size = 10715597, upload-time = "2025-09-04T08:26:51.312Z" },
-    { url = "https://files.pythonhosted.org/packages/ad/df/b74b10025c1205695c5676373f2edd3e87a7202cc62ead0dfbc373b0f6ea/nvidia_cuda_cupti-13.0.85-py3-none-win_amd64.whl", hash = "sha256:683f58d301548deeefcb8f6fac1b8d907691b9d8b18eccab417f51e362102f00", size = 7736776, upload-time = "2025-09-04T08:38:08.38Z" },
-]
-
-[[package]]
-name = "nvidia-cuda-nvrtc"
-version = "13.0.88"
-source = { registry = "https://pypi.org/simple" }
-wheels = [
-    { url = "https://files.pythonhosted.org/packages/c3/68/483a78f5e8f31b08fb1bb671559968c0ca3a065ac7acabfc7cee55214fd6/nvidia_cuda_nvrtc-13.0.88-py3-none-manylinux2010_x86_64.manylinux_2_12_x86_64.whl", hash = "sha256:ad9b6d2ead2435f11cbb6868809d2adeeee302e9bb94bcf0539c7a40d80e8575", size = 90215200, upload-time = "2025-09-04T08:28:44.204Z" },
-    { url = "https://files.pythonhosted.org/packages/b7/dc/6bb80850e0b7edd6588d560758f17e0550893a1feaf436807d64d2da040f/nvidia_cuda_nvrtc-13.0.88-py3-none-manylinux2014_aarch64.manylinux_2_17_aarch64.whl", hash = "sha256:d27f20a0ca67a4bb34268a5e951033496c5b74870b868bacd046b1b8e0c3267b", size = 43015449, upload-time = "2025-09-04T08:28:20.239Z" },
-    { url = "https://files.pythonhosted.org/packages/4a/af/345fedb9f4c76c84ab4fa445b36bd4048a4d9db60e6bc76b4f913ff4b852/nvidia_cuda_nvrtc-13.0.88-py3-none-win_amd64.whl", hash = "sha256:6bcd4e7f8e205cbe644f5a98f2f799bef9556fefc89dd786e79a16312ce49872", size = 76807835, upload-time = "2025-09-04T08:39:15.274Z" },
-]
-
-[[package]]
-name = "nvidia-cuda-runtime"
-version = "13.0.96"
-source = { registry = "https://pypi.org/simple" }
-wheels = [
-    { url = "https://files.pythonhosted.org/packages/87/4f/17d7b9b8e285199c58ce28e31b5c5bbaa4d8271af06a89b6405258245de2/nvidia_cuda_runtime-13.0.96-py3-none-manylinux2014_aarch64.manylinux_2_17_aarch64.whl", hash = "sha256:ef9bcbe90493a2b9d810e43d249adb3d02e98dd30200d86607d8d02687c43f55", size = 2261060, upload-time = "2025-10-09T08:55:15.78Z" },
-    { url = "https://files.pythonhosted.org/packages/2e/24/d1558f3b68b1d26e706813b1d10aa1d785e4698c425af8db8edc3dced472/nvidia_cuda_runtime-13.0.96-py3-none-manylinux2014_x86_64.manylinux_2_17_x86_64.whl", hash = "sha256:7f82250d7782aa23b6cfe765ecc7db554bd3c2870c43f3d1821f1d18aebf0548", size = 2243632, upload-time = "2025-10-09T08:55:36.117Z" },
-    { url = "https://files.pythonhosted.org/packages/b7/94/6b867483bec07da24ffa32736c79fabb94ef3a7af4d787a9d4a974868576/nvidia_cuda_runtime-13.0.96-py3-none-win_amd64.whl", hash = "sha256:f79298c8a098cec150a597c8eba58ecdab96e3bdc4b9bc4f9983635031740492", size = 2927037, upload-time = "2025-10-09T09:04:23.782Z" },
-]
-
-[[package]]
-name = "nvidia-cudnn-cu13"
-version = "9.24.0.43"
-source = { registry = "https://pypi.org/simple" }
-dependencies = [
-    { name = "nvidia-cublas", marker = "extra == 'group-9-folio-rag-cuda' or (extra == 'group-9-folio-rag-cpu' and extra == 'group-9-folio-rag-rocm-r714') or (extra != 'group-9-folio-rag-cpu' and extra != 'group-9-folio-rag-rocm-r714')" },
-]
-wheels = [
-    { url = "https://files.pythonhosted.org/packages/ca/30/7c257e3d5cb4fecb147b93895c66e29c93f8e76d74b45bb418ff0587c4ec/nvidia_cudnn_cu13-9.24.0.43-py3-none-manylinux_2_27_aarch64.whl", hash = "sha256:a6812a554a1ff0413e9c52b84c26c050380649ab9615f9c16bded368ce9f421f", size = 650976863, upload-time = "2026-07-02T16:23:39.248Z" },
-    { url = "https://files.pythonhosted.org/packages/5c/ba/791cffd048fe5b044e620df55267e3e95c0e6e07d50b41e377c03dfc910f/nvidia_cudnn_cu13-9.24.0.43-py3-none-manylinux_2_27_x86_64.whl", hash = "sha256:71f181cd810e90f9b6023b01186fe82d13d65f0ec098581ee201d39fad769e4b", size = 553099438, upload-time = "2026-07-02T16:27:42.58Z" },
-    { url = "https://files.pythonhosted.org/packages/31/23/1dd3aa15cc4ab62c8fc88f8049ef137bc44c17892f5577bc80d994941f77/nvidia_cudnn_cu13-9.24.0.43-py3-none-win_amd64.whl", hash = "sha256:67a7273b5cf062f9446fd76cf464351a1c0f66501e6cd78f6675c0d604d8ac87", size = 412314771, upload-time = "2026-07-02T16:31:07.973Z" },
-]
-
-[[package]]
-name = "nvidia-cufft"
-version = "12.0.0.61"
-source = { registry = "https://pypi.org/simple" }
-dependencies = [
-    { name = "nvidia-nvjitlink", marker = "extra == 'group-9-folio-rag-cuda' or (extra == 'group-9-folio-rag-cpu' and extra == 'group-9-folio-rag-rocm-r714') or (extra != 'group-9-folio-rag-cpu' and extra != 'group-9-folio-rag-rocm-r714')" },
-]
-wheels = [
-    { url = "https://files.pythonhosted.org/packages/8b/ae/f417a75c0259e85c1d2f83ca4e960289a5f814ed0cea74d18c353d3e989d/nvidia_cufft-12.0.0.61-py3-none-manylinux2014_aarch64.manylinux_2_17_aarch64.whl", hash = "sha256:2708c852ef8cd89d1d2068bdbece0aa188813a0c934db3779b9b1faa8442e5f5", size = 214053554, upload-time = "2025-09-04T08:31:38.196Z" },
-    { url = "https://files.pythonhosted.org/packages/a8/2f/7b57e29836ea8714f81e9898409196f47d772d5ddedddf1592eadb8ab743/nvidia_cufft-12.0.0.61-py3-none-manylinux2014_x86_64.manylinux_2_17_x86_64.whl", hash = "sha256:6c44f692dce8fd5ffd3e3df134b6cdb9c2f72d99cf40b62c32dde45eea9ddad3", size = 214085489, upload-time = "2025-09-04T08:31:56.044Z" },
-    { url = "https://files.pythonhosted.org/packages/85/b2/f8af21a2ed1beed337a6a02c5a28aeb85441f4d578ec3d529543c775ea4b/nvidia_cufft-12.0.0.61-py3-none-win_amd64.whl", hash = "sha256:2abce5b39d2f5ae12730fb7e5db6696533e36c26e2d3e8fd1750bdd2853364eb", size = 213342123, upload-time = "2025-09-04T08:40:51.145Z" },
-]
-
-[[package]]
-name = "nvidia-cufile"
-version = "1.15.1.6"
-source = { registry = "https://pypi.org/simple" }
-wheels = [
-    { url = "https://files.pythonhosted.org/packages/3f/70/4f193de89a48b71714e74602ee14d04e4019ad36a5a9f20c425776e72cd6/nvidia_cufile-1.15.1.6-py3-none-manylinux2014_x86_64.manylinux_2_17_x86_64.whl", hash = "sha256:08a3ecefae5a01c7f5117351c64f17c7c62efa5fffdbe24fc7d298da19cd0b44", size = 1223672, upload-time = "2025-09-04T08:32:22.779Z" },
-    { url = "https://files.pythonhosted.org/packages/ab/73/cc4a14c9813a8a0d509417cf5f4bdaba76e924d58beb9864f5a7baceefbf/nvidia_cufile-1.15.1.6-py3-none-manylinux_2_27_aarch64.whl", hash = "sha256:bdc0deedc61f548bddf7733bdc216456c2fdb101d020e1ab4b88d232d5e2f6d1", size = 1136992, upload-time = "2025-09-04T08:32:14.119Z" },
-]
-
-[[package]]
-name = "nvidia-curand"
-version = "10.4.0.35"
-source = { registry = "https://pypi.org/simple" }
-wheels = [
-    { url = "https://files.pythonhosted.org/packages/1e/72/7c2ae24fb6b63a32e6ae5d241cc65263ea18d08802aaae087d9f013335a2/nvidia_curand-10.4.0.35-py3-none-manylinux_2_27_aarch64.whl", hash = "sha256:133df5a7509c3e292aaa2b477afd0194f06ce4ea24d714d616ff36439cee349a", size = 61962106, upload-time = "2025-08-04T10:21:41.128Z" },
-    { url = "https://files.pythonhosted.org/packages/a5/9f/be0a41ca4a4917abf5cb9ae0daff1a6060cc5de950aec0396de9f3b52bc5/nvidia_curand-10.4.0.35-py3-none-manylinux_2_27_x86_64.whl", hash = "sha256:1aee33a5da6e1db083fe2b90082def8915f30f3248d5896bcec36a579d941bfc", size = 59544258, upload-time = "2025-08-04T10:22:03.992Z" },
-    { url = "https://files.pythonhosted.org/packages/99/27/72103153b1ffc00e09fdc40ac970235343dcd1ea8bd762e84d2d73219ffa/nvidia_curand-10.4.0.35-py3-none-win_amd64.whl", hash = "sha256:65b1710aa6961d326b411e314b374290904c5ddf41dc3f766ebc3f1d7d4ca69f", size = 55242481, upload-time = "2025-08-04T10:30:41.831Z" },
-]
-
-[[package]]
-name = "nvidia-cusolver"
-version = "12.0.4.66"
-source = { registry = "https://pypi.org/simple" }
-dependencies = [
-    { name = "nvidia-cublas", marker = "extra == 'group-9-folio-rag-cuda' or (extra == 'group-9-folio-rag-cpu' and extra == 'group-9-folio-rag-rocm-r714') or (extra != 'group-9-folio-rag-cpu' and extra != 'group-9-folio-rag-rocm-r714')" },
-    { name = "nvidia-cusparse", marker = "extra == 'group-9-folio-rag-cuda' or (extra == 'group-9-folio-rag-cpu' and extra == 'group-9-folio-rag-rocm-r714') or (extra != 'group-9-folio-rag-cpu' and extra != 'group-9-folio-rag-rocm-r714')" },
-    { name = "nvidia-nvjitlink", marker = "extra == 'group-9-folio-rag-cuda' or (extra == 'group-9-folio-rag-cpu' and extra == 'group-9-folio-rag-rocm-r714') or (extra != 'group-9-folio-rag-cpu' and extra != 'group-9-folio-rag-rocm-r714')" },
-]
-wheels = [
-    { url = "https://files.pythonhosted.org/packages/c8/c3/b30c9e935fc01e3da443ec0116ed1b2a009bb867f5324d3f2d7e533e776b/nvidia_cusolver-12.0.4.66-py3-none-manylinux_2_27_aarch64.whl", hash = "sha256:02c2457eaa9e39de20f880f4bd8820e6a1cfb9f9a34f820eb12a155aa5bc92d2", size = 223467760, upload-time = "2025-09-04T08:33:04.222Z" },
-    { url = "https://files.pythonhosted.org/packages/5f/67/cba3777620cdacb99102da4042883709c41c709f4b6323c10781a9c3aa34/nvidia_cusolver-12.0.4.66-py3-none-manylinux_2_27_x86_64.whl", hash = "sha256:0a759da5dea5c0ea10fd307de75cdeb59e7ea4fcb8add0924859b944babf1112", size = 200941980, upload-time = "2025-09-04T08:33:22.767Z" },
-    { url = "https://files.pythonhosted.org/packages/99/ef/332a0101260ca78a1daef046bf0b06199e8ed4dac1d2aa698289c358169c/nvidia_cusolver-12.0.4.66-py3-none-win_amd64.whl", hash = "sha256:16515bd33a8e76bb54d024cfa068fa68d30e80fc34b9e1090813ea9362e0cb65", size = 193551444, upload-time = "2025-09-04T08:41:46.813Z" },
-]
-
-[[package]]
-name = "nvidia-cusparse"
-version = "12.6.3.3"
-source = { registry = "https://pypi.org/simple" }
-dependencies = [
-    { name = "nvidia-nvjitlink", marker = "extra == 'group-9-folio-rag-cuda' or (extra == 'group-9-folio-rag-cpu' and extra == 'group-9-folio-rag-rocm-r714') or (extra != 'group-9-folio-rag-cpu' and extra != 'group-9-folio-rag-rocm-r714')" },
-]
-wheels = [
-    { url = "https://files.pythonhosted.org/packages/f8/94/5c26f33738ae35276672f12615a64bd008ed5be6d1ebcb23579285d960a9/nvidia_cusparse-12.6.3.3-py3-none-manylinux2014_aarch64.manylinux_2_17_aarch64.whl", hash = "sha256:80bcc4662f23f1054ee334a15c72b8940402975e0eab63178fc7e670aa59472c", size = 162155568, upload-time = "2025-09-04T08:33:42.864Z" },
-    { url = "https://files.pythonhosted.org/packages/fa/18/623c77619c31d62efd55302939756966f3ecc8d724a14dab2b75f1508850/nvidia_cusparse-12.6.3.3-py3-none-manylinux2014_x86_64.manylinux_2_17_x86_64.whl", hash = "sha256:2b3c89c88d01ee0e477cb7f82ef60a11a4bcd57b6b87c33f789350b59759360b", size = 145942937, upload-time = "2025-09-04T08:33:58.029Z" },
-    { url = "https://files.pythonhosted.org/packages/02/b0/b043d6f3480f102f885cf87fc3ffd3edcb5e23b855025a50e2ef4d059185/nvidia_cusparse-12.6.3.3-py3-none-win_amd64.whl", hash = "sha256:cbcf42feb737bd7ec15b4c0a63e62351886bd3f975027b8815d7f720a2b5ea79", size = 143783033, upload-time = "2025-09-04T08:42:12.391Z" },
-]
-
-[[package]]
-name = "nvidia-cusparselt-cu13"
-version = "0.8.1"
-source = { registry = "https://pypi.org/simple" }
-wheels = [
-    { url = "https://files.pythonhosted.org/packages/46/e1/cdc1797eadf82d3a9a575a19b33fdc871a97edbec42c00b5b5e914f4aff4/nvidia_cusparselt_cu13-0.8.1-py3-none-manylinux2014_aarch64.whl", hash = "sha256:4dca476c50bf4780d46cd0bfbd82e2bc10a08e4fef7950917ce8d7578d22a23f", size = 221051344, upload-time = "2025-09-05T18:49:51.289Z" },
-    { url = "https://files.pythonhosted.org/packages/34/7d/2661f2fb3ac4302f3a246f5fc030213ac60c1fe0bce84f9783dbd831dbb7/nvidia_cusparselt_cu13-0.8.1-py3-none-manylinux2014_x86_64.whl", hash = "sha256:786ce87568c303fadb5afcc7102d454cd3040d75f6f8626f5db460d1871f4dd0", size = 170148586, upload-time = "2025-09-05T18:50:50.248Z" },
-    { url = "https://files.pythonhosted.org/packages/31/83/f3647ce26916c94a6ca4ff1810623e2c405cff2dea6e78d29516b2514df9/nvidia_cusparselt_cu13-0.8.1-py3-none-win_amd64.whl", hash = "sha256:dccbd362f91a7b9024d1f55ee9f548ac065027ff15d8c8b0db889ab3a8f31215", size = 156885108, upload-time = "2025-09-05T18:51:35.958Z" },
-]
-
-[[package]]
-name = "nvidia-nccl-cu13"
-version = "2.30.7"
-source = { registry = "https://pypi.org/simple" }
-wheels = [
-    { url = "https://files.pythonhosted.org/packages/d1/21/a73174c6157101bdf1ffc22b517f76ff0082613989dd9bc8f43e8034caac/nvidia_nccl_cu13-2.30.7-py3-none-manylinux_2_18_aarch64.whl", hash = "sha256:ca786ffa5a647c75d4d1f5cc72a6c4f537947e2ba8823d7c8aaf768e7a7b9f77", size = 215983881, upload-time = "2026-06-09T03:23:15.633Z" },
-    { url = "https://files.pythonhosted.org/packages/3f/34/c500f90c7ae641b8e0f98965b36b8a7ac79cc8b296e8d251fe3eb592ee54/nvidia_nccl_cu13-2.30.7-py3-none-manylinux_2_18_x86_64.whl", hash = "sha256:cefa7fdb9710efd0f39c5f1be1d61ff6fc9a996c451265bd7fbdcf9455ed4b50", size = 215965170, upload-time = "2026-06-09T03:23:39.73Z" },
-]
-
-[[package]]
-name = "nvidia-nvjitlink"
-version = "13.4.52"
-source = { registry = "https://pypi.org/simple" }
-wheels = [
-    { url = "https://files.pythonhosted.org/packages/7f/c1/091f198d7f87e31d67fa9680eec8f8e4c6f889881f729b759db36ff01612/nvidia_nvjitlink-13.4.52-py3-none-manylinux2010_x86_64.manylinux_2_12_x86_64.whl", hash = "sha256:90401db7e5a580a5067a468b3086e0b65f3b96ab3c42524afd741efc8a0e150a", size = 42452221, upload-time = "2026-09-09T18:01:32.895Z" },
-    { url = "https://files.pythonhosted.org/packages/7e/a9/225ff51e80de170be880cb88e992193bc8134a51059cc0a3952f967f62c5/nvidia_nvjitlink-13.4.52-py3-none-manylinux2014_aarch64.manylinux_2_17_aarch64.whl", hash = "sha256:3a589e3732140839349545efd0db67426523459b12e6952c3c73b6d55900f200", size = 40419746, upload-time = "2026-09-09T18:01:25.103Z" },
-    { url = "https://files.pythonhosted.org/packages/7b/94/acbd5a345328f3d22af19c73f36371439ebd58d56fa65fcef914139e6935/nvidia_nvjitlink-13.4.52-py3-none-win_amd64.whl", hash = "sha256:4bd7c27adc7832da5e6b8580fa64a42b9eebc94baae3ddcbedf4719f0bab2bb8", size = 39052340, upload-time = "2026-09-09T18:05:53.26Z" },
-    { url = "https://files.pythonhosted.org/packages/66/2a/da44bad7bdeba4878c517a30ac2042664d5ba8740c05be7780493a7fb577/nvidia_nvjitlink-13.4.52-py3-none-win_arm64.whl", hash = "sha256:75f7e1a04b0a63c7d8af9921e1ed45d9ef880d3c6ef976989082482698e01205", size = 35981480, upload-time = "2026-09-09T18:58:55.076Z" },
-]
-
-[[package]]
-name = "nvidia-nvshmem-cu13"
-version = "3.4.5"
-source = { registry = "https://pypi.org/simple" }
-wheels = [
-    { url = "https://files.pythonhosted.org/packages/dc/0f/05cc9c720236dcd2db9c1ab97fff629e96821be2e63103569da0c9b72f19/nvidia_nvshmem_cu13-3.4.5-py3-none-manylinux2014_aarch64.manylinux_2_17_aarch64.whl", hash = "sha256:6dc2a197f38e5d0376ad52cd1a2a3617d3cdc150fd5966f4aee9bcebb1d68fe9", size = 60215947, upload-time = "2025-09-06T00:32:20.022Z" },
-    { url = "https://files.pythonhosted.org/packages/3c/35/a9bf80a609e74e3b000fef598933235c908fcefcef9026042b8e6dfde2a9/nvidia_nvshmem_cu13-3.4.5-py3-none-manylinux2014_x86_64.manylinux_2_17_x86_64.whl", hash = "sha256:290f0a2ee94c9f3687a02502f3b9299a9f9fe826e6d0287ee18482e78d495b80", size = 60412546, upload-time = "2025-09-06T00:32:41.564Z" },
-]
-
-[[package]]
-name = "nvidia-nvtx"
-version = "13.0.85"
-source = { registry = "https://pypi.org/simple" }
-wheels = [
-    { url = "https://files.pythonhosted.org/packages/c2/f3/d86c845465a2723ad7e1e5c36dcd75ddb82898b3f53be47ebd429fb2fa5d/nvidia_nvtx-13.0.85-py3-none-manylinux1_x86_64.manylinux_2_5_x86_64.whl", hash = "sha256:4936d1d6780fbe68db454f5e72a42ff64d1fd6397df9f363ae786930fd5c1cd4", size = 148047, upload-time = "2025-09-04T08:29:01.761Z" },
-    { url = "https://files.pythonhosted.org/packages/a8/64/3708a90d1ebe202ffdeb7185f878a3c84d15c2b2c31858da2ce0583e2def/nvidia_nvtx-13.0.85-py3-none-manylinux2014_aarch64.manylinux_2_17_aarch64.whl", hash = "sha256:cb7780edb6b14107373c835bf8b72e7a178bac7367e23da7acb108f973f157a6", size = 148878, upload-time = "2025-09-04T08:28:53.627Z" },
-    { url = "https://files.pythonhosted.org/packages/d2/50/0e2220f8620a177de994211186ffc5bfa9f2ce1e1282797f8f90096f9f88/nvidia_nvtx-13.0.85-py3-none-win_amd64.whl", hash = "sha256:d66ea44254dd3c6eacc300047af6e1288d2269dd072b417e0adffbf479e18519", size = 137066, upload-time = "2025-09-04T08:39:25.649Z" },
 ]
 
 [[package]]
@@ -2789,7 +2202,7 @@ name = "pytest"
 version = "9.0.3"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
-    { name = "colorama", marker = "sys_platform == 'win32' or (extra == 'group-9-folio-rag-cpu' and extra == 'group-9-folio-rag-cuda') or (extra == 'group-9-folio-rag-cpu' and extra == 'group-9-folio-rag-rocm-r714') or (extra == 'group-9-folio-rag-cuda' and extra == 'group-9-folio-rag-rocm-r714')" },
+    { name = "colorama", marker = "sys_platform == 'win32'" },
     { name = "iniconfig" },
     { name = "packaging" },
     { name = "pluggy" },
@@ -3028,332 +2441,6 @@ wheels = [
 ]
 
 [[package]]
-name = "rocm"
-version = "7.14.0"
-source = { registry = "https://repo.amd.com/rocm/whl-multi-arch/" }
-dependencies = [
-    { name = "rocm-sdk-core", marker = "(extra == 'group-9-folio-rag-cpu' and extra == 'group-9-folio-rag-cuda') or (extra != 'group-9-folio-rag-cuda' and extra == 'group-9-folio-rag-rocm-r714') or (extra != 'group-9-folio-rag-cpu' and extra == 'group-9-folio-rag-rocm-r714')" },
-]
-sdist = { url = "https://repo.amd.com/rocm/whl-multi-arch/rocm-7.14.0.tar.gz" }
-
-[package.optional-dependencies]
-libraries = [
-    { name = "rocm-sdk-libraries", marker = "(extra == 'group-9-folio-rag-cpu' and extra == 'group-9-folio-rag-cuda') or (extra != 'group-9-folio-rag-cuda' and extra == 'group-9-folio-rag-rocm-r714') or (extra != 'group-9-folio-rag-cpu' and extra == 'group-9-folio-rag-rocm-r714')" },
-]
-
-[[package]]
-name = "rocm-bootstrap"
-version = "0.2.0"
-source = { registry = "https://pypi.org/simple" }
-wheels = [
-    { url = "https://files.pythonhosted.org/packages/81/0d/1cbbe79ac672ccd84d61bf45c0e6a7a093436586a0c94b1070c760d75968/rocm_bootstrap-0.2.0-py3-none-any.whl", hash = "sha256:3e23c2621597a133f4d5074461b1678367042a8b8a001ef8cc89dd8785ff9292", size = 27806, upload-time = "2026-08-26T19:11:03.218Z" },
-]
-
-[[package]]
-name = "rocm-sdk-core"
-version = "7.14.0"
-source = { registry = "https://repo.amd.com/rocm/whl-multi-arch/" }
-wheels = [
-    { url = "https://repo.amd.com/rocm/whl-multi-arch/rocm_sdk_core-7.14.0-py3-none-linux_x86_64.whl" },
-    { url = "https://repo.amd.com/rocm/whl-multi-arch/rocm_sdk_core-7.14.0-py3-none-win_amd64.whl" },
-]
-
-[[package]]
-name = "rocm-sdk-device-gfx1010"
-version = "7.14.0"
-source = { registry = "https://repo.amd.com/rocm/whl-multi-arch/" }
-dependencies = [
-    { name = "rocm-sdk-libraries" },
-]
-wheels = [
-    { url = "https://repo.amd.com/rocm/whl-multi-arch/rocm_sdk_device_gfx1010-7.14.0-py3-none-linux_x86_64.whl" },
-    { url = "https://repo.amd.com/rocm/whl-multi-arch/rocm_sdk_device_gfx1010-7.14.0-py3-none-win_amd64.whl" },
-]
-
-[[package]]
-name = "rocm-sdk-device-gfx1011"
-version = "7.14.0"
-source = { registry = "https://repo.amd.com/rocm/whl-multi-arch/" }
-dependencies = [
-    { name = "rocm-sdk-libraries" },
-]
-wheels = [
-    { url = "https://repo.amd.com/rocm/whl-multi-arch/rocm_sdk_device_gfx1011-7.14.0-py3-none-linux_x86_64.whl" },
-    { url = "https://repo.amd.com/rocm/whl-multi-arch/rocm_sdk_device_gfx1011-7.14.0-py3-none-win_amd64.whl" },
-]
-
-[[package]]
-name = "rocm-sdk-device-gfx1012"
-version = "7.14.0"
-source = { registry = "https://repo.amd.com/rocm/whl-multi-arch/" }
-dependencies = [
-    { name = "rocm-sdk-libraries" },
-]
-wheels = [
-    { url = "https://repo.amd.com/rocm/whl-multi-arch/rocm_sdk_device_gfx1012-7.14.0-py3-none-linux_x86_64.whl" },
-    { url = "https://repo.amd.com/rocm/whl-multi-arch/rocm_sdk_device_gfx1012-7.14.0-py3-none-win_amd64.whl" },
-]
-
-[[package]]
-name = "rocm-sdk-device-gfx1030"
-version = "7.14.0"
-source = { registry = "https://repo.amd.com/rocm/whl-multi-arch/" }
-dependencies = [
-    { name = "rocm-sdk-libraries" },
-]
-wheels = [
-    { url = "https://repo.amd.com/rocm/whl-multi-arch/rocm_sdk_device_gfx1030-7.14.0-py3-none-linux_x86_64.whl" },
-    { url = "https://repo.amd.com/rocm/whl-multi-arch/rocm_sdk_device_gfx1030-7.14.0-py3-none-win_amd64.whl" },
-]
-
-[[package]]
-name = "rocm-sdk-device-gfx1031"
-version = "7.14.0"
-source = { registry = "https://repo.amd.com/rocm/whl-multi-arch/" }
-dependencies = [
-    { name = "rocm-sdk-libraries" },
-]
-wheels = [
-    { url = "https://repo.amd.com/rocm/whl-multi-arch/rocm_sdk_device_gfx1031-7.14.0-py3-none-linux_x86_64.whl" },
-    { url = "https://repo.amd.com/rocm/whl-multi-arch/rocm_sdk_device_gfx1031-7.14.0-py3-none-win_amd64.whl" },
-]
-
-[[package]]
-name = "rocm-sdk-device-gfx1032"
-version = "7.14.0"
-source = { registry = "https://repo.amd.com/rocm/whl-multi-arch/" }
-dependencies = [
-    { name = "rocm-sdk-libraries" },
-]
-wheels = [
-    { url = "https://repo.amd.com/rocm/whl-multi-arch/rocm_sdk_device_gfx1032-7.14.0-py3-none-linux_x86_64.whl" },
-    { url = "https://repo.amd.com/rocm/whl-multi-arch/rocm_sdk_device_gfx1032-7.14.0-py3-none-win_amd64.whl" },
-]
-
-[[package]]
-name = "rocm-sdk-device-gfx1033"
-version = "7.14.0"
-source = { registry = "https://repo.amd.com/rocm/whl-multi-arch/" }
-dependencies = [
-    { name = "rocm-sdk-libraries" },
-]
-wheels = [
-    { url = "https://repo.amd.com/rocm/whl-multi-arch/rocm_sdk_device_gfx1033-7.14.0-py3-none-linux_x86_64.whl" },
-    { url = "https://repo.amd.com/rocm/whl-multi-arch/rocm_sdk_device_gfx1033-7.14.0-py3-none-win_amd64.whl" },
-]
-
-[[package]]
-name = "rocm-sdk-device-gfx1034"
-version = "7.14.0"
-source = { registry = "https://repo.amd.com/rocm/whl-multi-arch/" }
-dependencies = [
-    { name = "rocm-sdk-libraries" },
-]
-wheels = [
-    { url = "https://repo.amd.com/rocm/whl-multi-arch/rocm_sdk_device_gfx1034-7.14.0-py3-none-linux_x86_64.whl" },
-    { url = "https://repo.amd.com/rocm/whl-multi-arch/rocm_sdk_device_gfx1034-7.14.0-py3-none-win_amd64.whl" },
-]
-
-[[package]]
-name = "rocm-sdk-device-gfx1035"
-version = "7.14.0"
-source = { registry = "https://repo.amd.com/rocm/whl-multi-arch/" }
-dependencies = [
-    { name = "rocm-sdk-libraries" },
-]
-wheels = [
-    { url = "https://repo.amd.com/rocm/whl-multi-arch/rocm_sdk_device_gfx1035-7.14.0-py3-none-linux_x86_64.whl" },
-    { url = "https://repo.amd.com/rocm/whl-multi-arch/rocm_sdk_device_gfx1035-7.14.0-py3-none-win_amd64.whl" },
-]
-
-[[package]]
-name = "rocm-sdk-device-gfx1036"
-version = "7.14.0"
-source = { registry = "https://repo.amd.com/rocm/whl-multi-arch/" }
-dependencies = [
-    { name = "rocm-sdk-libraries" },
-]
-wheels = [
-    { url = "https://repo.amd.com/rocm/whl-multi-arch/rocm_sdk_device_gfx1036-7.14.0-py3-none-linux_x86_64.whl" },
-    { url = "https://repo.amd.com/rocm/whl-multi-arch/rocm_sdk_device_gfx1036-7.14.0-py3-none-win_amd64.whl" },
-]
-
-[[package]]
-name = "rocm-sdk-device-gfx1100"
-version = "7.14.0"
-source = { registry = "https://repo.amd.com/rocm/whl-multi-arch/" }
-dependencies = [
-    { name = "rocm-sdk-libraries" },
-]
-wheels = [
-    { url = "https://repo.amd.com/rocm/whl-multi-arch/rocm_sdk_device_gfx1100-7.14.0-py3-none-linux_x86_64.whl" },
-    { url = "https://repo.amd.com/rocm/whl-multi-arch/rocm_sdk_device_gfx1100-7.14.0-py3-none-win_amd64.whl" },
-]
-
-[[package]]
-name = "rocm-sdk-device-gfx1101"
-version = "7.14.0"
-source = { registry = "https://repo.amd.com/rocm/whl-multi-arch/" }
-dependencies = [
-    { name = "rocm-sdk-libraries" },
-]
-wheels = [
-    { url = "https://repo.amd.com/rocm/whl-multi-arch/rocm_sdk_device_gfx1101-7.14.0-py3-none-linux_x86_64.whl" },
-    { url = "https://repo.amd.com/rocm/whl-multi-arch/rocm_sdk_device_gfx1101-7.14.0-py3-none-win_amd64.whl" },
-]
-
-[[package]]
-name = "rocm-sdk-device-gfx1102"
-version = "7.14.0"
-source = { registry = "https://repo.amd.com/rocm/whl-multi-arch/" }
-dependencies = [
-    { name = "rocm-sdk-libraries" },
-]
-wheels = [
-    { url = "https://repo.amd.com/rocm/whl-multi-arch/rocm_sdk_device_gfx1102-7.14.0-py3-none-linux_x86_64.whl" },
-    { url = "https://repo.amd.com/rocm/whl-multi-arch/rocm_sdk_device_gfx1102-7.14.0-py3-none-win_amd64.whl" },
-]
-
-[[package]]
-name = "rocm-sdk-device-gfx1103"
-version = "7.14.0"
-source = { registry = "https://repo.amd.com/rocm/whl-multi-arch/" }
-dependencies = [
-    { name = "rocm-sdk-libraries" },
-]
-wheels = [
-    { url = "https://repo.amd.com/rocm/whl-multi-arch/rocm_sdk_device_gfx1103-7.14.0-py3-none-linux_x86_64.whl" },
-    { url = "https://repo.amd.com/rocm/whl-multi-arch/rocm_sdk_device_gfx1103-7.14.0-py3-none-win_amd64.whl" },
-]
-
-[[package]]
-name = "rocm-sdk-device-gfx1150"
-version = "7.14.0"
-source = { registry = "https://repo.amd.com/rocm/whl-multi-arch/" }
-dependencies = [
-    { name = "rocm-sdk-libraries" },
-]
-wheels = [
-    { url = "https://repo.amd.com/rocm/whl-multi-arch/rocm_sdk_device_gfx1150-7.14.0-py3-none-linux_x86_64.whl" },
-    { url = "https://repo.amd.com/rocm/whl-multi-arch/rocm_sdk_device_gfx1150-7.14.0-py3-none-win_amd64.whl" },
-]
-
-[[package]]
-name = "rocm-sdk-device-gfx1151"
-version = "7.14.0"
-source = { registry = "https://repo.amd.com/rocm/whl-multi-arch/" }
-dependencies = [
-    { name = "rocm-sdk-libraries" },
-]
-wheels = [
-    { url = "https://repo.amd.com/rocm/whl-multi-arch/rocm_sdk_device_gfx1151-7.14.0-py3-none-linux_x86_64.whl" },
-    { url = "https://repo.amd.com/rocm/whl-multi-arch/rocm_sdk_device_gfx1151-7.14.0-py3-none-win_amd64.whl" },
-]
-
-[[package]]
-name = "rocm-sdk-device-gfx1152"
-version = "7.14.0"
-source = { registry = "https://repo.amd.com/rocm/whl-multi-arch/" }
-dependencies = [
-    { name = "rocm-sdk-libraries" },
-]
-wheels = [
-    { url = "https://repo.amd.com/rocm/whl-multi-arch/rocm_sdk_device_gfx1152-7.14.0-py3-none-linux_x86_64.whl" },
-    { url = "https://repo.amd.com/rocm/whl-multi-arch/rocm_sdk_device_gfx1152-7.14.0-py3-none-win_amd64.whl" },
-]
-
-[[package]]
-name = "rocm-sdk-device-gfx1153"
-version = "7.14.0"
-source = { registry = "https://repo.amd.com/rocm/whl-multi-arch/" }
-dependencies = [
-    { name = "rocm-sdk-libraries" },
-]
-wheels = [
-    { url = "https://repo.amd.com/rocm/whl-multi-arch/rocm_sdk_device_gfx1153-7.14.0-py3-none-linux_x86_64.whl" },
-    { url = "https://repo.amd.com/rocm/whl-multi-arch/rocm_sdk_device_gfx1153-7.14.0-py3-none-win_amd64.whl" },
-]
-
-[[package]]
-name = "rocm-sdk-device-gfx1200"
-version = "7.14.0"
-source = { registry = "https://repo.amd.com/rocm/whl-multi-arch/" }
-dependencies = [
-    { name = "rocm-sdk-libraries" },
-]
-wheels = [
-    { url = "https://repo.amd.com/rocm/whl-multi-arch/rocm_sdk_device_gfx1200-7.14.0-py3-none-linux_x86_64.whl" },
-    { url = "https://repo.amd.com/rocm/whl-multi-arch/rocm_sdk_device_gfx1200-7.14.0-py3-none-win_amd64.whl" },
-]
-
-[[package]]
-name = "rocm-sdk-device-gfx1201"
-version = "7.14.0"
-source = { registry = "https://repo.amd.com/rocm/whl-multi-arch/" }
-dependencies = [
-    { name = "rocm-sdk-libraries" },
-]
-wheels = [
-    { url = "https://repo.amd.com/rocm/whl-multi-arch/rocm_sdk_device_gfx1201-7.14.0-py3-none-linux_x86_64.whl" },
-    { url = "https://repo.amd.com/rocm/whl-multi-arch/rocm_sdk_device_gfx1201-7.14.0-py3-none-win_amd64.whl" },
-]
-
-[[package]]
-name = "rocm-sdk-device-gfx908"
-version = "7.14.0"
-source = { registry = "https://repo.amd.com/rocm/whl-multi-arch/" }
-dependencies = [
-    { name = "rocm-sdk-libraries" },
-]
-wheels = [
-    { url = "https://repo.amd.com/rocm/whl-multi-arch/rocm_sdk_device_gfx908-7.14.0-py3-none-linux_x86_64.whl" },
-    { url = "https://repo.amd.com/rocm/whl-multi-arch/rocm_sdk_device_gfx908-7.14.0-py3-none-win_amd64.whl" },
-]
-
-[[package]]
-name = "rocm-sdk-device-gfx90a"
-version = "7.14.0"
-source = { registry = "https://repo.amd.com/rocm/whl-multi-arch/" }
-dependencies = [
-    { name = "rocm-sdk-libraries" },
-]
-wheels = [
-    { url = "https://repo.amd.com/rocm/whl-multi-arch/rocm_sdk_device_gfx90a-7.14.0-py3-none-linux_x86_64.whl" },
-    { url = "https://repo.amd.com/rocm/whl-multi-arch/rocm_sdk_device_gfx90a-7.14.0-py3-none-win_amd64.whl" },
-]
-
-[[package]]
-name = "rocm-sdk-device-gfx942"
-version = "7.14.0"
-source = { registry = "https://repo.amd.com/rocm/whl-multi-arch/" }
-dependencies = [
-    { name = "rocm-sdk-libraries" },
-]
-wheels = [
-    { url = "https://repo.amd.com/rocm/whl-multi-arch/rocm_sdk_device_gfx942-7.14.0-py3-none-linux_x86_64.whl" },
-]
-
-[[package]]
-name = "rocm-sdk-device-gfx950"
-version = "7.14.0"
-source = { registry = "https://repo.amd.com/rocm/whl-multi-arch/" }
-dependencies = [
-    { name = "rocm-sdk-libraries" },
-]
-wheels = [
-    { url = "https://repo.amd.com/rocm/whl-multi-arch/rocm_sdk_device_gfx950-7.14.0-py3-none-linux_x86_64.whl" },
-]
-
-[[package]]
-name = "rocm-sdk-libraries"
-version = "7.14.0"
-source = { registry = "https://repo.amd.com/rocm/whl-multi-arch/" }
-wheels = [
-    { url = "https://repo.amd.com/rocm/whl-multi-arch/rocm_sdk_libraries-7.14.0-py3-none-linux_x86_64.whl" },
-    { url = "https://repo.amd.com/rocm/whl-multi-arch/rocm_sdk_libraries-7.14.0-py3-none-win_amd64.whl" },
-]
-
-[[package]]
 name = "rpds-py"
 version = "2026.6.3"
 source = { registry = "https://pypi.org/simple" }
@@ -3468,11 +2555,8 @@ dependencies = [
     { name = "scikit-learn" },
     { name = "scipy" },
     { name = "tokenizers" },
-    { name = "torch", version = "2.13.0+rocm7.14.0", source = { registry = "https://repo.amd.com/rocm/whl-multi-arch/" }, marker = "(extra == 'group-9-folio-rag-cpu' and extra == 'group-9-folio-rag-cuda') or (extra != 'group-9-folio-rag-cuda' and extra == 'group-9-folio-rag-rocm-r714') or (extra != 'group-9-folio-rag-cpu' and extra == 'group-9-folio-rag-rocm-r714')" },
-    { name = "torch", version = "2.14.0", source = { registry = "https://download.pytorch.org/whl/cpu" }, marker = "(sys_platform == 'darwin' and extra == 'group-9-folio-rag-cpu') or (extra == 'group-9-folio-rag-cpu' and extra == 'group-9-folio-rag-cuda') or (extra == 'group-9-folio-rag-cpu' and extra == 'group-9-folio-rag-rocm-r714') or (extra == 'group-9-folio-rag-cuda' and extra == 'group-9-folio-rag-rocm-r714')" },
-    { name = "torch", version = "2.14.0", source = { registry = "https://pypi.org/simple" }, marker = "(extra == 'group-9-folio-rag-cpu' and extra == 'group-9-folio-rag-cuda') or (extra == 'group-9-folio-rag-cpu' and extra == 'group-9-folio-rag-rocm-r714') or (extra == 'group-9-folio-rag-cuda' and extra == 'group-9-folio-rag-rocm-r714') or (extra != 'group-9-folio-rag-cpu' and extra != 'group-9-folio-rag-cuda' and extra != 'group-9-folio-rag-rocm-r714')" },
-    { name = "torch", version = "2.14.0+cpu", source = { registry = "https://download.pytorch.org/whl/cpu" }, marker = "(sys_platform != 'darwin' and extra == 'group-9-folio-rag-cpu') or (extra == 'group-9-folio-rag-cpu' and extra == 'group-9-folio-rag-cuda') or (extra == 'group-9-folio-rag-cpu' and extra == 'group-9-folio-rag-rocm-r714') or (extra == 'group-9-folio-rag-cuda' and extra == 'group-9-folio-rag-rocm-r714')" },
-    { name = "torch", version = "2.14.1+cu130", source = { registry = "https://download.pytorch.org/whl/cu130" }, marker = "extra == 'group-9-folio-rag-cuda' or (extra == 'group-9-folio-rag-cpu' and extra == 'group-9-folio-rag-rocm-r714')" },
+    { name = "torch", version = "2.14.1", source = { registry = "https://download.pytorch.org/whl/cpu" }, marker = "platform_machine == 'arm64' and sys_platform == 'darwin'" },
+    { name = "torch", version = "2.14.1+cpu", source = { registry = "https://download.pytorch.org/whl/cpu" }, marker = "platform_machine != 'arm64' or sys_platform != 'darwin'" },
     { name = "tqdm" },
     { name = "transformers" },
     { name = "typing-extensions" },
@@ -3532,7 +2616,7 @@ name = "sqlalchemy"
 version = "2.0.44"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
-    { name = "greenlet", marker = "platform_machine == 'AMD64' or platform_machine == 'WIN32' or platform_machine == 'aarch64' or platform_machine == 'amd64' or platform_machine == 'ppc64le' or platform_machine == 'win32' or platform_machine == 'x86_64' or (extra == 'group-9-folio-rag-cpu' and extra == 'group-9-folio-rag-cuda') or (extra == 'group-9-folio-rag-cpu' and extra == 'group-9-folio-rag-rocm-r714') or (extra == 'group-9-folio-rag-cuda' and extra == 'group-9-folio-rag-rocm-r714')" },
+    { name = "greenlet", marker = "platform_machine == 'AMD64' or platform_machine == 'WIN32' or platform_machine == 'aarch64' or platform_machine == 'amd64' or platform_machine == 'ppc64le' or platform_machine == 'win32' or platform_machine == 'x86_64'" },
     { name = "typing-extensions" },
 ]
 sdist = { url = "https://files.pythonhosted.org/packages/f0/f2/840d7b9496825333f532d2e3976b8eadbf52034178aac53630d09fe6e1ef/sqlalchemy-2.0.44.tar.gz", hash = "sha256:0ae7454e1ab1d780aee69fd2aae7d6b8670a581d8847f2d1e0f7ddfbf47e5a22", size = 9819830, upload-time = "2025-10-10T14:39:12.935Z" }
@@ -3684,160 +2768,46 @@ wheels = [
 
 [[package]]
 name = "torch"
-version = "2.13.0+rocm7.14.0"
-source = { registry = "https://repo.amd.com/rocm/whl-multi-arch/" }
-resolution-markers = [
-    "platform_machine != 'aarch64' or platform_python_implementation != 'CPython' or sys_platform != 'linux'",
-    "platform_machine == 'aarch64' and platform_python_implementation == 'CPython' and sys_platform == 'linux'",
-]
-dependencies = [
-    { name = "filelock", marker = "(extra == 'group-9-folio-rag-cpu' and extra == 'group-9-folio-rag-cuda') or (extra != 'group-9-folio-rag-cuda' and extra == 'group-9-folio-rag-rocm-r714') or (extra != 'group-9-folio-rag-cpu' and extra == 'group-9-folio-rag-rocm-r714')" },
-    { name = "fsspec", marker = "(extra == 'group-9-folio-rag-cpu' and extra == 'group-9-folio-rag-cuda') or (extra != 'group-9-folio-rag-cuda' and extra == 'group-9-folio-rag-rocm-r714') or (extra != 'group-9-folio-rag-cpu' and extra == 'group-9-folio-rag-rocm-r714')" },
-    { name = "jinja2", marker = "(extra == 'group-9-folio-rag-cpu' and extra == 'group-9-folio-rag-cuda') or (extra != 'group-9-folio-rag-cuda' and extra == 'group-9-folio-rag-rocm-r714') or (extra != 'group-9-folio-rag-cpu' and extra == 'group-9-folio-rag-rocm-r714')" },
-    { name = "networkx", marker = "(extra == 'group-9-folio-rag-cpu' and extra == 'group-9-folio-rag-cuda') or (extra != 'group-9-folio-rag-cuda' and extra == 'group-9-folio-rag-rocm-r714') or (extra != 'group-9-folio-rag-cpu' and extra == 'group-9-folio-rag-rocm-r714')" },
-    { name = "rocm", extra = ["libraries"], marker = "(extra == 'group-9-folio-rag-cpu' and extra == 'group-9-folio-rag-cuda') or (extra != 'group-9-folio-rag-cuda' and extra == 'group-9-folio-rag-rocm-r714') or (extra != 'group-9-folio-rag-cpu' and extra == 'group-9-folio-rag-rocm-r714')" },
-    { name = "rocm-bootstrap", marker = "(extra == 'group-9-folio-rag-cpu' and extra == 'group-9-folio-rag-cuda') or (extra != 'group-9-folio-rag-cuda' and extra == 'group-9-folio-rag-rocm-r714') or (extra != 'group-9-folio-rag-cpu' and extra == 'group-9-folio-rag-rocm-r714')" },
-    { name = "setuptools", marker = "(extra == 'group-9-folio-rag-cpu' and extra == 'group-9-folio-rag-cuda') or (extra != 'group-9-folio-rag-cuda' and extra == 'group-9-folio-rag-rocm-r714') or (extra != 'group-9-folio-rag-cpu' and extra == 'group-9-folio-rag-rocm-r714')" },
-    { name = "sympy", marker = "(extra == 'group-9-folio-rag-cpu' and extra == 'group-9-folio-rag-cuda') or (extra != 'group-9-folio-rag-cuda' and extra == 'group-9-folio-rag-rocm-r714') or (extra != 'group-9-folio-rag-cpu' and extra == 'group-9-folio-rag-rocm-r714')" },
-    { name = "triton", version = "3.8.0+git4cff872c.rocm7.14.0", source = { registry = "https://repo.amd.com/rocm/whl-multi-arch/" }, marker = "(extra == 'group-9-folio-rag-cpu' and extra == 'group-9-folio-rag-cuda') or (extra != 'group-9-folio-rag-cuda' and extra == 'group-9-folio-rag-rocm-r714') or (extra != 'group-9-folio-rag-cpu' and extra == 'group-9-folio-rag-rocm-r714')" },
-    { name = "typing-extensions", marker = "(extra == 'group-9-folio-rag-cpu' and extra == 'group-9-folio-rag-cuda') or (extra != 'group-9-folio-rag-cuda' and extra == 'group-9-folio-rag-rocm-r714') or (extra != 'group-9-folio-rag-cpu' and extra == 'group-9-folio-rag-rocm-r714')" },
-]
-wheels = [
-    { url = "https://repo.amd.com/rocm/whl-multi-arch/torch-2.13.0%2Brocm7.14.0-cp312-cp312-linux_x86_64.whl" },
-]
-
-[package.optional-dependencies]
-device-all = [
-    { name = "amd-torch-device-gfx1010" },
-    { name = "amd-torch-device-gfx1011" },
-    { name = "amd-torch-device-gfx1012" },
-    { name = "amd-torch-device-gfx1030" },
-    { name = "amd-torch-device-gfx1031" },
-    { name = "amd-torch-device-gfx1032" },
-    { name = "amd-torch-device-gfx1033" },
-    { name = "amd-torch-device-gfx1034" },
-    { name = "amd-torch-device-gfx1035" },
-    { name = "amd-torch-device-gfx1036" },
-    { name = "amd-torch-device-gfx1100" },
-    { name = "amd-torch-device-gfx1101" },
-    { name = "amd-torch-device-gfx1102" },
-    { name = "amd-torch-device-gfx1103" },
-    { name = "amd-torch-device-gfx110x" },
-    { name = "amd-torch-device-gfx1150" },
-    { name = "amd-torch-device-gfx1151" },
-    { name = "amd-torch-device-gfx1152" },
-    { name = "amd-torch-device-gfx1153" },
-    { name = "amd-torch-device-gfx115x" },
-    { name = "amd-torch-device-gfx12-0" },
-    { name = "amd-torch-device-gfx1200" },
-    { name = "amd-torch-device-gfx1201" },
-    { name = "amd-torch-device-gfx908" },
-    { name = "amd-torch-device-gfx90a" },
-    { name = "amd-torch-device-gfx942" },
-    { name = "amd-torch-device-gfx950" },
-]
-
-[[package]]
-name = "torch"
-version = "2.14.0"
+version = "2.14.1"
 source = { registry = "https://download.pytorch.org/whl/cpu" }
 resolution-markers = [
-    "sys_platform == 'darwin'",
+    "platform_machine == 'arm64' and sys_platform == 'darwin'",
 ]
 dependencies = [
-    { name = "filelock", marker = "(sys_platform == 'darwin' and extra == 'group-9-folio-rag-cpu') or (extra == 'group-9-folio-rag-cpu' and extra == 'group-9-folio-rag-cuda') or (extra == 'group-9-folio-rag-cpu' and extra == 'group-9-folio-rag-rocm-r714') or (extra == 'group-9-folio-rag-cuda' and extra == 'group-9-folio-rag-rocm-r714')" },
-    { name = "fsspec", marker = "(sys_platform == 'darwin' and extra == 'group-9-folio-rag-cpu') or (extra == 'group-9-folio-rag-cpu' and extra == 'group-9-folio-rag-cuda') or (extra == 'group-9-folio-rag-cpu' and extra == 'group-9-folio-rag-rocm-r714') or (extra == 'group-9-folio-rag-cuda' and extra == 'group-9-folio-rag-rocm-r714')" },
-    { name = "jinja2", marker = "(sys_platform == 'darwin' and extra == 'group-9-folio-rag-cpu') or (extra == 'group-9-folio-rag-cpu' and extra == 'group-9-folio-rag-cuda') or (extra == 'group-9-folio-rag-cpu' and extra == 'group-9-folio-rag-rocm-r714') or (extra == 'group-9-folio-rag-cuda' and extra == 'group-9-folio-rag-rocm-r714')" },
-    { name = "networkx", marker = "(sys_platform == 'darwin' and extra == 'group-9-folio-rag-cpu') or (extra == 'group-9-folio-rag-cpu' and extra == 'group-9-folio-rag-cuda') or (extra == 'group-9-folio-rag-cpu' and extra == 'group-9-folio-rag-rocm-r714') or (extra == 'group-9-folio-rag-cuda' and extra == 'group-9-folio-rag-rocm-r714')" },
-    { name = "setuptools", marker = "(sys_platform == 'darwin' and extra == 'group-9-folio-rag-cpu') or (extra == 'group-9-folio-rag-cpu' and extra == 'group-9-folio-rag-cuda') or (extra == 'group-9-folio-rag-cpu' and extra == 'group-9-folio-rag-rocm-r714') or (extra == 'group-9-folio-rag-cuda' and extra == 'group-9-folio-rag-rocm-r714')" },
-    { name = "sympy", marker = "(sys_platform == 'darwin' and extra == 'group-9-folio-rag-cpu') or (extra == 'group-9-folio-rag-cpu' and extra == 'group-9-folio-rag-cuda') or (extra == 'group-9-folio-rag-cpu' and extra == 'group-9-folio-rag-rocm-r714') or (extra == 'group-9-folio-rag-cuda' and extra == 'group-9-folio-rag-rocm-r714')" },
-    { name = "typing-extensions", marker = "(sys_platform == 'darwin' and extra == 'group-9-folio-rag-cpu') or (extra == 'group-9-folio-rag-cpu' and extra == 'group-9-folio-rag-cuda') or (extra == 'group-9-folio-rag-cpu' and extra == 'group-9-folio-rag-rocm-r714') or (extra == 'group-9-folio-rag-cuda' and extra == 'group-9-folio-rag-rocm-r714')" },
+    { name = "filelock", marker = "platform_machine == 'arm64' and sys_platform == 'darwin'" },
+    { name = "fsspec", marker = "platform_machine == 'arm64' and sys_platform == 'darwin'" },
+    { name = "jinja2", marker = "platform_machine == 'arm64' and sys_platform == 'darwin'" },
+    { name = "networkx", marker = "platform_machine == 'arm64' and sys_platform == 'darwin'" },
+    { name = "setuptools", marker = "platform_machine == 'arm64' and sys_platform == 'darwin'" },
+    { name = "sympy", marker = "platform_machine == 'arm64' and sys_platform == 'darwin'" },
+    { name = "typing-extensions", marker = "platform_machine == 'arm64' and sys_platform == 'darwin'" },
 ]
 wheels = [
-    { url = "https://download-r2.pytorch.org/whl/cpu/torch-2.14.0-cp312-cp312-macosx_14_0_arm64.whl", hash = "sha256:ab7e226c18d3cbc134dfa952d18ab1df202055dd33446837c8fd050ad449e6f5", upload-time = "2026-09-02T00:26:12Z" },
+    { url = "https://download-r2.pytorch.org/whl/cpu/torch-2.14.1-cp312-cp312-macosx_14_0_arm64.whl", hash = "sha256:9cf3082d25560efb1eef921871595227c0cf305abb7761ca45b6b988ef6cdd45", upload-time = "2026-09-30T19:50:32Z" },
 ]
 
 [[package]]
 name = "torch"
-version = "2.14.0"
-source = { registry = "https://pypi.org/simple" }
-resolution-markers = [
-    "platform_machine != 'aarch64' or platform_python_implementation != 'CPython' or sys_platform != 'linux'",
-    "platform_machine == 'aarch64' and platform_python_implementation == 'CPython' and sys_platform == 'linux'",
-]
-dependencies = [
-    { name = "cuda-bindings", marker = "(sys_platform == 'linux' and extra != 'group-9-folio-rag-cpu' and extra != 'group-9-folio-rag-cuda' and extra != 'group-9-folio-rag-rocm-r714') or (extra == 'group-9-folio-rag-cpu' and extra == 'group-9-folio-rag-cuda') or (extra == 'group-9-folio-rag-cpu' and extra == 'group-9-folio-rag-rocm-r714') or (extra == 'group-9-folio-rag-cuda' and extra == 'group-9-folio-rag-rocm-r714')" },
-    { name = "cuda-toolkit", extra = ["cublas", "cudart", "cufft", "cufile", "cupti", "curand", "cusolver", "cusparse", "nvjitlink", "nvrtc", "nvtx"], marker = "(sys_platform == 'linux' and extra != 'group-9-folio-rag-cpu' and extra != 'group-9-folio-rag-cuda' and extra != 'group-9-folio-rag-rocm-r714') or (extra == 'group-9-folio-rag-cpu' and extra == 'group-9-folio-rag-cuda') or (extra == 'group-9-folio-rag-cpu' and extra == 'group-9-folio-rag-rocm-r714') or (extra == 'group-9-folio-rag-cuda' and extra == 'group-9-folio-rag-rocm-r714')" },
-    { name = "filelock", marker = "(extra == 'group-9-folio-rag-cpu' and extra == 'group-9-folio-rag-cuda') or (extra == 'group-9-folio-rag-cpu' and extra == 'group-9-folio-rag-rocm-r714') or (extra == 'group-9-folio-rag-cuda' and extra == 'group-9-folio-rag-rocm-r714') or (extra != 'group-9-folio-rag-cpu' and extra != 'group-9-folio-rag-cuda' and extra != 'group-9-folio-rag-rocm-r714')" },
-    { name = "fsspec", marker = "(extra == 'group-9-folio-rag-cpu' and extra == 'group-9-folio-rag-cuda') or (extra == 'group-9-folio-rag-cpu' and extra == 'group-9-folio-rag-rocm-r714') or (extra == 'group-9-folio-rag-cuda' and extra == 'group-9-folio-rag-rocm-r714') or (extra != 'group-9-folio-rag-cpu' and extra != 'group-9-folio-rag-cuda' and extra != 'group-9-folio-rag-rocm-r714')" },
-    { name = "jinja2", marker = "(extra == 'group-9-folio-rag-cpu' and extra == 'group-9-folio-rag-cuda') or (extra == 'group-9-folio-rag-cpu' and extra == 'group-9-folio-rag-rocm-r714') or (extra == 'group-9-folio-rag-cuda' and extra == 'group-9-folio-rag-rocm-r714') or (extra != 'group-9-folio-rag-cpu' and extra != 'group-9-folio-rag-cuda' and extra != 'group-9-folio-rag-rocm-r714')" },
-    { name = "networkx", marker = "(extra == 'group-9-folio-rag-cpu' and extra == 'group-9-folio-rag-cuda') or (extra == 'group-9-folio-rag-cpu' and extra == 'group-9-folio-rag-rocm-r714') or (extra == 'group-9-folio-rag-cuda' and extra == 'group-9-folio-rag-rocm-r714') or (extra != 'group-9-folio-rag-cpu' and extra != 'group-9-folio-rag-cuda' and extra != 'group-9-folio-rag-rocm-r714')" },
-    { name = "nvidia-cudnn-cu13", marker = "(sys_platform == 'linux' and extra != 'group-9-folio-rag-cpu' and extra != 'group-9-folio-rag-cuda' and extra != 'group-9-folio-rag-rocm-r714') or (extra == 'group-9-folio-rag-cpu' and extra == 'group-9-folio-rag-cuda') or (extra == 'group-9-folio-rag-cpu' and extra == 'group-9-folio-rag-rocm-r714') or (extra == 'group-9-folio-rag-cuda' and extra == 'group-9-folio-rag-rocm-r714')" },
-    { name = "nvidia-cusparselt-cu13", marker = "(sys_platform == 'linux' and extra != 'group-9-folio-rag-cpu' and extra != 'group-9-folio-rag-cuda' and extra != 'group-9-folio-rag-rocm-r714') or (extra == 'group-9-folio-rag-cpu' and extra == 'group-9-folio-rag-cuda') or (extra == 'group-9-folio-rag-cpu' and extra == 'group-9-folio-rag-rocm-r714') or (extra == 'group-9-folio-rag-cuda' and extra == 'group-9-folio-rag-rocm-r714')" },
-    { name = "nvidia-nccl-cu13", marker = "(sys_platform == 'linux' and extra != 'group-9-folio-rag-cpu' and extra != 'group-9-folio-rag-cuda' and extra != 'group-9-folio-rag-rocm-r714') or (extra == 'group-9-folio-rag-cpu' and extra == 'group-9-folio-rag-cuda') or (extra == 'group-9-folio-rag-cpu' and extra == 'group-9-folio-rag-rocm-r714') or (extra == 'group-9-folio-rag-cuda' and extra == 'group-9-folio-rag-rocm-r714')" },
-    { name = "nvidia-nvshmem-cu13", marker = "(sys_platform == 'linux' and extra != 'group-9-folio-rag-cpu' and extra != 'group-9-folio-rag-cuda' and extra != 'group-9-folio-rag-rocm-r714') or (extra == 'group-9-folio-rag-cpu' and extra == 'group-9-folio-rag-cuda') or (extra == 'group-9-folio-rag-cpu' and extra == 'group-9-folio-rag-rocm-r714') or (extra == 'group-9-folio-rag-cuda' and extra == 'group-9-folio-rag-rocm-r714')" },
-    { name = "setuptools", marker = "(extra == 'group-9-folio-rag-cpu' and extra == 'group-9-folio-rag-cuda') or (extra == 'group-9-folio-rag-cpu' and extra == 'group-9-folio-rag-rocm-r714') or (extra == 'group-9-folio-rag-cuda' and extra == 'group-9-folio-rag-rocm-r714') or (extra != 'group-9-folio-rag-cpu' and extra != 'group-9-folio-rag-cuda' and extra != 'group-9-folio-rag-rocm-r714')" },
-    { name = "sympy", marker = "(extra == 'group-9-folio-rag-cpu' and extra == 'group-9-folio-rag-cuda') or (extra == 'group-9-folio-rag-cpu' and extra == 'group-9-folio-rag-rocm-r714') or (extra == 'group-9-folio-rag-cuda' and extra == 'group-9-folio-rag-rocm-r714') or (extra != 'group-9-folio-rag-cpu' and extra != 'group-9-folio-rag-cuda' and extra != 'group-9-folio-rag-rocm-r714')" },
-    { name = "triton", version = "3.8.0", source = { registry = "https://pypi.org/simple" }, marker = "(platform_machine == 'aarch64' and platform_python_implementation == 'CPython' and sys_platform == 'linux' and extra != 'group-9-folio-rag-cpu' and extra != 'group-9-folio-rag-cuda' and extra != 'group-9-folio-rag-rocm-r714') or (extra == 'group-9-folio-rag-cpu' and extra == 'group-9-folio-rag-cuda') or (extra == 'group-9-folio-rag-cpu' and extra == 'group-9-folio-rag-rocm-r714') or (extra == 'group-9-folio-rag-cuda' and extra == 'group-9-folio-rag-rocm-r714')" },
-    { name = "triton", version = "3.8.0+git4cff872c.rocm7.14.1", source = { registry = "https://repo.amd.com/rocm/whl-multi-arch/" }, marker = "(platform_machine != 'aarch64' and sys_platform == 'linux' and extra != 'group-9-folio-rag-cpu' and extra != 'group-9-folio-rag-cuda' and extra != 'group-9-folio-rag-rocm-r714') or (platform_python_implementation != 'CPython' and sys_platform == 'linux' and extra != 'group-9-folio-rag-cpu' and extra != 'group-9-folio-rag-cuda' and extra != 'group-9-folio-rag-rocm-r714') or (extra == 'group-9-folio-rag-cpu' and extra == 'group-9-folio-rag-cuda') or (extra == 'group-9-folio-rag-cpu' and extra == 'group-9-folio-rag-rocm-r714') or (extra == 'group-9-folio-rag-cuda' and extra == 'group-9-folio-rag-rocm-r714')" },
-    { name = "typing-extensions", marker = "(extra == 'group-9-folio-rag-cpu' and extra == 'group-9-folio-rag-cuda') or (extra == 'group-9-folio-rag-cpu' and extra == 'group-9-folio-rag-rocm-r714') or (extra == 'group-9-folio-rag-cuda' and extra == 'group-9-folio-rag-rocm-r714') or (extra != 'group-9-folio-rag-cpu' and extra != 'group-9-folio-rag-cuda' and extra != 'group-9-folio-rag-rocm-r714')" },
-]
-wheels = [
-    { url = "https://files.pythonhosted.org/packages/17/76/bb4770f56cf6d8971671dbcbb7493e5a6a15ad2825f4e359b02c27c38297/torch-2.14.0-cp312-cp312-macosx_14_0_arm64.whl", hash = "sha256:c1f844f1c750e87df4b68bc3afbc0e2b0c7ef19d7b8f666e48bdcf6a0c4f0056", size = 127303200, upload-time = "2026-09-02T13:43:20.311Z" },
-    { url = "https://files.pythonhosted.org/packages/fe/7b/ec44bacf2c8886b85ba4ca2285e8b09f2dff5d9c99e6a031326954082cb5/torch-2.14.0-cp312-cp312-manylinux_2_28_aarch64.whl", hash = "sha256:ada340e62591d06a2bcc2d68170f20f45f0b0665d372dc510a8ed7eb3b1d609a", size = 454010251, upload-time = "2026-09-02T13:44:24.927Z" },
-    { url = "https://files.pythonhosted.org/packages/15/71/49399acd41f750a906c686bd23c08a2001ccb8dd25f2971003c2ed89c1dd/torch-2.14.0-cp312-cp312-manylinux_2_28_x86_64.whl", hash = "sha256:fecffb58f51fd643d213acd68da21cc3fc19bea05a3bc64b4ee55128f47a4963", size = 554620488, upload-time = "2026-09-02T13:44:49.442Z" },
-    { url = "https://files.pythonhosted.org/packages/be/16/9489b137112040f9911d7527e452854f21cc4e499ce0da79864e6a7451a7/torch-2.14.0-cp312-cp312-win_amd64.whl", hash = "sha256:cad84f41bbdf3dcf333ce394aeeaf25237c4d94fd6b659ba5eb813c829978823", size = 124114011, upload-time = "2026-09-02T13:43:55.034Z" },
-]
-
-[[package]]
-name = "torch"
-version = "2.14.0+cpu"
+version = "2.14.1+cpu"
 source = { registry = "https://download.pytorch.org/whl/cpu" }
 resolution-markers = [
-    "(platform_machine != 'aarch64' and sys_platform == 'linux') or (platform_python_implementation != 'CPython' and sys_platform == 'linux') or (sys_platform != 'darwin' and sys_platform != 'linux')",
-    "platform_machine == 'aarch64' and platform_python_implementation == 'CPython' and sys_platform == 'linux'",
+    "platform_machine != 'arm64' or sys_platform != 'darwin'",
 ]
 dependencies = [
-    { name = "filelock", marker = "(sys_platform != 'darwin' and extra == 'group-9-folio-rag-cpu') or (extra == 'group-9-folio-rag-cpu' and extra == 'group-9-folio-rag-cuda') or (extra == 'group-9-folio-rag-cpu' and extra == 'group-9-folio-rag-rocm-r714') or (extra == 'group-9-folio-rag-cuda' and extra == 'group-9-folio-rag-rocm-r714')" },
-    { name = "fsspec", marker = "(sys_platform != 'darwin' and extra == 'group-9-folio-rag-cpu') or (extra == 'group-9-folio-rag-cpu' and extra == 'group-9-folio-rag-cuda') or (extra == 'group-9-folio-rag-cpu' and extra == 'group-9-folio-rag-rocm-r714') or (extra == 'group-9-folio-rag-cuda' and extra == 'group-9-folio-rag-rocm-r714')" },
-    { name = "jinja2", marker = "(sys_platform != 'darwin' and extra == 'group-9-folio-rag-cpu') or (extra == 'group-9-folio-rag-cpu' and extra == 'group-9-folio-rag-cuda') or (extra == 'group-9-folio-rag-cpu' and extra == 'group-9-folio-rag-rocm-r714') or (extra == 'group-9-folio-rag-cuda' and extra == 'group-9-folio-rag-rocm-r714')" },
-    { name = "networkx", marker = "(sys_platform != 'darwin' and extra == 'group-9-folio-rag-cpu') or (extra == 'group-9-folio-rag-cpu' and extra == 'group-9-folio-rag-cuda') or (extra == 'group-9-folio-rag-cpu' and extra == 'group-9-folio-rag-rocm-r714') or (extra == 'group-9-folio-rag-cuda' and extra == 'group-9-folio-rag-rocm-r714')" },
-    { name = "setuptools", marker = "(sys_platform != 'darwin' and extra == 'group-9-folio-rag-cpu') or (extra == 'group-9-folio-rag-cpu' and extra == 'group-9-folio-rag-cuda') or (extra == 'group-9-folio-rag-cpu' and extra == 'group-9-folio-rag-rocm-r714') or (extra == 'group-9-folio-rag-cuda' and extra == 'group-9-folio-rag-rocm-r714')" },
-    { name = "sympy", marker = "(sys_platform != 'darwin' and extra == 'group-9-folio-rag-cpu') or (extra == 'group-9-folio-rag-cpu' and extra == 'group-9-folio-rag-cuda') or (extra == 'group-9-folio-rag-cpu' and extra == 'group-9-folio-rag-rocm-r714') or (extra == 'group-9-folio-rag-cuda' and extra == 'group-9-folio-rag-rocm-r714')" },
-    { name = "typing-extensions", marker = "(sys_platform != 'darwin' and extra == 'group-9-folio-rag-cpu') or (extra == 'group-9-folio-rag-cpu' and extra == 'group-9-folio-rag-cuda') or (extra == 'group-9-folio-rag-cpu' and extra == 'group-9-folio-rag-rocm-r714') or (extra == 'group-9-folio-rag-cuda' and extra == 'group-9-folio-rag-rocm-r714')" },
+    { name = "filelock", marker = "platform_machine != 'arm64' or sys_platform != 'darwin'" },
+    { name = "fsspec", marker = "platform_machine != 'arm64' or sys_platform != 'darwin'" },
+    { name = "jinja2", marker = "platform_machine != 'arm64' or sys_platform != 'darwin'" },
+    { name = "networkx", marker = "platform_machine != 'arm64' or sys_platform != 'darwin'" },
+    { name = "setuptools", marker = "platform_machine != 'arm64' or sys_platform != 'darwin'" },
+    { name = "sympy", marker = "platform_machine != 'arm64' or sys_platform != 'darwin'" },
+    { name = "typing-extensions", marker = "platform_machine != 'arm64' or sys_platform != 'darwin'" },
 ]
 wheels = [
-    { url = "https://download-r2.pytorch.org/whl/cpu/torch-2.14.0%2Bcpu-cp312-cp312-linux_s390x.whl", hash = "sha256:07aefe1a437b6f1b41b0cba15e16583e2f43549ec9d062fcea8e7981a78e014a", upload-time = "2026-09-02T18:31:32Z" },
-    { url = "https://download-r2.pytorch.org/whl/cpu/torch-2.14.0%2Bcpu-cp312-cp312-manylinux_2_28_aarch64.whl", hash = "sha256:da8140c3d4a41500d29710e35bf8e66a4295ec31026487c69f54a3f583310f8d", upload-time = "2026-09-02T18:31:37Z" },
-    { url = "https://download-r2.pytorch.org/whl/cpu/torch-2.14.0%2Bcpu-cp312-cp312-manylinux_2_28_x86_64.whl", hash = "sha256:a09987c95ec4cffdb6df798d3d641558110a334cfccce22f2f046d83142bc260", upload-time = "2026-09-02T18:31:42Z" },
-    { url = "https://download-r2.pytorch.org/whl/cpu/torch-2.14.0%2Bcpu-cp312-cp312-win_amd64.whl", hash = "sha256:738cd9237bf63443a5e5f9652e5115f7b0510b089636a43d4011e9fccede714f", upload-time = "2026-09-02T18:31:48Z" },
-    { url = "https://download-r2.pytorch.org/whl/cpu/torch-2.14.0%2Bcpu-cp312-cp312-win_arm64.whl", hash = "sha256:420e7dbed969bbd045b34105fa90d1ccf3e5c09c4e9b0d0a5f9df25df9d02d2e", upload-time = "2026-09-02T18:31:52Z" },
-]
-
-[[package]]
-name = "torch"
-version = "2.14.1+cu130"
-source = { registry = "https://download.pytorch.org/whl/cu130" }
-dependencies = [
-    { name = "cuda-bindings", marker = "(sys_platform == 'linux' and extra == 'group-9-folio-rag-cuda') or (extra == 'group-9-folio-rag-cuda' and extra == 'group-9-folio-rag-rocm-r714') or (extra == 'group-9-folio-rag-cpu' and extra == 'group-9-folio-rag-cuda') or (extra == 'group-9-folio-rag-cpu' and extra == 'group-9-folio-rag-rocm-r714')" },
-    { name = "cuda-toolkit", extra = ["cublas", "cudart", "cufft", "cufile", "cupti", "curand", "cusolver", "cusparse", "nvjitlink", "nvrtc", "nvtx"], marker = "(sys_platform == 'linux' and extra == 'group-9-folio-rag-cuda') or (extra == 'group-9-folio-rag-cuda' and extra == 'group-9-folio-rag-rocm-r714') or (extra == 'group-9-folio-rag-cpu' and extra == 'group-9-folio-rag-cuda') or (extra == 'group-9-folio-rag-cpu' and extra == 'group-9-folio-rag-rocm-r714')" },
-    { name = "filelock", marker = "extra == 'group-9-folio-rag-cuda' or (extra == 'group-9-folio-rag-cpu' and extra == 'group-9-folio-rag-rocm-r714')" },
-    { name = "fsspec", marker = "extra == 'group-9-folio-rag-cuda' or (extra == 'group-9-folio-rag-cpu' and extra == 'group-9-folio-rag-rocm-r714')" },
-    { name = "jinja2", marker = "extra == 'group-9-folio-rag-cuda' or (extra == 'group-9-folio-rag-cpu' and extra == 'group-9-folio-rag-rocm-r714')" },
-    { name = "networkx", marker = "extra == 'group-9-folio-rag-cuda' or (extra == 'group-9-folio-rag-cpu' and extra == 'group-9-folio-rag-rocm-r714')" },
-    { name = "nvidia-cudnn-cu13", marker = "(sys_platform == 'linux' and extra == 'group-9-folio-rag-cuda') or (extra == 'group-9-folio-rag-cuda' and extra == 'group-9-folio-rag-rocm-r714') or (extra == 'group-9-folio-rag-cpu' and extra == 'group-9-folio-rag-cuda') or (extra == 'group-9-folio-rag-cpu' and extra == 'group-9-folio-rag-rocm-r714')" },
-    { name = "nvidia-cusparselt-cu13", marker = "(sys_platform == 'linux' and extra == 'group-9-folio-rag-cuda') or (extra == 'group-9-folio-rag-cuda' and extra == 'group-9-folio-rag-rocm-r714') or (extra == 'group-9-folio-rag-cpu' and extra == 'group-9-folio-rag-cuda') or (extra == 'group-9-folio-rag-cpu' and extra == 'group-9-folio-rag-rocm-r714')" },
-    { name = "nvidia-nccl-cu13", marker = "(sys_platform == 'linux' and extra == 'group-9-folio-rag-cuda') or (extra == 'group-9-folio-rag-cuda' and extra == 'group-9-folio-rag-rocm-r714') or (extra == 'group-9-folio-rag-cpu' and extra == 'group-9-folio-rag-cuda') or (extra == 'group-9-folio-rag-cpu' and extra == 'group-9-folio-rag-rocm-r714')" },
-    { name = "nvidia-nvshmem-cu13", marker = "(sys_platform == 'linux' and extra == 'group-9-folio-rag-cuda') or (extra == 'group-9-folio-rag-cuda' and extra == 'group-9-folio-rag-rocm-r714') or (extra == 'group-9-folio-rag-cpu' and extra == 'group-9-folio-rag-cuda') or (extra == 'group-9-folio-rag-cpu' and extra == 'group-9-folio-rag-rocm-r714')" },
-    { name = "setuptools", marker = "extra == 'group-9-folio-rag-cuda' or (extra == 'group-9-folio-rag-cpu' and extra == 'group-9-folio-rag-rocm-r714')" },
-    { name = "sympy", marker = "extra == 'group-9-folio-rag-cuda' or (extra == 'group-9-folio-rag-cpu' and extra == 'group-9-folio-rag-rocm-r714')" },
-    { name = "triton", version = "3.8.0", source = { registry = "https://download.pytorch.org/whl/cu130" }, marker = "(sys_platform == 'linux' and extra == 'group-9-folio-rag-cuda') or (extra == 'group-9-folio-rag-cuda' and extra == 'group-9-folio-rag-rocm-r714') or (extra == 'group-9-folio-rag-cpu' and extra == 'group-9-folio-rag-cuda') or (extra == 'group-9-folio-rag-cpu' and extra == 'group-9-folio-rag-rocm-r714')" },
-    { name = "typing-extensions", marker = "extra == 'group-9-folio-rag-cuda' or (extra == 'group-9-folio-rag-cpu' and extra == 'group-9-folio-rag-rocm-r714')" },
-]
-wheels = [
-    { url = "https://download-r2.pytorch.org/whl/cu130/torch-2.14.1%2Bcu130-cp312-cp312-manylinux_2_28_aarch64.whl", hash = "sha256:6afc5e5944fb0bd927e08d32a11f71d19154001f1c81fa00a6ed81a217451795", upload-time = "2026-09-30T20:23:37Z" },
-    { url = "https://download-r2.pytorch.org/whl/cu130/torch-2.14.1%2Bcu130-cp312-cp312-manylinux_2_28_x86_64.whl", hash = "sha256:5359b255ac68c0cabb8293952b38e00f0d1a570815cd87f19b61af702c071410", upload-time = "2026-09-30T20:24:05Z" },
-    { url = "https://download-r2.pytorch.org/whl/cu130/torch-2.14.1%2Bcu130-cp312-cp312-win_amd64.whl", hash = "sha256:0a09031e93632d14ef49553acd6211ece3ae9cdc0969a369b8c24e3cc4d15be9", upload-time = "2026-09-30T20:25:17Z" },
+    { url = "https://download-r2.pytorch.org/whl/cpu/torch-2.14.1%2Bcpu-cp312-cp312-linux_s390x.whl", hash = "sha256:6b06a7f6275c5fdecaf1dbf5546f0820b024a97785575bb99e3d9930d83cd86b", upload-time = "2026-09-30T19:47:30Z" },
+    { url = "https://download-r2.pytorch.org/whl/cpu/torch-2.14.1%2Bcpu-cp312-cp312-manylinux_2_28_aarch64.whl", hash = "sha256:2af649994b36dffc627175c3f306d9e513a309b58d4619ac7107577613336454", upload-time = "2026-09-30T19:47:36Z" },
+    { url = "https://download-r2.pytorch.org/whl/cpu/torch-2.14.1%2Bcpu-cp312-cp312-manylinux_2_28_x86_64.whl", hash = "sha256:5a6363570c753812540a05eb82380e329469cbe668643e88111414c12627711f", upload-time = "2026-09-30T19:47:44Z" },
+    { url = "https://download-r2.pytorch.org/whl/cpu/torch-2.14.1%2Bcpu-cp312-cp312-win_amd64.whl", hash = "sha256:c52adc3bd526ff7fc5bdcc58fc4a76e6214d09951b646ffe5256ebd7ba60cef1", upload-time = "2026-09-30T19:47:50Z" },
+    { url = "https://download-r2.pytorch.org/whl/cpu/torch-2.14.1%2Bcpu-cp312-cp312-win_arm64.whl", hash = "sha256:2f8162c6b265eaf2b0bdd6bef20e96cece430f308e1477a32d0aef51e472124c", upload-time = "2026-09-30T19:47:55Z" },
 ]
 
 [[package]]
@@ -3845,7 +2815,7 @@ name = "tqdm"
 version = "4.70.0"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
-    { name = "colorama", marker = "sys_platform == 'win32' or (extra == 'group-9-folio-rag-cpu' and extra == 'group-9-folio-rag-cuda') or (extra == 'group-9-folio-rag-cpu' and extra == 'group-9-folio-rag-rocm-r714') or (extra == 'group-9-folio-rag-cuda' and extra == 'group-9-folio-rag-rocm-r714')" },
+    { name = "colorama", marker = "sys_platform == 'win32'" },
 ]
 sdist = { url = "https://files.pythonhosted.org/packages/21/3b/6c24bec5be5e743ffd99576daa5cc077722fc7d5bbc00bd133fa0c698dc6/tqdm-4.70.0.tar.gz", hash = "sha256:55b0b0dbd97462d06ebee91e4dac24ed4d4702be82b24f07e6c1d27e08cea220", size = 795438, upload-time = "2026-07-27T11:33:15.271Z" }
 wheels = [
@@ -3889,50 +2859,6 @@ wheels = [
 ]
 
 [[package]]
-name = "triton"
-version = "3.8.0"
-source = { registry = "https://download.pytorch.org/whl/cu130" }
-wheels = [
-    { url = "https://download-r2.pytorch.org/whl/triton-3.8.0-cp312-cp312-linux_aarch64.whl", hash = "sha256:bc34cb0bf49c074ce8c12470169f0c4349aec588a91a8f677d95ccd917976f71", upload-time = "2026-09-02T00:45:34Z" },
-    { url = "https://download-r2.pytorch.org/whl/triton-3.8.0-cp312-cp312-manylinux_2_27_x86_64.manylinux_2_28_x86_64.whl", hash = "sha256:07a88b13e4f7e8b1769094238ab75109a5db2a8160a24ddc49c24d2efa44cb58", upload-time = "2026-09-02T00:45:41Z" },
-]
-
-[[package]]
-name = "triton"
-version = "3.8.0"
-source = { registry = "https://pypi.org/simple" }
-resolution-markers = [
-    "platform_machine == 'aarch64' and platform_python_implementation == 'CPython' and sys_platform == 'linux'",
-]
-wheels = [
-    { url = "https://files.pythonhosted.org/packages/87/07/0f8cd8e8db0472334253efdaaab3d0819fea27aa99bf0e7f1aeea4ceb5ae/triton-3.8.0-cp312-cp312-manylinux_2_27_aarch64.manylinux_2_28_aarch64.whl", hash = "sha256:a9c404c69ed4a39e8ec632eaf6b9fe058a060bf98979c177f6ef666f06bb8d50", size = 226474486, upload-time = "2026-08-28T16:08:18.29Z" },
-    { url = "https://files.pythonhosted.org/packages/c1/09/b7012e5bfae67640f268aa584caa80fe1674f6b0da949046b679972c33e3/triton-3.8.0-cp312-cp312-manylinux_2_27_x86_64.manylinux_2_28_x86_64.whl", hash = "sha256:e91ffa46d095b252248297292dd22bcbacd53a125a0c2eefbbbf74925a320bc3", size = 247972921, upload-time = "2026-08-28T15:55:53.157Z" },
-]
-
-[[package]]
-name = "triton"
-version = "3.8.0+git4cff872c.rocm7.14.0"
-source = { registry = "https://repo.amd.com/rocm/whl-multi-arch/" }
-resolution-markers = [
-    "platform_machine != 'aarch64' or platform_python_implementation != 'CPython' or sys_platform != 'linux'",
-    "platform_machine == 'aarch64' and platform_python_implementation == 'CPython' and sys_platform == 'linux'",
-]
-wheels = [
-    { url = "https://repo.amd.com/rocm/whl-multi-arch/triton-3.8.0%2Bgit4cff872c.rocm7.14.0-cp312-cp312-linux_x86_64.whl" },
-]
-
-[[package]]
-name = "triton"
-version = "3.8.0+git4cff872c.rocm7.14.1"
-source = { registry = "https://repo.amd.com/rocm/whl-multi-arch/" }
-resolution-markers = [
-    "platform_machine != 'aarch64' or platform_python_implementation != 'CPython' or sys_platform != 'linux'",
-]
-wheels = [
-    { url = "https://repo.amd.com/rocm/whl-multi-arch/triton-3.8.0%2Bgit4cff872c.rocm7.14.1-cp312-cp312-linux_x86_64.whl" },
-]
-
-[[package]]
 name = "truststore"
 version = "0.10.5"
 source = { registry = "https://pypi.org/simple" }
@@ -3947,7 +2873,7 @@ version = "0.26.8"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "annotated-doc" },
-    { name = "colorama", marker = "sys_platform == 'win32' or (extra == 'group-9-folio-rag-cpu' and extra == 'group-9-folio-rag-cuda') or (extra == 'group-9-folio-rag-cpu' and extra == 'group-9-folio-rag-rocm-r714') or (extra == 'group-9-folio-rag-cuda' and extra == 'group-9-folio-rag-rocm-r714')" },
+    { name = "colorama", marker = "sys_platform == 'win32'" },
     { name = "rich" },
     { name = "shellingham" },
 ]

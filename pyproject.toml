@@ -2,19 +2,18 @@
 # Install profiles:
 #   uv sync                                   core only: every model is an HTTP endpoint
 #                                             (rag.profile: cloud) — no torch, no transformers
-#   uv sync --extra local --group <gpu>       + in-process models (CKIP, HuggingFace embeddings).
-#                                             Speech-to-text (rag.asr) and PDF/image reading
-#                                             (rag.parsing.vision) are always OpenAI-compatible
-#                                             endpoints; without a vision model PDFs are read from
-#                                             their text layer (pypdfium2, core).
-# GPU builds select PyTorch via PEP 735 dependency groups: `--group {rocm-r714|cuda|cpu}`.
-# Only torch differs per group (plus triton for cuda); the [tool.uv] sections below map it to its index.
+#   uv sync --extra local                     + in-process models (CKIP, HuggingFace embeddings)
+#                                             on the CPU. Speech-to-text (rag.asr) and PDF/image
+#                                             reading (rag.parsing.vision) are always
+#                                             OpenAI-compatible endpoints; without a vision model
+#                                             PDFs are read from their text layer (pypdfium2, core).
+# There are no GPU builds (1.5.1): torch is the CPU build from PyTorch's CPU index, mapped in
+# [tool.uv.sources] below. Models that want a GPU run behind an endpoint (e.g. Forgeyard).
 
 [project]
 name = "folio-rag"
 version = "1.5.0"
 description = "Folio MCP Server — hierarchical chunking + auto-merging retrieval, designed for gpt-oss-120b"
-# 3.12 is the lowest Python with cp312 wheels for every PyTorch build (rocm/cuda/cpu).
 requires-python = ">=3.12,<3.13"
 
 dependencies = [
@@ -73,7 +72,7 @@ dependencies = [
     "pytest-asyncio>=1.3.0",
     "pytest-cov>=7.0.0",
     "pytest-mock>=3.15.0",
-    # Security pins. torch comes from [dependency-groups], not here.
+    # Security pins. torch comes with the local extra, not here.
     "nltk>=3.9.4",
     "authlib>=1.6.9",
     "aiohttp>=3.13.4",
@@ -90,10 +89,14 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
-# In-process models (rag.profile: local / hybrid). `uv sync --extra local --group <gpu>`.
+# In-process models (rag.profile: local / hybrid). `uv sync --extra local`.
 # Everything here pulls torch; profile: cloud never imports any of it
 # (tests/test_cloud_profile_no_local_models.py).
 local = [
+    # The CPU build ([tool.uv.sources] maps it to PyTorch's CPU index): no CUDA or ROCm
+    # libraries. torch < 2.10 carries GHSA-63cw-57p8-fm3p (torch.load RCE) and < 2.13 the
+    # lstm_cell / unpack_sequence / jit.script advisories.
+    "torch>=2.14.0,<2.15",
     # In-process embedding models (provider: huggingface)
     "llama-index-embeddings-huggingface==0.6.1",
     # 5.x: 4.x carries advisories fixed only in 5.0-5.10 (torch.load in Trainer, malicious
@@ -195,42 +198,14 @@ exclude_lines = [
 ]
 
 
-# PyTorch install split (PEP 735). Groups are mutually exclusive — see [tool.uv] conflicts.
-[dependency-groups]
-
-# NVIDIA CUDA 13.0 wheels (driver >= 580). The same torch line as the cpu group: torch < 2.10
-# carries GHSA-63cw-57p8-fm3p (torch.load RCE) and the < 2.13 lstm_cell / unpack_sequence /
-# jit.script advisories. PyTorch publishes 2.14 for CUDA 13.0, not 12.x.
-cuda = [
-    "torch>=2.14.0,<2.15",
-    # triton is listed so its [tool.uv.sources] index pin applies (it is a torch transitive dep).
-    "triton>=3.8.0,<3.9",
-]
-
-# Pure CPU (CI / no GPU).
-cpu = [
-    "torch>=2.8.0",
-]
-
-# AMD ROCm 7.14 multi-arch wheels: one torch[device-all] wheel covers all AMD archs
-# (gfx1151 / gfx90a / gfx1201). torchvision / torchaudio left with docling's models (1.5):
-# nothing in-process uses them any more.
-# torch 2.13: AMD's 2.11 / 2.12 builds require setuptools<82, which kept the whole lock (every
-# group, CPU included) on setuptools 81 and its advisories. ROCm 7.13 was dropped for the same
-# reason: its newest torch is 2.11.
-rocm-r714 = [
-    "torch[device-all]==2.13.0+rocm7.14.0",
-]
-
-
 [tool.uv]
-# Lower concurrency so first-time bootstrap (~3.5GB of torch/cuda wheels) doesn't starve
-# small downloads into the default 30s timeout. Consider UV_HTTP_TIMEOUT=300 in CI.
+# Lower concurrency so a first-time bootstrap doesn't starve small downloads into the default
+# 30s timeout. Consider UV_HTTP_TIMEOUT=300 in CI.
 concurrent-downloads = 8
 
 # setuptools is a torch dependency. Below 84.1 it carries PYSEC-2026-3447 and GHSA-xmj3-9gf7-h52w;
-# this makes a lock that would fall back to an older one (an older AMD torch caps it at <82) fail
-# instead of passing the dependency audit's back door.
+# this makes a lock that would fall back to an older one fail instead of passing the dependency
+# audit's back door.
 #
 # Mako (via alembic) below 1.4.2 carries GHSA-5639-2j2p-m4mx. soupsieve (via beautifulsoup4) below
 # 4.0.0 carries CVE-2026-126190 and CVE-2026-126192; nothing that depends on it caps it below 4.
@@ -242,61 +217,25 @@ constraint-dependencies = ["setuptools>=84.1", "mako>=1.4.2", "soupsieve>=4.0.0"
 # the cache and the venv share a filesystem, e.g. in CI and Docker).
 link-mode = "copy"
 
-# Deploy target is always Linux x86_64; without this, unsafe-best-match may pick a version
-# that only ships aarch64/win wheels.
-required-environments = ["sys_platform == 'linux' and platform_machine == 'x86_64'"]
-
-# Needed because the AMD index only serves ROCm packages; a strict first-match resolver stalls
-# on ordinary PyPI packages. The per-package [tool.uv.sources] pins isolate the few names that
-# collide (e.g. triton, whose +rocm local version would otherwise win).
-index-strategy = "unsafe-best-match"
-
-# GPU/CPU groups are mutually exclusive (all install the same torch package from different
-# indexes). This list is the only guard — add every new group (including new ROCm versions).
-conflicts = [
-    [
-        { group = "rocm-r714" },
-        { group = "cuda" },
-        { group = "cpu" },
-    ],
+# The lock must carry wheels for these: the Docker image (linux x86_64 and arm64) and the
+# local extra's CPU torch on Linux and Apple silicon (the CPU index serves macOS arm64 too).
+# Without it, a version that ships wheels for only some platforms could be picked.
+required-environments = [
+    "sys_platform == 'linux' and platform_machine == 'x86_64'",
+    "sys_platform == 'linux' and platform_machine == 'aarch64'",
+    "sys_platform == 'darwin' and platform_machine == 'arm64'",
 ]
 
 
-# Wheel index sources.
-# PyPI comes first. uv takes a package from the first index that has it, so the AMD index below
-# (not explicit) only supplies what PyPI does not have: the ROCm runtime libraries that
-# torch[device-all] pulls in. Without this, jinja2, markupsafe, mpmath, networkx and sympy were
-# locked to the AMD index for every install, the core one included, and its markupsafe has no
-# arm64 wheel, which broke the linux/arm64 Docker image.
-[[tool.uv.index]]
-name = "pypi"
-url = "https://pypi.org/simple"
-[[tool.uv.index]]
-name = "pytorch-rocm-multiarch"
-url = "https://repo.amd.com/rocm/whl-multi-arch/"
-# Not explicit: torch[device-all]'s transitive ROCm runtime libs also live on this index.
-[[tool.uv.index]]
-name = "pytorch-cu130"
-url = "https://download.pytorch.org/whl/cu130"
-explicit = true
+# PyTorch's CPU wheels. Explicit: only torch (mapped below) comes from it; everything else,
+# torch's own dependencies included, comes from PyPI.
 [[tool.uv.index]]
 name = "pytorch-cpu"
 url = "https://download.pytorch.org/whl/cpu"
 explicit = true
 
-
-# Map torch (and triton) to the right index per group.
 [tool.uv.sources]
-torch = [
-    { index = "pytorch-rocm-multiarch", group = "rocm-r714" },
-    { index = "pytorch-cu130",          group = "cuda"      },
-    { index = "pytorch-cpu",            group = "cpu"       },
-]
-# Pin triton to the CUDA index; otherwise the AMD index's +rocm local version outranks the
-# bare 3.8.0 that CUDA needs, and torch.compile breaks on NVIDIA.
-triton = [
-    { index = "pytorch-cu130",        group = "cuda" },
-]
+torch = { index = "pytorch-cpu" }
 
 
 # Install the project as a package so importlib.metadata can read the version (src/version.py).

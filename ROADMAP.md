@@ -106,7 +106,6 @@ Kept here so they are not lost; none of them is planned.
 - **PostgreSQL with pgvector is required.** There is no SQLite fallback: hybrid retrieval and the
   per-folder tables depend on it.
 - **Synchronous SQLAlchemy** (psycopg2) for the configured DSN; never `+asyncpg`.
-- **The GPU is chosen by hand,** with `uv sync --extra local --group rocm-r714 | cuda | cpu`.
 - **Revocation is not instant, and is off by default.** Tokens are verified offline. Without
   `auth.revocation` a revoked token keeps working until it expires; with it, until the next poll of
   MCP Gate (30 s by default). With `fail_mode: open`, revocations made while MCP Gate is unreachable
