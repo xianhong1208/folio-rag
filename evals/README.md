@@ -91,6 +91,10 @@ VISION_API_KEY=<key> VISION_CA_FILE=forgeyard-ca.pem \
 Measured 2026-11-18 (the decision to drop docling's OCR, #7): Qwen3-VL-8B on Forgeyard read the
 4 clean and 4 degraded pages with no misread character and kept the tables as Markdown tables;
 docling's RapidOCR (PP-OCRv6) fell to a character F1 of 0.935–0.970 on the degraded Chinese pages.
+With this script (2026-11-19, Qwen3-VL-8B on Forgeyard, mean char F1 / CER): clean 0.9994 / 0.003;
+`--degrade --dpi 200` 0.9947 / 0.012; `--degrade` at the default 150 dpi (≈ 90 dpi after the
+scan's 0.6 shrink) 0.9639 / 0.067, where the model left out the top block of the second Chinese
+page (F1 0.876). Very low-resolution scans are the weak spot: raise `rag.parsing.dpi` for them.
 Without a vision model Folio reads these PDFs from their text layer (the reference itself), so
 the eval is only meaningful for the model.
 
