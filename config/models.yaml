@@ -49,7 +49,7 @@ rag:
     document_template: "document: {text}\nYou are a search relevance expert who evaluates how well documents match search queries. For each query-document pair, carefully analyze the semantic relationship between them, then provide your binary relevance judgment (0 for not relevant, 1 for relevant).\nRelevance:"
 
   # Speech-to-text for audio files: an OpenAI-compatible /audio/transcriptions endpoint
-  # (Forgeyard, speaches, vLLM, OpenAI). Folio runs no speech model itself (docs/migrate-asr.md);
+  # (Forgeyard, speaches, vLLM, OpenAI). Folio runs no speech model itself (docs/migrate-1.5.md);
   # without base_url, audio uploads are refused.
   asr:
     enabled: true                               # false = do not transcribe audio (audio uploads are refused)
@@ -60,19 +60,16 @@ rag:
     chinese_conversion: "s2twp"                 # s2twp = Traditional Chinese (Taiwan) | none
     ca_file: "${ASR_CA_FILE:-}"                 # PEM of a private CA (Forgeyard's own), added to the default trust
 
-  # Docling — structured PDF/DOCX parsing with local models.
-  docling:
-    device: "${DOCLING_DEVICE:-cuda}"           # cpu / cuda / cuda:0 / cuda:4
-    ocr_enabled: true
-    ocr_model_scale: "medium"                   # PP-OCRv6 tiny/small/medium; medium has the best accuracy
-    hf_offline: true                            # offline deployment: force use of the models under assets/
-    compile_models: false
-
-  # Optional: parse PDFs and images with a cloud vision model instead of docling.
-  # parsing:
-  #   pdf: cloud                                # local | cloud; unset = follow the profile
-  #   images: cloud
-  #   vision:
-  #     model: "gpt-4o-mini"
-  #     base_url: "${VISION_BASE_URL:-}"
-  #     api_key: "${VISION_API_KEY:-}"
+  # PDFs and images. With a vision model (an OpenAI-compatible chat model that accepts images,
+  # e.g. Qwen3-VL on Forgeyard), every PDF page and image is transcribed by it: scans, tables
+  # and figures included. Without one (VISION_BASE_URL or VISION_MODEL empty), PDFs are read
+  # from their text layer (a page without one becomes a marker) and image uploads are refused.
+  # Folio runs no OCR or layout model itself (docs/migrate-1.5.md).
+  parsing:
+    pdf: auto                                   # auto = vision model if configured, else text layer | vision | text
+    vision:
+      provider: "openai-compatible"
+      model: "${VISION_MODEL:-}"                # e.g. qwen3-vl-8b
+      base_url: "${VISION_BASE_URL:-}"          # e.g. https://forgeyard.example:7860/v1
+      api_key: "${VISION_API_KEY:-}"
+      ca_file: "${VISION_CA_FILE:-}"            # PEM of a private CA (Forgeyard's own), added to the default trust

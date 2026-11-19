@@ -1,4 +1,4 @@
-"""Cloud PDF / image parsing (src/domain/rag/cloud_parser.py).
+"""Vision-model PDF / image parsing (src/domain/rag/cloud_parser.py).
 
 PDFs and images are generated locally (tests/pdf_fixtures.py / Pillow); the vision model is a scripted
 stub client, plus one round trip through the real OpenAI client against the in-process
@@ -21,8 +21,11 @@ from src.domain.rag.cloud_parser import (
     PageResult,
     assign_page_provenance,
     clean_page_output,
-    is_cloud_parsed,
+    ImagesNeedVisionError,
+    check_image_upload,
+    image_upload_refusal,
     stitch_pages,
+    uses_vision,
 )
 from src.domain.rag.usage_budget import BudgetExceeded, DailyBudget
 from tests.fake_model_server import FakeModelServer
@@ -239,6 +242,13 @@ class TestParse:
         with pytest.raises(CloudParseError, match="HTTP 401"):
             _parser(_StubVision({1: _Status(401)})).parse_to_markdown(path, "a.pdf")
 
+    def test_every_page_failing_names_the_model_and_endpoint(self, tmp_path):
+        path = _pdf(tmp_path / "a.pdf", ["a", "b"])
+        stub = _StubVision({1: _Status(503), 2: _Status(503)})
+        with pytest.raises(CloudParseError, match=r"no page was transcribed — the vision model vlm at http://v/v1 "
+                                                  r"failed every page \(HTTP 503 after 1 attempt\(s\)\)"):
+            _parser(stub, max_retries=0).parse_to_markdown(path, "a.pdf")
+
     def test_too_many_failures_fail_the_file(self, tmp_path):
         path = _pdf(tmp_path / "a.pdf", ["a", "b", "c"])
         stub = _StubVision({1: _Status(503), 2: _Status(503)})
@@ -370,10 +380,14 @@ def test_custom_prompt_and_from_config():
     })
     p = CloudDocumentParser.from_config(rag)
     assert p.prompt == "Custom."
-    assert is_cloud_parsed(rag, "a.PDF") and is_cloud_parsed(rag, "b.jpeg")
-    assert not is_cloud_parsed(rag, "c.docx")
-    rag.parsing.images = "local"
-    assert not is_cloud_parsed(rag, "b.jpeg")
+    assert uses_vision(rag, "a.PDF") and uses_vision(rag, "b.jpeg")
+    assert not uses_vision(rag, "c.docx")
+    rag.parsing.pdf = "text"  # PDFs from the text layer; images still need the model
+    assert not uses_vision(rag, "a.pdf") and uses_vision(rag, "b.jpeg")
+    rag.parsing.vision = None
+    assert not uses_vision(rag, "a.pdf") and not uses_vision(rag, "b.jpeg")
+    rag.parsing.pdf = "vision"  # forced, but no model: never routed to a parser that cannot run
+    assert not uses_vision(rag, "a.pdf")
 
 
 def test_global_slots_resize():
@@ -392,29 +406,104 @@ class TestDailyBudget:
         assert b.used("k") == 0 and b.try_consume("k", 15, 15)
 
 
-class TestUnauthenticatedOcrEndpoint:
-    """/v1/ocr/general is unauthenticated: under cloud parsing it must not spend the
-    vision budget on anonymous uploads (and must not load local OCR models)."""
+def _rag_with(vision=None):
+    return SimpleNamespace(parsing=SimpleNamespace(pdf="auto", vision=vision))
 
-    def _client(self):
-        from fastapi import FastAPI
-        from fastapi.testclient import TestClient
-        from src.api.router.media import router
-        app = FastAPI()
-        app.include_router(router)
-        return TestClient(app)
 
-    def test_refused_when_cloud_parsing(self, monkeypatch):
-        rag = SimpleNamespace(profile="cloud", parsing=None)
+class TestImageUploadRefusal:
+    """Images can only be read by the vision model: without one they are refused at upload."""
+
+    def test_image_refused_without_vision_and_message_says_what_to_set(self):
+        reason = image_upload_refusal("scan.PNG", _rag_with())
+        assert reason and "'scan.PNG' is an image" in reason
+        assert "rag.parsing.vision" in reason and "VISION_BASE_URL" in reason and "migrate-1.5.md" in reason
+
+    def test_half_configured_vision_still_refuses(self):
+        assert image_upload_refusal("a.jpg", _rag_with(VisionModelConfig(model="m")))  # no base_url
+        assert image_upload_refusal("a.jpg", _rag_with(VisionModelConfig(base_url="http://v/v1")))
+
+    def test_image_accepted_with_vision_and_non_images_never_checked(self):
+        assert image_upload_refusal("a.webp", _rag_with(VisionModelConfig(model="m", base_url="http://v/v1"))) is None
+        assert image_upload_refusal("a.pdf", _rag_with()) is None
+        assert image_upload_refusal("a.docx", _rag_with()) is None
+        assert image_upload_refusal("a.gif", None)  # no rag config at all: refused
+
+    def test_openai_provider_needs_no_base_url(self):
+        assert image_upload_refusal("a.png", _rag_with(VisionModelConfig(provider="openai", model="gpt-4o"))) is None
+
+    def test_check_reads_the_live_config(self, monkeypatch):
         monkeypatch.setattr("src.config.config_manager.Config.get_config_model",
-                            lambda: SimpleNamespace(rag=rag))
-        r = self._client().post("/v1/ocr/general", files={"file": ("scan.png", b"x")})
-        assert r.status_code == 503 and "cloud vision model" in r.json()["detail"]
+                            lambda: SimpleNamespace(rag=_rag_with()))
+        with pytest.raises(ImagesNeedVisionError, match="is an image"):
+            check_image_upload("photo.jpeg")
+        check_image_upload("notes.md")  # not an image: nothing to check
 
-    def test_selection_helper_is_fail_safe(self, monkeypatch):
-        from src.api.router.media import _cloud_parsing_selected
 
-        def boom():
-            raise RuntimeError("no config")
-        monkeypatch.setattr("src.config.config_manager.Config.get_config_model", boom)
-        assert _cloud_parsing_selected("a.pdf") is False
+class TestEndpointFailuresAreNamed:
+    """A vision model that cannot be used fails the file with what to fix, not an empty index."""
+
+    def test_untrusted_certificate_fails_at_once_naming_ca_file(self, tmp_path):
+        import ssl
+        import httpx
+        path = _pdf(tmp_path / "a.pdf", ["a", "b"])
+        err = httpx.ConnectError("[SSL: CERTIFICATE_VERIFY_FAILED] certificate verify failed")
+        err.__cause__ = ssl.SSLCertVerificationError("self-signed certificate in certificate chain")
+        stub = _StubVision({1: err, 2: err})
+        with pytest.raises(CloudParseError, match="rag.parsing.vision.ca_file"):
+            _parser(stub, max_concurrency=1).parse_to_markdown(path, "a.pdf")
+        assert len(stub.calls) == 1  # no retries: every page would fail the same way
+
+    def test_unreachable_endpoint_names_its_url(self, tmp_path):
+        import httpx
+        path = _pdf(tmp_path / "a.pdf", ["a", "b"])
+        stub = _StubVision({1: httpx.ConnectError("refused"), 2: httpx.ConnectError("refused")})
+        with pytest.raises(CloudParseError, match=r"endpoint http://v/v1 could not be reached"):
+            _parser(stub, max_retries=0).parse_to_markdown(path, "a.pdf")
+
+    def test_partly_unreachable_is_a_page_failure_not_an_endpoint_error(self, tmp_path):
+        import httpx
+        path = _pdf(tmp_path / "a.pdf", ["a", "b", "c"])
+        stub = _StubVision({1: httpx.ConnectError("blip")})
+        md, report = _parser(stub, max_retries=0, max_concurrency=1).parse_to_markdown(path, "a.pdf")
+        assert report.failed_pages == [1] and "not transcribed" in md
+
+    def test_wrong_key_fails_naming_api_key(self, tmp_path):
+        path = _pdf(tmp_path / "a.pdf", ["a"])
+        with pytest.raises(CloudParseError, match="api_key"):
+            _parser(_StubVision({1: _Status(403)})).parse_to_markdown(path, "a.pdf")
+
+
+class TestVisionClientTrust:
+    """rag.parsing.vision.ca_file reaches the HTTP client the vision model is called with."""
+
+    def test_ca_file_builds_a_verifying_client(self, monkeypatch):
+        import httpx
+        from src.domain.rag import llm_client
+        seen, built = [], {}
+        monkeypatch.setattr("src.utils.tls.tls_verify", lambda f, s="": (seen.append((f, s)), "CTX")[1])
+        monkeypatch.setattr("src.utils.metered_http.metered_client",
+                            lambda role, openai=False, **kw: (built.update(role=role, **kw), httpx.Client())[1])
+        cfg = VisionModelConfig(model="m", base_url="https://fy:7860/v1", ca_file="/ca.pem")
+        llm_client.create_openai_client(cfg, metrics_role="vision").close()
+        assert seen == [("/ca.pem", "rag.parsing.vision.ca_file")]
+        assert built == {"role": "vision", "verify": "CTX"}
+
+    def test_probe_client_without_metrics_also_trusts_ca(self, monkeypatch):
+        import httpx
+        import openai
+        from src.domain.rag import llm_client
+        monkeypatch.setattr("src.utils.tls.tls_verify", lambda f, s="": "CTX")
+        captured = {}
+        monkeypatch.setattr(openai, "DefaultHttpxClient", lambda **kw: (captured.update(kw), httpx.Client())[1])
+        llm_client.create_openai_client(
+            VisionModelConfig(model="m", base_url="https://fy:7860/v1", ca_file="/ca.pem")).close()
+        assert captured == {"verify": "CTX"}
+
+    def test_no_ca_file_leaves_default_trust(self, monkeypatch):
+        from src.domain.rag import llm_client
+        assert llm_client._http_client(None) == {}
+
+    def test_unreadable_ca_file_is_an_error(self, tmp_path):
+        from src.utils.tls import tls_verify
+        with pytest.raises(RuntimeError, match="rag.parsing.vision.ca_file"):
+            tls_verify(str(tmp_path / "missing.pem"), "rag.parsing.vision.ca_file")

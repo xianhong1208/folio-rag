@@ -96,7 +96,7 @@ def test_core_install_runs_the_whole_cloud_pipeline(core_site_packages, tmp_path
     result = _run(["full"], f"{core_site_packages}{os.pathsep}{REPO}", tmp_path, extra_flags=("-S",))
     steps = result["steps"]
 
-    assert steps["warmup_skipped"] is True
+    assert steps["pdf_parsing"] == "vision"
     assert steps["loaded:policy.docx"] > 0 and steps["loaded:scan.pdf"] > 0
     assert steps["loaded:photo.png"] > 0
     if shutil.which("ffmpeg"):
@@ -117,7 +117,7 @@ def test_core_install_runs_the_whole_cloud_pipeline(core_site_packages, tmp_path
 
 def test_everything_installed_cloud_boot_and_query_load_nothing_local(tmp_path):
     result = _run(["query"], str(REPO), tmp_path)
-    assert result["steps"]["warmup_skipped"] is True
+    assert result["steps"]["pdf_parsing"] == "vision"
     assert result["steps"]["segmenter"] == "bigram"
     assert result["steps"]["answer"] == "An answer [1]."
     assert result["attempts"] == []

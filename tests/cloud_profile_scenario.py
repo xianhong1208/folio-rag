@@ -107,8 +107,8 @@ def main(workdir: str, mode: str) -> dict:
         assert cfg is not None and cfg.rag.profile == "cloud", "cloud config failed to load"
         import app
         app.create_app(cfg, transport="http")
-        from src.config.roles import docling_warmup_needed, startup_lines
-        steps["warmup_skipped"] = not docling_warmup_needed(cfg.rag)
+        from src.config.roles import pdf_parsing, startup_lines
+        steps["pdf_parsing"] = pdf_parsing(cfg.rag)
         steps["startup_lines"] = len(startup_lines(cfg.rag))
         from src.adapter.rag_context import RAGContext
         ctx = RAGContext.from_config()

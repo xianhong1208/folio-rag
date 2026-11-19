@@ -9,7 +9,7 @@
 |---|---|
 | `config/database.yaml` | `database`:連線、連線池、資料保留天數、備份 |
 | `config/auth.yaml` | `auth`:MCP Gate 的 issuer 與 audience、scope、主控台登入、revocation feed |
-| `config/models.yaml` | `rag.profile`,以及各模型跑在哪:`rag.embedding`、`rag.llm`、`rag.contextual_llm`、`rag.rerank`、`rag.asr`、`rag.docling`、`rag.parsing` |
+| `config/models.yaml` | `rag.profile`,以及各模型跑在哪:`rag.embedding`、`rag.llm`、`rag.contextual_llm`、`rag.rerank`、`rag.asr`、`rag.parsing` |
 | `config/mcp.yaml` | `app.tool_prefix`、`auth.dynamic_tools`(每個資料夾一個工具)、`modules.enabled` |
 | `config/retrieval.yaml` | `rag.indexing`、`rag.chunking`、`rag.contextual_retrieval`、`rag.vector_store`、`rag.retrieval`(含 `segmenter`) |
 | `config/system.yaml` | `server`、`logging`、`app.name` / `title` / `description`、`metrics`([`/metrics`](metrics.zh-TW.md)) |
@@ -36,10 +36,10 @@
 | `LLM_BASE_URL`、`LLM_API_KEY` | `rag.llm.*` | `http://localhost:5052/v1`、`not-needed` |
 | `CONTEXTUAL_LLM_BASE_URL`、`CONTEXTUAL_LLM_API_KEY` | `rag.contextual_llm.*`(在 `models.yaml` 中預設註解掉) | 空(沿用 `rag.llm`) |
 | `RERANK_BASE_URL`、`RERANK_API_KEY` | `rag.rerank.*` | `http://localhost:8787`、`not-needed` |
-| `ASR_BASE_URL`、`ASR_API_KEY`、`ASR_MODEL` | `rag.asr.*`:OpenAI 相容的轉錄端點([把語音轉文字改到端點](migrate-asr.zh-TW.md)) | 空(上傳音訊會被拒絕) |
+| `ASR_BASE_URL`、`ASR_API_KEY`、`ASR_MODEL` | `rag.asr.*`:OpenAI 相容的轉錄端點([升級到 1.5](migrate-1.5.zh-TW.md#語音轉文字)) | 空(上傳音訊會被拒絕) |
 | `ASR_CA_FILE` | `rag.asr.ca_file`:為該端點額外信任的 PEM CA 憑證(Forgeyard 自己的 CA) | 空 |
-| `VISION_BASE_URL`、`VISION_API_KEY` | `rag.parsing.vision.*`(在 `models.yaml` 中預設註解掉) | 空 |
-| `DOCLING_DEVICE` | `rag.docling.device` | `cuda` |
+| `VISION_BASE_URL`、`VISION_API_KEY`、`VISION_MODEL` | `rag.parsing.vision.*`:讀取 PDF 與圖片的 OpenAI 相容視覺模型([升級到 1.5](migrate-1.5.zh-TW.md#pdf-與圖片)) | 空(PDF 從文字層讀取,拒絕上傳圖片) |
+| `VISION_CA_FILE` | `rag.parsing.vision.ca_file`:該端點的私有 CA(PEM),例如 Forgeyard 的 | 空 |
 | `CKIP_DEVICE` | `rag.retrieval.ckip_device` | `cpu` |
 | `FOLIO_SEGMENTER` | `rag.retrieval.segmenter` | 空(= profile 的預設；Docker 映像檔設為 `jieba`) |
 | `METRICS_TOKEN` | `metrics.token`:`GET /metrics` 需要的 bearer token([監控指標](metrics.zh-TW.md)) | 空白(只限本機) |
@@ -75,10 +75,11 @@ Docker 映像檔自己的 `models.yaml` 還會讀幾個變數（模型名稱、�
 | `rag.retrieval.rerank_candidates` | `60` | 僅用於 `fused` 候選池:`max(3 × top_k, 此值)` 個融合候選送進 cross-encoder;可即時調整(1–200)。 |
 | `rag.retrieval.mcp_response_token_budget` | `6000` | MCP 搜尋回應的估算 token 上限;超過時省略排名最低的結果並在回應中註明。`0` = 不限制。 |
 | `rag.retrieval.min_relevance` | 隨附設定檔為 `0.9`(未設定時 `0`) | MCP 搜尋:最高 rerank 分數低於此值 → `low_relevance: true`(只標記、不刪除)。依模型而定;`0` = 關閉。 |
-| `rag.asr.*` | `openai-compatible`,沒有端點 | 透過 OpenAI 相容的 `POST {base_url}/audio/transcriptions` 轉錄音訊(Forgeyard、speaches、vLLM、OpenAI)。沒有 `base_url`,或 `rag.asr.enabled: false` 時,上傳音訊會以 422 拒絕並說明原因。`rag.asr.provider` 只接受 `openai-compatible`:在程序內執行的 `fireredasr` 與 `docling-whisper` **已在 1.5 移除**,設定若仍寫它們,啟動會被拒絕並指向[遷移指南](migrate-asr.zh-TW.md)。 |
+| `rag.asr.*` | `openai-compatible`,沒有端點 | 透過 OpenAI 相容的 `POST {base_url}/audio/transcriptions` 轉錄音訊(Forgeyard、speaches、vLLM、OpenAI)。沒有 `base_url`,或 `rag.asr.enabled: false` 時,上傳音訊會以 422 拒絕並說明原因。`rag.asr.provider` 只接受 `openai-compatible`:在程序內執行的 `fireredasr` 與 `docling-whisper` **已在 1.5 移除**,設定若仍寫它們,啟動會被拒絕並指向[遷移指南](migrate-1.5.zh-TW.md#語音轉文字)。 |
 | `rag.asr.chinese_conversion` | `s2twp` | 轉錄結果的中文字體:`s2twp` 把 whisper 輸出的簡體中文轉成台灣用語的繁體(OpenCC);`none` 保留端點原本的輸出。沒有中文字的文字一律不變。即時生效。 |
 | `rag.retrieval.segmenter` | `ckip`(`profile: cloud` 為 `bigram`) | 關鍵字檢索的中文斷詞器:`ckip` · `jieba` · `bigram`（見[運作原理](how-it-works.zh-TW.md)的「中文斷詞」）。 |
-| `rag.docling.ocr_enabled` | `true` | 掃描 PDF 與圖片的 OCR。設 `false` 會真的關掉(重啟後生效);沒有文字層的掃描檔會以明確訊息失敗。內建 OCR **將在 1.5 移除**,請改用搭配 `rag.parsing.vision` 的雲端解析([詳見](api.zh-TW.md#15-移除內建-ocr語音轉文字與-v1-媒體端點))。 |
+| `rag.parsing.pdf` | `auto` | PDF 的讀法:`auto` = `rag.parsing.vision` 有模型與端點時用視覺模型,否則讀 PDF 的文字層;`vision` = 一律用模型(沒有模型時拒絕);`text` = 一律讀文字層。沒有視覺模型時,沒有文字層的頁面會變成看得見的標記,完全沒有文字的 PDF 會索引失敗,圖片上傳會被拒絕(422)。即時生效。Folio 1.5 不再執行 OCR 或版面模型:`rag.docling`、`rag.parsing.images` 與 `pdf: local`/`cloud` 會讓啟動失敗([升級到 1.5](migrate-1.5.zh-TW.md#pdf-與圖片))。 |
+| `rag.parsing.vision.*` | 無 | 視覺模型:`provider`、`model`、`base_url`、`api_key`、`ca_file`(環境變數 `VISION_*`)。每一頁 PDF 與每張圖片都由它轉錄。 |
 | `rag.contextual_retrieval.max_doc_chars` | `60000` | 每個 chunk 交給 LLM 的文件文字上限。LLM 讀的是大綱加上 chunk 所在章節,以 chunk 為中心最多 12,000 字元。 |
 | `rag.retrieval.*` | — | Top-K、相似度門檻、BM25 候選數、`hybrid_fusion`（`rrf`/`concat`）、auto-merging。可從主控台即時調,或用 **High Precision / Balanced / High Recall** 預設。 |
 | `rag.profile` | `local` | `local` · `hybrid` · `cloud` —— 見[雲端 profile](#雲端-profile)。 |
@@ -132,7 +133,7 @@ rag:
     endpoint_path: /v2/rerank
     api_key: "${COHERE_API_KEY}"
 
-  parsing:                  # cloud is the default under profile: cloud
+  parsing:                  # pdf: auto (default) = this model reads PDFs and images
     vision:
       provider: openai
       model: gpt-4o-mini
@@ -157,16 +158,16 @@ rag:
 
 profile 做了什麼:
 
-- **驗證。** `cloud` 會拒絕在本機程序內載入的 provider（`huggingface` embedding、本地 PDF/圖片解析）,而且**拒絕不是 `${ENV}` 參照的 API 金鑰** —— 雲端金鑰會計費,
+- **驗證。** `cloud` 會拒絕在本機程序內載入的 provider（`huggingface` embedding）,而且**拒絕不是 `${ENV}` 參照的 API 金鑰** —— 雲端金鑰會計費,
   而設定檔是最常被複製流傳的檔案。明確設定 `rag.retrieval.segmenter: ckip` 也會被拒絕。啟動會失敗並列出有問題的設定路徑。`hybrid` 對寫死的金鑰只發警告;
   `local`（預設 —— 既有設定不受影響）不做任何新檢查。
-- **不 import 任何本地模型。** HuggingFace embedding、docling 的版面/OCR 模型與 CKIP
-  只在被選用時才 import(語音轉文字一律走端點);啟動時略過 docling 預熱,並在 log 中列出每個角色跑在哪裡。
+- **不 import 任何本地模型。** HuggingFace embedding 與 CKIP 只在被選用時才 import(視覺模型與語音轉文字在每個
+  profile 都一律走端點);啟動時在 log 中列出每個角色跑在哪裡。
   `tests/test_cloud_profile_no_local_models.py` 在沒有本地堆疊的安裝上跑完整流程來證明這點。
-- **雲端 PDF 與圖片解析。** 每一頁由視覺模型轉成 Markdown,所有頁面先接回**同一份**文件再切 chunk,
+- **以視覺模型解析 PDF 與圖片**(所有 profile,設定 `rag.parsing.vision` 之後;沒有設定時 PDF 從文字層讀取)。每一頁由視覺模型轉成 Markdown,所有頁面先接回**同一份**文件再切 chunk,
   標題、麵包屑與表格都能跨頁延續。每頁都會附上前一頁的結尾與目前的標題路徑;頁面以有序區塊並行
   （並行數有上限）;失敗的頁面會退避重試,仍失敗就在文字中標記,而不是讓整個檔案失敗。chunk 保留起始頁碼
-  供引用。單檔與每日頁數上限控制成本。未驗證的 `/v1/ocr/general` 端點不會轉給付費模型。
+  供引用。單檔與每日頁數上限控制成本。金鑰錯誤、憑證不被信任(`rag.parsing.vision.ca_file`)或端點連不上時,檔案會失敗並說明要修什麼,絕不會留下空白索引。
 - **語音轉文字**(所有 profile)。音訊重新取樣後,在靜音處切段上傳（每個請求都不會超過上傳上限）,有重試;
   轉錄結果在有語音卻為空、或疑似生成迴圈時會重新請求。
 - **每個角色各自的重試與逾時**（`timeout`、`max_retries`）:429 / 5xx / 逾時以指數退避加抖動重試,並遵守 `Retry-After`。
@@ -190,7 +191,7 @@ profile 做了什麼:
 
 **計算 chunk token 數**從不下載任何東西:有 `assets/hf_tokenizers/<org>--<model>` 就用它,否則用 `resources/tokenizers/` 內附的 XLM-RoBERTa tokenizer（multilingual-e5 與 bge-m3 用的就是它）,所以全新 clone 搭配 OpenAI 或 Azure embedding 也能直接用。
 
-**解析失敗看得到。** docling 若有頁面解析失敗(例如某個階段 GPU 記憶體不足),會以較小的 batch 重試;仍缺的頁碼會記在檔案上(主控台顯示 *Partial*,REST 狀態回 `warning`)。
+**解析失敗看得到。** docling 轉換只得到部分結果時會重試一次;仍缺的頁碼會記在檔案上(主控台顯示 *Partial*,REST 狀態回 `warning`)。視覺模型轉錄失敗的 PDF 頁面、以及只以「沒有文字層」標記索引的頁面,也列在同一個警告裡。
 
 ## 從 1.4 升級
 
@@ -216,8 +217,12 @@ profile 做了什麼:
   保留,作為 contextual 前綴的選用覆寫。轉換工具會略過這兩段(並提示);`models.yaml` 裡殘留的會被忽略並警告;主控台設定頁
   為它們存下的設定,會在啟動時刪除並警告。
 - **語音轉文字只走端點。** `rag.asr.provider: fireredasr` 或 `docling-whisper` 會讓啟動失敗。轉換工具會把它改成
-  `openai-compatible` 並註明;請依[遷移指南](migrate-asr.zh-TW.md)在 `.env` 設定 `ASR_BASE_URL`、`ASR_API_KEY` 與
+  `openai-compatible` 並註明;請依[遷移指南](migrate-1.5.zh-TW.md#語音轉文字)在 `.env` 設定 `ASR_BASE_URL`、`ASR_API_KEY` 與
   `ASR_MODEL`。在那之前服務照常啟動,但會拒絕上傳音訊。主控台設定頁存過的 provider 會在啟動時刪除並發出警告。
+- **不再有程序內的 PDF 或圖片模型。** `rag.docling` 區段、`rag.parsing.images` 或 `rag.parsing.pdf: local`/`cloud`
+  會讓啟動失敗。轉換工具會拿掉它們並註明。沒有 `VISION_BASE_URL` / `VISION_MODEL` 時,PDF 從文字層讀取,圖片上傳會被拒絕;
+  請依[遷移指南](migrate-1.5.zh-TW.md#pdf-與圖片)設定。從 `.env` 刪除 `DOCLING_DEVICE`;原本的 `hf_offline: true` 改設
+  `HF_HUB_OFFLINE=1`。主控台設定頁存過的這些值會在啟動時刪除並發出警告。
 - **模組接線**(`modules.<name>.api_router` / `mcp_tools`)不再能設定,只剩 `modules.enabled`。`mcp.yaml` 裡如果有接線區塊,
   或是不認得的模組名稱,啟動都會拒絕。
 - **端點、金鑰與裝置**改成 `${VAR:-預設值}` 參照(見上表)。你在 1.4 直接寫死的值,會以該變數名稱移到 `.env`;

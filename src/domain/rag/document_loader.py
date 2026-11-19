@@ -1,17 +1,21 @@
 
-"""Document Loader — three-way loading of a file into a llama_index Document.
+"""Document Loader — loading a file into a llama_index Document.
 
 Paths:
 1. Plain-text family (.txt/.json/...): read directly via read_text_robust with encoding
    tolerance, bypassing docling. A .csv is read the same way and turned into a Markdown
    table chunked as a table, so every chunk repeats the header row.
-2. PDFs / images when rag.parsing selects cloud (the default under profile: cloud):
-   cloud_parser — a vision model transcribes every page; the pages are re-assembled into
-   one document and chunked by the same chunker as the docling path.
-3. Audio: the injected AsrProvider (the rag.asr OpenAI-compatible endpoint), with
+2. Audio: the injected AsrProvider (the rag.asr OpenAI-compatible endpoint), with
    leading-silence trimming before and Whisper hallucination filtering after.
-4. docling-supported formats: docling_convert_once.
-5. Fallback: SimpleDirectoryReader.
+3. PDFs and images with a vision model (rag.parsing.vision; rag.parsing.pdf auto or vision):
+   cloud_parser — the model transcribes every page; the pages are re-assembled into one
+   document and chunked by the shared chunker.
+4. PDFs without one (or rag.parsing.pdf: text): pdf_text_layer — the PDF's own text layer,
+   a marker for each page without one; a PDF with no text at all fails. Images without a
+   vision model fail with what to set (uploads are refused before that).
+5. Other docling formats (Office, OpenDocument, HTML, Markdown, ...): docling_convert_once,
+   docling's model-free backends.
+6. Fallback: SimpleDirectoryReader.
 """
 
 from __future__ import annotations
@@ -27,7 +31,6 @@ from src.log import get_api_logger
 from src.domain.rag.docling_loader import (
     is_docling_supported,
     docling_convert_once,
-    ocr_enabled,
 )
 from src.domain.rag.asr_provider import AsrProvider, create_asr_provider
 from src.domain.rag.chunk_identity import token_budgets
@@ -40,10 +43,6 @@ from src.domain.rag.audio_defense import (
 from src.storage.file_storage import FileStorage
 
 logger = get_api_logger()
-
-# Formats whose text can come only from OCR when the file has no text layer.
-_OCR_EXTENSIONS = {".pdf", ".png", ".jpg", ".jpeg", ".tiff", ".tif", ".bmp", ".webp", ".gif"}
-
 
 def clean_text(text: str) -> str:
     """Strip NUL and control characters (rejected by PostgreSQL; commonly sourced from PDF
@@ -183,14 +182,15 @@ class DocumentLoader:
                 progress_cb=progress_cb,
             )
 
-        cloud_parser = self._cloud_parser_for(file_name)
-        if cloud_parser is not None:
-            # Same budgets as the local docling path (prefix + breadcrumb + text must fit
-            # the embedding window), and failed pages surface as the file's warning.
+        page_parser = self._page_parser_for(file_name)
+        if page_parser is not None:
+            # Vision model or text layer: the same budgets as the docling path (prefix +
+            # breadcrumb + text must fit the embedding window), and pages that could not be
+            # read surface as the file's warning.
             docling_max_tokens, table_max_tokens = token_budgets(
                 self._leaf_chunk_size, self._has_context_generator)
             warnings: Dict[str, Any] = {}
-            full_text, chunk_texts = cloud_parser.parse(
+            full_text, chunk_texts = page_parser(
                 resolved_path, file_name,
                 max_tokens=docling_max_tokens,
                 tokenizer=self._embedding_model_name,
@@ -222,11 +222,6 @@ class DocumentLoader:
             )
             content = clean_text(full_text)
             if not content.strip():
-                if file_extension in _OCR_EXTENSIONS and not ocr_enabled():
-                    raise ValueError(
-                        f"No text found in '{file_name}' and OCR is disabled "
-                        "(rag.docling.ocr_enabled=false). Enable OCR to index scanned pages."
-                    )
                 raise ValueError(f"Empty content extracted from {file_name}")
 
             doc = Document(text=content, metadata=base_metadata, doc_id=doc_id)
@@ -282,15 +277,37 @@ class DocumentLoader:
             get_hf_tokenizer(self._embedding_model_name), budget)
 
     @staticmethod
-    def _cloud_parser_for(file_name: str):
-        """A CloudDocumentParser when the live config routes this file type to the cloud
-        (read per file, so a console change to rag.parsing applies to the next file)."""
+    def _page_parser_for(file_name: str):
+        """The page parser for a PDF or an image under the live config (read per file, so a
+        console change to rag.parsing applies to the next file): the vision model's
+        ``parse``, the text layer's ``parse``, or None for every other format. An image
+        without a vision model raises ImagesNeedVisionError."""
         from src.config.config_manager import Config
-        from src.domain.rag.cloud_parser import CloudDocumentParser, is_cloud_parsed
-        rag = getattr(Config.get_config_model(), "rag", None)
-        if rag is None or not is_cloud_parsed(rag, file_name):
+        from src.config.roles import pdf_parsing
+        from src.domain.rag import pdf_text_layer
+        from src.domain.rag.cloud_parser import (
+            IMAGE_EXTENSIONS,
+            PDF_EXTENSIONS,
+            CloudDocumentParser,
+            ImagesNeedVisionError,
+            images_need_vision_message,
+            uses_vision,
+        )
+        ext = Path(file_name).suffix.lower()
+        if ext not in PDF_EXTENSIONS and ext not in IMAGE_EXTENSIONS:
             return None
-        return CloudDocumentParser.from_config(rag)
+        rag = getattr(Config.get_config_model(), "rag", None)
+        if rag is not None and uses_vision(rag, file_name):
+            return CloudDocumentParser.from_config(rag).parse
+        if ext in IMAGE_EXTENSIONS:
+            raise ImagesNeedVisionError(images_need_vision_message(file_name))
+        if rag is not None and pdf_parsing(rag) == "vision":
+            # rag.parsing.pdf: vision without a usable model (refused at load and in the
+            # console; this covers a model removed since): never fall back silently.
+            raise ValueError(f"rag.parsing.pdf is 'vision' but rag.parsing.vision is not configured, "
+                             f"so '{file_name}' was not read. Configure the vision model or set "
+                             "rag.parsing.pdf to auto.")
+        return pdf_text_layer.parse
 
     def _load_via_simple_reader(self, temp_dir, file_name, base_metadata, doc_id) -> Document:
         reader = SimpleDirectoryReader(

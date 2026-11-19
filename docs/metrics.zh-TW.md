@@ -85,8 +85,8 @@ Folio 是單一程序(一個 uvicorn worker),一個 target 就是整台伺服器
 | `folio_build_info` | gauge | `version`、`profile` | 固定為 1;標籤帶版本與 `rag.profile` |
 | `process_*`、`python_info` | | | 程序的 CPU、常駐記憶體、開啟檔案數與啟動時間;Python 版本 |
 
-不計入:在程序內執行的模型(`rag.profile: local` / `hybrid`,例如 HuggingFace 嵌入模型或 docling
-的版面與 OCR 模型)不發 HTTP 請求,所以 `folio_model_*` 只涵蓋端點;主控台的模型探測也不計入。
+不計入:在程序內執行的模型(`rag.profile: local` / `hybrid`,例如 HuggingFace 嵌入模型或 CKIP
+斷詞模型)不發 HTTP 請求,所以 `folio_model_*` 只涵蓋端點;主控台的模型探測也不計入。
 設定 `database.vector_store_engines: per_folder` 時,每個資料夾各有一個小連線池,這些不會回報。
 
 ### 標籤

@@ -1,13 +1,13 @@
-# Evals — RAG Retrieval and ASR Evaluation
+# Evals — RAG Retrieval, Page Reading (Vision Model) and ASR Evaluation
 
 
-**Purpose**: an acceptance net for every model / tuning decision. Run it before and after each change — switching the embedding model, switching the speech-to-text model or endpoint, or tuning `ef_search` — and let the numbers decide.
+**Purpose**: an acceptance net for every model / tuning decision. Run it before and after each change — switching the embedding model, switching the vision model that reads PDF pages and images, switching the speech-to-text model or endpoint, or tuning `ef_search` — and let the numbers decide.
 
 ## Layout
 
 ```
 evals/
-  metrics.py                  # Metric pure functions (CER / simplified-char rate / recall@k / MRR; unit-tested)
+  metrics.py                  # Metric pure functions (CER / char F1 / simplified-char rate / recall@k / MRR; unit-tested)
   rag/
     documents/                # <- Representative document set (any format in the allowlist)
     golden_qa.yaml            # <- QA set (format described in the file's comments)
@@ -71,6 +71,33 @@ What the harness measures, per question type and question language:
 - MCP response size (estimated tokens: CJK 0.7/char, other 0.25/char), duplicate-text
   ratio, p50/p95 latency; run-to-run variance over `--runs`.
 - gold reachability: evidence spans the indexed chunks no longer contain (parser loss).
+
+## Page reading: the vision model (`scripts/eval_ocr.py`)
+
+How well the model behind `rag.parsing.vision` reads PDF pages. Every page of the two public
+PDFs in `rag/documents/` (a Traditional Chinese budget and an English price list, both with
+tables) is rendered at `rag.parsing.dpi` and sent with Folio's own transcription prompt; the
+reference is the page's text layer. `--degrade` turns each render into a cheap office scan
+first (grey, 1.5° skew, 120 dpi, blur, speckles, JPEG quality 35), which is where OCR fails.
+Scores are CER and an order-free character F1 after dropping whitespace and Markdown table
+syntax (`evals/metrics.py`).
+
+```bash
+VISION_BASE_URL=https://<forgeyard-host>:7860/v1 VISION_MODEL=qwen3-vl-8b \
+VISION_API_KEY=<key> VISION_CA_FILE=forgeyard-ca.pem \
+.venv/bin/python scripts/eval_ocr.py --degrade --out evals/baselines/ocr-<date>-degraded.json
+```
+
+Measured 2026-11-18 (the decision to drop docling's OCR, #7): Qwen3-VL-8B on Forgeyard read the
+4 clean and 4 degraded pages with no misread character and kept the tables as Markdown tables;
+docling's RapidOCR (PP-OCRv6) fell to a character F1 of 0.935–0.970 on the degraded Chinese pages.
+With this script (2026-11-19, Qwen3-VL-8B on Forgeyard, mean char F1 / CER): clean (150 dpi) 0.9994 / 0.003;
+`--degrade` at 200 dpi 0.9947 / 0.012; `--degrade` at 150 dpi (≈ 90 dpi after the scan's 0.6
+shrink) 0.9639 / 0.067, where the model left out the top block of the second Chinese page
+(F1 0.876). That is why `rag.parsing.dpi` defaults to 200 (an A4 page is then about 3.9 MP, inside
+a 4096-image-token limit such as Forgeyard's); very low-resolution scans may still need more.
+Without a vision model Folio reads these PDFs from their text layer (the reference itself), so
+the eval is only meaningful for the model.
 
 ## Material Source A: Common Voice zh-TW (no proofreading, recommended)
 

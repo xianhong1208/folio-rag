@@ -80,7 +80,6 @@ EDITABLE: Dict[str, str] = {
     "rag.asr.max_retries": "live",
     # Document parsing (read per file, so changes apply to the next indexed file)
     "rag.parsing.pdf": "live",
-    "rag.parsing.images": "live",
     "rag.parsing.vision.provider": "live",
     "rag.parsing.vision.model": "live",
     "rag.parsing.vision.base_url": "live",
@@ -155,8 +154,6 @@ _NULLABLE = {"rag.rerank.top_n", "rag.contextual_retrieval.reasoning_effort",
              # per-role LLM overrides: empty = inherit rag.llm
              *(f"rag.{r}.{f}" for r in _LLM_ROLES for f in ("provider", "model", "base_url")),
              "rag.rerank.endpoint_path", "rag.asr.language",
-             # empty = follow the profile (cloud profile -> cloud parsing)
-             "rag.parsing.pdf", "rag.parsing.images",
              # unset = the profile's default (ckip; bigram under profile: cloud)
              "rag.retrieval.segmenter"}
 
@@ -167,11 +164,12 @@ CHINESE_CONVERSIONS = ("s2twp", "none")
 # Vision models are called through the OpenAI-compatible chat API (azure: its own client).
 VISION_PROVIDERS = ("openai-compatible", "openai", "vllm", "ollama", "azure")
 RERANK_APIS = ("score", "cohere", "jina", "generic")
-PARSING_MODES = ("local", "cloud")
+# auto = the vision model when configured, else the PDF text layer (src/config/roles.py)
+PARSING_MODES = ("auto", "vision", "text")
 _LOWERCASE_PATHS = ("rag.embedding.provider", "rag.llm.provider", "rag.asr.chinese_conversion",
                     *(f"rag.{r}.provider" for r in _LLM_ROLES),
                     "rag.parsing.vision.provider", "rag.rerank.api",
-                    "rag.parsing.pdf", "rag.parsing.images", "rag.parsing.on_page_failure",
+                    "rag.parsing.pdf", "rag.parsing.on_page_failure",
                     "rag.retrieval.segmenter")
 
 
@@ -191,7 +189,6 @@ def _allowed_values(path: str):
         "rag.parsing.vision.provider": VISION_PROVIDERS,
         "rag.rerank.api": RERANK_APIS,
         "rag.parsing.pdf": PARSING_MODES,
-        "rag.parsing.images": PARSING_MODES,
         "rag.parsing.on_page_failure": ("mark", "fail"),
         "rag.retrieval.hybrid_fusion": ("rrf", "concat"),
         "rag.retrieval.rerank_pool": ("per_list", "fused"),

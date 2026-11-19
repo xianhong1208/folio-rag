@@ -11,7 +11,7 @@ export const META = {
   'rag.contextual_llm': { title: 'Contextual-Prefix LLM', icon: 'spark', probe: 'contextual_llm', desc: 'Optional. Writes only one short sentence of context per chunk, so a small, fast model is enough — and it runs once per chunk, which saves a lot of indexing time and cost' },
   'rag.contextual_retrieval': { title: 'Contextual Retrieval', icon: 'list', desc: 'LLM-generated context prefix per chunk at index time' },
   'rag.rerank': { title: 'Reranker', icon: 'sort', probe: 'rerank', desc: 'Cross-encoder re-scoring of retrieval results' },
-  'rag.parsing': { title: 'Document Parsing', icon: 'scan', probe: 'vision', desc: 'Where PDFs and images are parsed: local docling models or a cloud vision model' },
+  'rag.parsing': { title: 'Document Parsing', icon: 'scan', probe: 'vision', desc: 'How PDFs and images are read. With a vision model (an OpenAI-compatible chat model that accepts images, e.g. Qwen3-VL on Forgeyard) every PDF page and image is transcribed by it. Without one, PDFs are read from their text layer and image uploads are refused.' },
   'rag.asr': { title: 'Speech-to-Text', icon: 'mic', probe: 'asr', desc: 'An OpenAI-compatible /audio/transcriptions endpoint (e.g. Forgeyard, speaches, OpenAI) that transcribes uploaded audio. Without an endpoint, audio uploads are refused.' },
   'rag.retrieval': { title: 'Retrieval', icon: 'sliders', desc: 'Hybrid search and auto-merging behavior' },
 }
@@ -63,11 +63,10 @@ export const FIELDS = {
   'rag.rerank.document_template': { label: 'Document Template', type: 'textarea' },
   'rag.rerank.gap_threshold': { label: 'Knowledge Gap Threshold', type: 'number', step: 0.05, range: [0, 1], hint: 'Analytics lists a question as a knowledge gap when its latest search returned nothing or its best rerank score is below this.' },
   'rag.rerank.auto_template': { label: 'Auto Chat Template', type: 'bool', hint: 'Apply the official Qwen chat prompt for mxbai-rerank-v2 when the templates above are default. Turn off if the rerank server already applies a chat template.' },
-  'rag.parsing.pdf': { label: 'PDF Parsing', type: 'select', options: ['', 'local', 'cloud'], nullable: true, hint: 'Empty = follow the profile (cloud profile → cloud)' },
-  'rag.parsing.images': { label: 'Image Parsing', type: 'select', options: ['', 'local', 'cloud'], nullable: true, hint: 'Empty = follow the profile' },
+  'rag.parsing.pdf': { label: 'PDF Parsing', type: 'select', options: ['auto', 'vision', 'text'], hint: 'auto = the vision model when one is set, else the text layer · text = never send PDFs to the model' },
   'rag.parsing.vision.provider': { label: 'Vision Provider', type: 'select', options: ['openai-compatible', 'openai', 'vllm', 'ollama', 'azure'] },
-  'rag.parsing.vision.model': { label: 'Vision Model', type: 'text', hint: 'A chat model that accepts images, e.g. gpt-4o-mini / Qwen2.5-VL' },
-  'rag.parsing.vision.base_url': { label: 'Vision Endpoint', type: 'text' },
+  'rag.parsing.vision.model': { label: 'Vision Model', type: 'text', hint: 'A chat model that accepts images, e.g. qwen3-vl-8b (Forgeyard) / gpt-4o-mini. Empty = text layer only' },
+  'rag.parsing.vision.base_url': { label: 'Vision Endpoint', type: 'text', hint: 'OpenAI-compatible base URL (usually ends in /v1). A private CA goes in rag.parsing.vision.ca_file (VISION_CA_FILE)' },
   'rag.parsing.vision.api_key': { label: 'API Key', type: 'secret' },
   'rag.parsing.max_concurrency': { label: 'Pages in Flight', type: 'number', hint: 'Process-wide; pages of one file run in this many ordered blocks' },
   'rag.parsing.max_pages_per_file': { label: 'Max Pages per File', type: 'number', hint: '0 = unlimited; larger files are refused before any call' },
@@ -124,11 +123,20 @@ export function keyIndicator(entry) {
   return { cls: 'warn', text: 'Set · literal value' }
 }
 
-// Where a role runs, for the roles overview.
+// Where a role runs, for the roles overview. Without a vision model PDFs still work: they are
+// read from their text layer, so that role says so instead of "Off".
 export function runsLabel(role) {
+  if (role && role.role === 'vision' && role.runs === 'off') return { cls: 'mute', text: 'Text layer only' }
   if (!role || role.runs === 'off') return { cls: 'mute', text: 'Off' }
   if (role.runs === 'in-process') return { cls: 'run', text: 'In-process' }
   return { cls: 'ok', text: 'Endpoint' }
+}
+
+// How PDFs and images are read, for the Overview (GET /api/admin/overview → models.parsing).
+export function parsingLabel(parsing) {
+  if (!parsing || !parsing.model) return { text: 'Text layer only', state: 'unset', title: 'PDFs are read from their text layer; image uploads are refused (no rag.parsing.vision)' }
+  const pdf = parsing.pdf === 'vision' ? 'PDFs + images' : 'images (PDFs: text layer)'
+  return { text: `${parsing.model} · ${pdf}`, state: 'ready', title: parsing.summary || '' }
 }
 
 // Render a probe result ({status, detail, latency_ms}) as a status line.

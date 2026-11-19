@@ -11,7 +11,7 @@ commit.
 |---|---|
 | `config/database.yaml` | `database`: connection, pools, retention, backups |
 | `config/auth.yaml` | `auth`: MCP Gate issuer and audience, scopes, console sign-in, revocation feed |
-| `config/models.yaml` | `rag.profile`, and where each model runs: `rag.embedding`, `rag.llm`, `rag.contextual_llm`, `rag.rerank`, `rag.asr`, `rag.docling`, `rag.parsing` |
+| `config/models.yaml` | `rag.profile`, and where each model runs: `rag.embedding`, `rag.llm`, `rag.contextual_llm`, `rag.rerank`, `rag.asr`, `rag.parsing` |
 | `config/mcp.yaml` | `app.tool_prefix`, `auth.dynamic_tools` (per-folder tools), `modules.enabled` |
 | `config/retrieval.yaml` | `rag.indexing`, `rag.chunking`, `rag.contextual_retrieval`, `rag.vector_store`, `rag.retrieval` (including `segmenter`) |
 | `config/system.yaml` | `server`, `logging`, `app.name` / `title` / `description`, `metrics` ([`/metrics`](metrics.md)) |
@@ -42,10 +42,10 @@ lists every variable. An empty value means "not set".
 | `LLM_BASE_URL`, `LLM_API_KEY` | `rag.llm.*` | `http://localhost:5052/v1`, `not-needed` |
 | `CONTEXTUAL_LLM_BASE_URL`, `CONTEXTUAL_LLM_API_KEY` | `rag.contextual_llm.*` (commented out in `models.yaml`) | empty (inherit `rag.llm`) |
 | `RERANK_BASE_URL`, `RERANK_API_KEY` | `rag.rerank.*` | `http://localhost:8787`, `not-needed` |
-| `ASR_BASE_URL`, `ASR_API_KEY`, `ASR_MODEL` | `rag.asr.*`: the OpenAI-compatible transcription endpoint ([Moving speech-to-text to an endpoint](migrate-asr.md)) | empty (audio uploads are refused) |
+| `ASR_BASE_URL`, `ASR_API_KEY`, `ASR_MODEL` | `rag.asr.*`: the OpenAI-compatible transcription endpoint ([Upgrading to 1.5](migrate-1.5.md#speech-to-text)) | empty (audio uploads are refused) |
 | `ASR_CA_FILE` | `rag.asr.ca_file`: a PEM CA certificate added to the default trust for that endpoint (Forgeyard's own CA) | empty |
-| `VISION_BASE_URL`, `VISION_API_KEY` | `rag.parsing.vision.*` (commented out in `models.yaml`) | empty |
-| `DOCLING_DEVICE` | `rag.docling.device` | `cuda` |
+| `VISION_BASE_URL`, `VISION_API_KEY`, `VISION_MODEL` | `rag.parsing.vision.*`: the OpenAI-compatible vision model that reads PDFs and images ([Upgrading to 1.5](migrate-1.5.md#pdfs-and-images)) | empty (PDFs from their text layer, images refused) |
+| `VISION_CA_FILE` | `rag.parsing.vision.ca_file`: a private CA (PEM) for that endpoint, e.g. Forgeyard's | empty |
 | `CKIP_DEVICE` | `rag.retrieval.ckip_device` | `cpu` |
 | `FOLIO_SEGMENTER` | `rag.retrieval.segmenter` | empty (= the profile's default; the Docker image sets `jieba`) |
 | `METRICS_TOKEN` | `metrics.token`: bearer token `GET /metrics` requires ([Metrics](metrics.md)) | empty (this host only) |
@@ -82,10 +82,11 @@ The settings you are likely to touch:
 | `rag.retrieval.rerank_candidates` | `60` | `fused` pool only: `max(3 × top_k, this)` fused candidates go to the cross-encoder; live-tunable (1–200). |
 | `rag.retrieval.mcp_response_token_budget` | `6000` | Estimated-token cap on an MCP search response; lowest-ranked results are dropped to fit and the response says so. `0` = no cap. |
 | `rag.retrieval.min_relevance` | `0.9` in the shipped config (`0` when unset) | MCP search: best rerank score below this → `low_relevance: true` (flagged, not dropped). Model-specific; `0` = off. |
-| `rag.asr.*` | `openai-compatible`, no endpoint | Audio transcription through an OpenAI-compatible `POST {base_url}/audio/transcriptions` (Forgeyard, speaches, vLLM, OpenAI). Without `base_url`, or with `rag.asr.enabled: false`, audio uploads are refused with 422 and the reason. `rag.asr.provider` takes only `openai-compatible`: the in-process `fireredasr` and `docling-whisper` were **removed in 1.5** and stop the start with a pointer to [the migration guide](migrate-asr.md). |
+| `rag.asr.*` | `openai-compatible`, no endpoint | Audio transcription through an OpenAI-compatible `POST {base_url}/audio/transcriptions` (Forgeyard, speaches, vLLM, OpenAI). Without `base_url`, or with `rag.asr.enabled: false`, audio uploads are refused with 422 and the reason. `rag.asr.provider` takes only `openai-compatible`: the in-process `fireredasr` and `docling-whisper` were **removed in 1.5** and stop the start with a pointer to [the migration guide](migrate-1.5.md#speech-to-text). |
 | `rag.asr.chinese_conversion` | `s2twp` | Chinese script of the transcript: `s2twp` turns whisper's Simplified Chinese into Traditional with Taiwan phrasing (OpenCC); `none` keeps what the endpoint returns. Text without Chinese characters is never changed. Live. |
 | `rag.retrieval.segmenter` | `ckip` (`bigram` under `profile: cloud`) | Chinese segmenter for keyword search: `ckip` · `jieba` · `bigram` (see *Chinese segmentation* in [How Folio works](how-it-works.md)). |
-| `rag.docling.ocr_enabled` | `true` | OCR for scanned PDFs and images. `false` really skips it (restart to apply); a scan with no text layer then fails with a clear message. The built-in OCR is **removed in 1.5**: use cloud parsing with `rag.parsing.vision` ([details](api.md#removed-in-15-built-in-ocr-speech-to-text-and-the-v1-media-endpoints)). |
+| `rag.parsing.pdf` | `auto` | How PDFs are read: `auto` = the vision model when `rag.parsing.vision` has a model and an endpoint, the PDF's text layer otherwise; `vision` = always the model (refused without one); `text` = always the text layer. Without a vision model a page with no text layer becomes a visible marker, a PDF with no text at all fails indexing, and image uploads are refused (422). Live. Folio 1.5 runs no OCR or layout model: `rag.docling`, `rag.parsing.images` and `pdf: local`/`cloud` stop the start ([Upgrading to 1.5](migrate-1.5.md#pdfs-and-images)). |
+| `rag.parsing.vision.*` | none | The vision model: `provider`, `model`, `base_url`, `api_key`, `ca_file` (env `VISION_*`). Every PDF page and image is transcribed by it. |
 | `rag.contextual_retrieval.max_doc_chars` | `60000` | Upper bound on the document text the LLM reads per chunk. It reads the outline plus the chunk's own section, windowed to at most 12,000 characters. |
 | `rag.retrieval.*` | — | Top-K, similarity cutoff, BM25 candidates, `hybrid_fusion` (`rrf`/`concat`), auto-merging. Tunable live from the console, or via the **High Precision / Balanced / High Recall** presets. |
 | `rag.profile` | `local` | `local` · `hybrid` · `cloud` — see [Cloud profile](#cloud-profile). |
@@ -141,7 +142,7 @@ rag:
     endpoint_path: /v2/rerank
     api_key: "${COHERE_API_KEY}"
 
-  parsing:                  # cloud is the default under profile: cloud
+  parsing:                  # pdf: auto (default) = this model reads PDFs and images
     vision:
       provider: openai
       model: gpt-4o-mini
@@ -166,22 +167,23 @@ rag:
 
 What the profile does:
 
-- **Validation.** `cloud` refuses in-process providers (`huggingface` embedding, local PDF/image
-  parsing) and **rejects API keys that are not `${ENV}`
+- **Validation.** `cloud` refuses in-process providers (`huggingface` embedding) and **rejects API keys that are not `${ENV}`
   references** — a cloud key is a billable credential and the config files are what gets
   copied around. An explicit `rag.retrieval.segmenter: ckip` is rejected too. Startup fails with the offending paths. `hybrid` only warns about literal keys;
   `local` (the default — existing configs are unchanged) checks nothing new.
-- **Nothing local is imported.** The HuggingFace embedding provider, docling's layout/OCR
-  models and CKIP are imported only when selected (speech-to-text is always an endpoint); startup skips the docling
-  warm-up and logs where every role runs. `tests/test_cloud_profile_no_local_models.py` proves it
+- **Nothing local is imported.** The HuggingFace embedding provider and CKIP are imported only
+  when selected (the vision model and speech-to-text are always endpoints, in every profile);
+  startup logs where every role runs. `tests/test_cloud_profile_no_local_models.py` proves it
   by running the whole pipeline on an install without the local stack.
-- **Cloud PDF and image parsing.** Every page is transcribed to Markdown by the vision model,
+- **Vision-model PDF and image parsing** (every profile, once `rag.parsing.vision` is set; without
+  it PDFs come from their text layer). Every page is transcribed to Markdown by the vision model,
   and the pages are stitched into **one** document before chunking, so headings, breadcrumbs and
   tables continue across page breaks. Each page is sent the previous page's tail and the current
   heading path; pages run in ordered blocks for bounded concurrency; failed pages are retried with
   backoff and, if they still fail, marked in the text instead of failing the file. Chunks keep the
-  page they start on for citations. Per-file and per-day page caps bound the cost. The
-  unauthenticated `/v1/ocr/general` endpoint is not routed to the paid model.
+  page they start on for citations. Per-file and per-day page caps bound the cost. A wrong key,
+  an untrusted certificate (`rag.parsing.vision.ca_file`) or an unreachable endpoint fails the file
+  with what to fix, never an empty index.
 - **Speech-to-text** (every profile). Audio is resampled and uploaded in segments cut at silences
   (so no request exceeds an upload limit), with retries, and re-asked when a transcript is empty
   despite speech or loops.
@@ -214,7 +216,7 @@ not billing.
 
 **Chunk token counting** never downloads anything: it uses `assets/hf_tokenizers/<org>--<model>` when present, else the bundled XLM-RoBERTa tokenizer in `resources/tokenizers/` (the tokenizer of multilingual-e5 and bge-m3), so a fresh clone with OpenAI or Azure embeddings works out of the box.
 
-**Parsing failures are visible.** If docling cannot parse some pages (for example the GPU runs out of memory inside a stage), the parse is retried with a smaller batch; pages still missing are listed on the file (a *Partial* badge in the console, `warning` in the REST status).
+**Parsing failures are visible.** A docling conversion that comes back partial is retried once, and pages still missing are listed on the file (a *Partial* badge in the console, `warning` in the REST status). The same warning lists PDF pages the vision model could not transcribe, and pages indexed only as a "no text layer" marker.
 
 ## Upgrading from 1.4
 
@@ -246,9 +248,15 @@ What else changed:
   with a warning.
 - **Speech-to-text only through an endpoint.** `rag.asr.provider: fireredasr` or `docling-whisper`
   stops the start. The converter rewrites it to `openai-compatible` and says so; set
-  `ASR_BASE_URL`, `ASR_API_KEY` and `ASR_MODEL` in `.env` as [the migration guide](migrate-asr.md)
+  `ASR_BASE_URL`, `ASR_API_KEY` and `ASR_MODEL` in `.env` as [the migration guide](migrate-1.5.md#speech-to-text)
   shows. Until then the server runs and refuses audio uploads. A provider stored on the console's
   Settings page is deleted at startup with a warning.
+- **No in-process PDF or image models.** A `rag.docling` section, `rag.parsing.images` or
+  `rag.parsing.pdf: local`/`cloud` stops the start. The converter drops them and says so. Without
+  `VISION_BASE_URL` / `VISION_MODEL`, PDFs are read from their text layer and image uploads are
+  refused; set them as [the migration guide](migrate-1.5.md#pdfs-and-images) shows. Delete
+  `DOCLING_DEVICE` from `.env`; for `hf_offline: true` set `HF_HUB_OFFLINE=1` instead. Values stored
+  on the console's Settings page are deleted at startup with a warning.
 - **Module wiring** (`modules.<name>.api_router` / `mcp_tools`) is no longer configurable; only
   `modules.enabled` remains. A wiring block in `mcp.yaml` is refused at startup, and an unknown
   module name too.

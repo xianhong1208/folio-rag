@@ -51,6 +51,32 @@ def cer(reference: str, hypothesis: str, normalize: bool = True) -> float:
     return prev[-1] / len(reference)
 
 
+# Page transcription (OCR / vision model) is compared without layout: whitespace, Markdown
+# table and heading syntax and the table separator rows are not text on the page.
+_PAGE_STRIP = re.compile(r"[\s|#*_`>\-=:]+")
+
+
+def page_text(text: str) -> str:
+    """A page's characters for comparison: NFKC (full-width forms equal their ASCII
+    twins), lower case, no whitespace or Markdown punctuation."""
+    import unicodedata
+    return _PAGE_STRIP.sub("", unicodedata.normalize("NFKC", text or "")).lower()
+
+
+def char_f1(reference: str, hypothesis: str) -> float:
+    """Bag-of-characters F1 between two page texts (order-free, so a table read in another
+    cell order is not punished twice; CER catches order). 1.0 = the same characters."""
+    from collections import Counter
+    ref, hyp = Counter(page_text(reference)), Counter(page_text(hypothesis))
+    if not ref and not hyp:
+        return 1.0
+    overlap = sum((ref & hyp).values())
+    if not overlap:
+        return 0.0
+    precision, recall = overlap / sum(hyp.values()), overlap / sum(ref.values())
+    return 2 * precision * recall / (precision + recall)
+
+
 # High-frequency sample of Simplified characters that differ in form from their
 # Traditional counterparts (heuristic, not exhaustive — enough to judge the
 # language leaning of the output).

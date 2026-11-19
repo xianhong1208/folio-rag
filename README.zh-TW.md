@@ -22,21 +22,18 @@ Folio 是一套開源、給 Model Context Protocol 用的檢索增強生成(RAG)
 **1.4.1:** 資料夾屬於「人」而不是某一把 token,同一位 MCP Gate 使用者的每一把 personal access token
 與 OAuth 登入都看到同一組資料夾;登出會在伺服器端結束主控台 session;答案使用提問的語言。詳見
 [CHANGELOG](CHANGELOG.md);接下來的規劃見[路線圖](ROADMAP.zh-TW.md)(1.5:Docker 映像檔、備份,以及
-透過 OpenAI 相容 API 做 OCR 與語音轉文字)。
+透過 OpenAI 相容 API 讀取文件與語音)。
 
 > **1.5 的變更(已在 `dev`,尚未發佈):** `config/config.yaml` 拆成 `config/` 底下的六個檔案,所有機密與每台機器各自的值
 > 都放在 `.env`,舊檔不再讀取;移除 `rag.answer_llm` 與 `rag.eval_llm`(回答與評估都用 `rag.llm`)。
 > `scripts/split_config.py` 可轉換 1.4 的設定,詳見[從 1.4 升級](docs/configuration.zh-TW.md#從-14-升級)。
 
-> **1.5 已移除(已在 `dev`):** 內建的語音轉文字(FireRedASR、docling-whisper)與
-> `POST /v1/transcriptions/general`。音訊只會送到 OpenAI 相容的轉錄端點(`rag.asr`,例如
-> [Forgeyard](https://github.com/xianhong1208/forgeyard) 上的 whisper-large-v3-turbo);設定若仍寫舊的
-> provider,啟動會被拒絕,而在設定端點之前,上傳音訊會被拒絕。詳見
-> [把語音轉文字改到端點](docs/migrate-asr.zh-TW.md)。
->
-> **仍在預告中:** 內建的 OCR 與其餘 `/v1` 媒體端點(`/v1/ocr/general`、`/v1/models`)照常可用,會在日誌中
-> 提出警告,`/v1` 的回應也會帶 `Deprecation` 標頭。詳見
-> [改用什麼](docs/api.zh-TW.md#15-移除內建-ocr語音轉文字與-v1-媒體端點)。
+> **1.5 已移除(已在 `dev`):** 所有在程序內執行的 OCR、版面與語音模型,以及 `/v1` 媒體端點(現在回 410 Gone)。
+> 設定了 OpenAI 相容的**視覺模型**時(`rag.parsing.vision`,例如 [Forgeyard](https://github.com/xianhong1208/forgeyard)
+> 上的 Qwen3-VL),PDF 與圖片由它讀取;沒有設定時,PDF 從文字層讀取(掃描頁會變成一個標記),圖片則拒絕上傳。
+> 音訊送到 OpenAI 相容的轉錄端點(`rag.asr`,例如 whisper-large-v3-turbo)。設定若仍有 `rag.docling`、
+> `rag.parsing.images`、`rag.parsing.pdf: local`/`cloud` 或舊的語音 provider,啟動會被拒絕。詳見
+> [升級到 1.5](docs/migrate-1.5.zh-TW.md)。
 
 ## 主要功能
 
@@ -50,7 +47,8 @@ Folio 是一套開源、給 Model Context Protocol 用的檢索增強生成(RAG)
   chunk。以舊版切塊流程或其他 embedding 模型索引的檔案,會標示需要重新索引。
 - **每人各自的資料夾。** 你只看得到自己 MCP Gate 帳號的資料夾,MCP、REST 與主控台都一樣。
 - **多種格式。** PDF、Office(含舊版與 RTF)、OpenDocument、HTML 與 MHTML、Markdown、EPUB、電子郵件、
-  圖片(OCR)與音訊(由 OpenAI 相容端點轉錄,簡體中文會轉成繁體)。
+  掃描的 PDF 與圖片(由 Qwen3-VL 等視覺模型讀取,表格保持表格;沒有視覺模型時 PDF 從文字層讀取)與音訊
+  (由 OpenAI 相容端點轉錄,簡體中文會轉成繁體)。
 - **用數字說話。** 公開的 205 題黃金測試集與評測工具;主控台可以用 Recall@k、MRR、nDCG@k 為你自己的
   資料夾評分。
 - **主控台**在 `/admin`:資料夾與檔案、顯示逐訊號軌跡的 Search Playground、索引任務、查詢分析與知識缺口、
@@ -150,12 +148,11 @@ Folio_product-docs  mode="search"  query="how do I rotate the signing key?"
 
 | Profile | 模型 | 安裝 |
 |---|---|---|
-| `local`(預設) | 什麼都可以。內附的設定呼叫自架的 embedding、LLM 與 reranker 端點,並在行程內執行 CKIP 斷詞與含 OCR 的 Docling 解析;語音轉文字一律走端點 | `uv sync --extra local --group rocm-r714 \| cuda \| cpu` |
+| `local`(預設) | 什麼都可以。內附的設定呼叫自架的 embedding、LLM 與 reranker 端點,並在行程內執行 CKIP 斷詞;視覺模型與語音轉文字一律走端點 | `uv sync --extra local --group rocm-r714 \| cuda \| cpu` |
 | `hybrid` | 同上,用於自架與雲端端點混用;直接寫在設定檔裡的 API 金鑰會被警告 | 同 `local` |
 | `cloud` | 每個角色都是 HTTP 端點,金鑰必須是 `${ENV}` 參照;不需要 torch,也不下載模型 | `uv sync` |
 
-用 `rag.profile` 設定,詳見[雲端 profile](docs/configuration.zh-TW.md#雲端-profile)。主控台與不需驗證的
-`/v1` 媒體端點請只開放在可信任的網路,或放在有 HTTPS 的反向代理後面;`/mcp` 與 `/api/rag/*` 需要有效的
+用 `rag.profile` 設定,詳見[雲端 profile](docs/configuration.zh-TW.md#雲端-profile)。主控台請只開放在可信任的網路,或放在有 HTTPS 的反向代理後面;`/mcp` 與 `/api/rag/*` 需要有效的
 token。**Docker 映像檔**就是 `cloud` profile,附 PostgreSQL + pgvector 與選用 MCP Gate 的 compose 檔;
 程序內模型則需要從原始碼安裝。[部署指南](docs/deploy.zh-TW.md)有 nginx 與 Caddy 範例、備份和升級。資料庫和 `storage/`(上傳檔)是同一套資料:
 少了其中一個,啟動時會[拒絕啟動](docs/deploy.zh-TW.md#少了其中一部分時),不會在沒有資料的情況下跑起來。
@@ -167,7 +164,7 @@ token。**Docker 映像檔**就是 `cloud` profile,附 PostgreSQL + pgvector 與
 | [運作原理](docs/how-it-works.zh-TW.md) | 檢索管線、檢索細節(BM25、斷詞、重排、延遲、相關度門檻)、量測檢索品質、每項功能的細節 |
 | [部署 Folio](docs/deploy.zh-TW.md) | Docker 映像檔與 compose 檔、模型端點(Forgeyard、vLLM)、issuer 與 audience 如何和 MCP Gate 對齊、反向代理與 HTTPS、備份、升級 |
 | [設定](docs/configuration.zh-TW.md) | 六個設定檔與 `.env`、常用的每個設定、雲端 profile、從 1.4 升級 |
-| [把語音轉文字改到端點](docs/migrate-asr.zh-TW.md) | 1.5:讓 Folio 改用 Forgeyard 或其他 OpenAI 相容轉錄端點、私有 CA、繁體中文輸出 |
+| [升級到 1.5](docs/migrate-1.5.zh-TW.md) | 讀取 PDF 與圖片的視覺模型(Forgeyard 上的 Qwen3-VL)或文字層、透過端點的語音轉文字、私有 CA、舊設定會怎樣 |
 | [驗證](docs/auth.zh-TW.md) | 依 MCP Gate 使用者的資料夾歸屬,以及 token 撤銷 feed |
 | [主控台](docs/console.zh-TW.md) | 登入、兩種權限層級、每個頁面、升級或更換 embedding 模型後重新索引 |
 | [API 參考](docs/api.zh-TW.md) | MCP、REST、主控台與健康檢查端點 |

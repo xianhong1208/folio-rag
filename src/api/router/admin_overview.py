@@ -220,6 +220,7 @@ async def get_overview(ident: ConsoleIdentity = Depends(require_console_session)
                 "model": eff.get("rag.asr.model"),
                 "base_url": eff.get("rag.asr.base_url"),
                 "available": _asr_available(cfg)},
+        "parsing": _parsing_view(cfg),
     }
     # How retrieval fuses vector and BM25 results (the overview used to claim a fixed
     # ".75/.25" weighting that is not used).
@@ -229,6 +230,22 @@ async def get_overview(ident: ConsoleIdentity = Depends(require_console_session)
     except Exception:
         data["retrieval"] = {"fusion": None}
     return {"data": data, "message": "ok"}
+
+
+def _parsing_view(cfg) -> dict:
+    """How PDFs and images are read now: ``pdf`` vision|text, ``images`` vision|refused, the
+    vision model's name (None without one) and a one-line summary."""
+    try:
+        from src.config.roles import parsing_summary, pdf_parsing, vision_model
+        rag = getattr(cfg, "rag", None)
+        if rag is None:
+            raise ValueError("no rag config")
+        vision = vision_model(rag)
+        return {"pdf": pdf_parsing(rag), "images": "vision" if vision is not None else "refused",
+                "model": (vision.azure_deployment or vision.model) if vision is not None else None,
+                "summary": parsing_summary(rag)}
+    except Exception:
+        return {"pdf": "text", "images": "refused", "model": None, "summary": None}
 
 
 def _asr_available(cfg) -> bool:
@@ -331,7 +348,7 @@ async def query_analytics(
             "message": "ok"}
 
 
-async def _probe_endpoint_health(base_url: str, api_key: str | None):
+async def _probe_endpoint_health(base_url: str, api_key: str | None, ca_file: str | None = None):
     """Probe an OpenAI-compatible endpoint (GET {base_url}/models); returns (status, detail, latency_ms).
 
     SSRF semantics match admin_settings.probe_endpoint: the intent is to probe internal model
@@ -347,7 +364,9 @@ async def _probe_endpoint_health(base_url: str, api_key: str | None):
     headers = {"Authorization": f"Bearer {api_key}"} if api_key else {}
     t0 = time.perf_counter()
     try:
-        async with httpx.AsyncClient(timeout=5.0, headers=headers, follow_redirects=False) as c:
+        from src.utils.tls import tls_verify
+        async with httpx.AsyncClient(timeout=5.0, headers=headers, follow_redirects=False,
+                                     verify=tls_verify(ca_file, "rag.parsing.vision.ca_file")) as c:
             resp = await c.get(f"{base}/models")
             # Some OpenAI-compatible services (e.g. a vLLM reranker) expose the model
             # list only under /v1/ and are configured with a base_url that omits it,
@@ -410,15 +429,19 @@ async def health_check():  # read-only status; any console session may view it
         ("Reranker", "sort", eff.get("rag.rerank.base_url"), eff.get("rag.rerank.api_key"),
          bool(eff.get("rag.rerank.enabled"))),
     ]
-    # Cloud document parsing (vision model) — only listed when PDFs/images go to the cloud
-    from src.config.roles import uses_cloud_parsing
+    # Document parsing: the vision model when one is configured (probed with its own CA);
+    # otherwise a "text layer only" line, since no endpoint is involved.
+    from src.config.roles import vision_model
     rag_cfg = getattr(cfg, "rag", None)
-    if rag_cfg is not None and uses_cloud_parsing(rag_cfg):
+    vision = vision_model(rag_cfg) if rag_cfg is not None else None
+    vision_ca = getattr(vision, "ca_file", None) if vision is not None else None
+    if vision is not None:
         endpoint_specs.append(("Document Parsing", "scan", eff.get("rag.parsing.vision.base_url"),
                                eff.get("rag.parsing.vision.api_key"), True))
     probe_tasks = [
-        _probe_endpoint_health(url, key) if enabled else None
-        for _, _, url, key, enabled in endpoint_specs
+        _probe_endpoint_health(url, key, ca_file=vision_ca if name == "Document Parsing" else None)
+        if enabled else None
+        for name, _, url, key, enabled in endpoint_specs
     ]
     results = await asyncio.gather(*[t for t in probe_tasks if t is not None])
     ri = 0
@@ -431,6 +454,12 @@ async def health_check():  # read-only status; any console session may view it
         ri += 1
         checks.append({"name": name, "kind": icon, "status": status,
                        "detail": detail, "latency_ms": ms, "endpoint": url or ""})
+
+    if vision is None:
+        checks.append({"name": "Document Parsing", "kind": "scan", "status": "unset",
+                       "detail": "Text layer only: PDFs are read from their text layer; scanned pages "
+                                 "and images need rag.parsing.vision (image uploads are refused)",
+                       "latency_ms": None, "endpoint": ""})
 
     # Speech-to-text (whether an endpoint is configured; not an HTTP probe)
     asr_enabled = bool(eff.get("rag.asr.enabled"))

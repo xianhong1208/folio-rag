@@ -144,6 +144,9 @@ def probe_role(rag, role: str) -> Dict[str, Any]:
                        llm.azure_deployment or llm.model)
     summary = {r["role"]: r for r in role_summary(rag)}[role]
     model = summary.get("model")
+    if role == "vision" and summary["runs"] == "off":
+        return _probe_result(role, "unset", "No vision model: PDFs are read from their text layer "
+                                            "and image uploads are refused", model=model)
     if summary["runs"] == "off":
         return _probe_result(role, "disabled", "Disabled in settings", model=model)
     if summary["runs"] == "in-process":

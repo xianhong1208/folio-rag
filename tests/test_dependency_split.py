@@ -45,8 +45,23 @@ def test_core_parses_documents_without_models():
 
 def test_local_extra_carries_the_model_stack():
     local = {_name(d) for d in _project()["optional-dependencies"]["local"]}
-    assert {"docling", "llama-index-embeddings-huggingface",
-            "transformers", "ckip-transformers"} <= local
+    assert {"llama-index-embeddings-huggingface", "transformers", "ckip-transformers"} <= local
+
+
+def test_no_in_process_pdf_or_image_models():
+    """1.5: PDFs and images are read by a vision model or from the text layer. No docling
+    model stack (layout, TableFormer, RapidOCR / EasyOCR) in any install, and no torchvision /
+    torchaudio (only those models used them)."""
+    project = _project()
+    specs = list(project["dependencies"]) + [d for ds in project["optional-dependencies"].values() for d in ds]
+    specs += [d for ds in tomllib.loads((Path(__file__).resolve().parents[1] / "pyproject.toml")
+                                         .read_text(encoding="utf-8")).get("dependency-groups", {}).values()
+              for d in ds if isinstance(d, str)]
+    names = {_name(d) for d in specs}
+    assert not names & {"docling", "docling-ibm-models", "rapidocr", "easyocr", "torchvision", "torchaudio"}
+    lock = (Path(__file__).resolve().parents[1] / "uv.lock").read_text(encoding="utf-8")
+    for pkg in ("docling-ibm-models", "rapidocr", "easyocr", "torchvision", "torchaudio"):
+        assert f'name = "{pkg}"' not in lock, pkg
 
 
 def test_no_in_process_speech_to_text():

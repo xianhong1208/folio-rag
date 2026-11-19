@@ -1,45 +1,35 @@
 
-"""Docling-based document loader with structure-aware chunking
+"""Docling-based loader for Office / OpenDocument / HTML / Markdown / e-mail / e-book files,
+with structure-aware chunking.
 
-Uses IBM's Docling to parse PDF/DOCX/PPTX with full structure preservation:
-- Tables are kept as complete Markdown chunks (never split)
+Docling's model-free format backends only (docling-slim): PDFs and images never reach
+docling. They are read by a vision model (cloud_parser) or from the PDF's text layer
+(pdf_text_layer); Folio 1.5 removed docling's in-process layout, TableFormer and OCR
+models together with their device settings (docs/migrate-1.5.md).
+
+- Tables are kept as complete chunks (split at row boundaries only when oversized)
 - Document hierarchy (headings, sections) is respected
-- HybridChunker ensures chunks fit within embedding model token limits
-
-Replaces: SimpleDirectoryReader + SentenceSplitter for structured documents.
-
-Device configuration comes from config/models.yaml (DOCLING_DEVICE):
-    rag:
-      docling:
-        device: "cuda:4"    # "cpu", "cuda", "cuda:0", "cuda:4"
-        ocr_enabled: true
-        hf_offline: true     # recommended for packaged environments
+- Every chunk fits the embedding model's token budget (see the helpers below); the same
+  chunker serves the vision and text-layer paths (``chunk_docling_document``)
 """
 
 from __future__ import annotations
 
-import os
 import re
 import threading
-import time
 from pathlib import Path
 from typing import Any, List, Optional
 
 from src.log import get_api_logger
 from src.utils.runtime_paths import resolve_external_dir
-from src.domain.rag.docling_guard import (
-    convert_checked,
-    missing_pages,
-    release_accelerator_cache,
-)
+from src.domain.rag.docling_guard import convert_checked, missing_pages
 
 logger = get_api_logger()
 
-# Supported file types for Docling. Documents and images each map to a Docling
-# FormatOption; audio is listed for the format invariant only — it never reaches
-# docling (document_loader sends it to the rag.asr endpoint). This set is kept aligned
-# to docling's official format list by a programmatic invariant in
-# tests/test_upload_formats.py (see its _EXCLUDED_FORMATS for exclusions).
+# Supported upload types. Documents map to a docling backend; PDFs and images are listed
+# for the format invariant (tests/test_upload_formats.py) but go to the vision model or the
+# text layer; audio goes to the rag.asr endpoint. Kept aligned to docling's official
+# format list by that test (see its _EXCLUDED_FORMATS for exclusions).
 DOCLING_EXTENSIONS = {
     # PDF / Office Open XML (including template/macro variants)
     ".pdf",
@@ -60,192 +50,31 @@ DOCLING_EXTENSIONS = {
     ".adoc", ".asciidoc", ".asc", ".tex", ".latex",
     # Email (.msg = python-oxmsg, pure Python; .eml = MIME) / ebooks / subtitles
     ".msg", ".eml", ".epub", ".vtt",
-    # Images
+    # Images (read by the vision model only; refused at upload without one)
     ".png", ".jpg", ".jpeg", ".tiff", ".tif", ".bmp", ".webp", ".gif",
     # Audio (docling's 6 official audio types; transcribed by the rag.asr endpoint, not docling)
     ".wav", ".mp3", ".m4a", ".aac", ".ogg", ".flac",
 }
 
-# Lazy-init flag (ensures the env is applied only once)
-_docling_env_applied = False
+# Never handed to docling: PDFs and images (vision model / text layer), audio (rag.asr).
+_PAGE_EXTENSIONS = {".pdf", ".png", ".jpg", ".jpeg", ".tiff", ".tif", ".bmp", ".webp", ".gif"}
+_AUDIO_EXTENSIONS = {".wav", ".mp3", ".m4a", ".aac", ".ogg", ".flac"}  # docling's 6 official types
 
-# Singleton DocumentConverter (preloaded at startup to avoid rebuilding models).
+# Singleton DocumentConverter (format backends only; cheap to build, but shared).
 _converter = None
-# Construction lock: get_converter runs from multiple OS threads (asyncio.to_thread /
-# run_in_threadpool); without it, the first concurrent wave would each build a
-# converter (several-second GPU load ×N → wasted VRAM/OOM).
 _converter_lock = threading.Lock()
-# Inference lock. The converter is a process-wide singleton shared by indexing and
-# media's /v1/ocr; concurrent forwards on the same
-# TableFormer / RapidOCR instance race the KV-cache → tensor reshape
-# errors, CUDA illegal memory, OOM. Every converter.convert() must hold this lock.
-# media.py imports this same lock — do not create separate ones.
+# One conversion at a time: legacy Office formats go through LibreOffice (soffice), which
+# does not tolerate concurrent runs on one profile.
 DOCLING_INFER_LOCK = threading.Lock()
-
-# Page-level parse progress (OCR progress bar). docling has no progress callback,
-# so we observe pages as they complete and report ("loading", done, total).
-# thread-local, since convert runs synchronously in one worker thread; media.py's
-# OCR path leaves it unset for zero behavior change.
-
-_page_progress_tls = threading.local()
-_page_patch_installed = False
-
-
-class _PageNotifyList(list):
-    """A list that reports page-level progress on append — swapped into ProcessingResult.pages/failed_pages.
-
-    Assumption: in docling 2.119's threaded pipeline, the collection loop (proc.pages.append) runs on
-    the same thread that called convert (worker stages only write to a queue), so reading ctx here
-    needs no cross-thread synchronization. If this assumption breaks in a future version, the symptom
-    is progress stuck at zero (ctx is TLS, unreadable from a worker thread), not corruption or a crash.
-    """
-
-    def __init__(self, ctx: dict):
-        super().__init__()
-        self._ctx = ctx
-
-    def append(self, item):
-        super().append(item)
-        ctx = self._ctx
-        ctx["done"] += 1
-        cb = ctx.get("cb")
-        if cb is not None:
-            try:
-                cb("loading", ctx["done"], ctx.get("total"))
-            except Exception:  # progress reporting must never kill parsing
-                pass
-
-
-def _install_page_progress_patch() -> None:
-    """Install the page-level progress observer (idempotent). Pure observation: zero behavior change when TLS is unset.
-
-    Two docling generations have different hook points; install both, each guarded independently:
-    - 2.118+: StandardPdfPipeline is a threaded staged pipeline whose collection loop appends pages
-      into ProcessingResult on the caller's thread → replace it with _PageNotifyList
-    - ≤2.111: StandardPdfPipeline inherits PaginatedPipeline, streaming page by page through the
-      _apply_on_pages generator → wrap it with a counter
-    """
-    global _page_patch_installed
-    if _page_patch_installed:
-        return
-    _page_patch_installed = True
-
-    # --- Hook point 1: 2.118+ threaded pipeline ---
-    try:
-        from docling.pipeline.standard_pdf_pipeline import ProcessingResult
-
-        _orig_init = ProcessingResult.__init__
-
-        def _init_with_progress(self, *args, **kwargs):
-            _orig_init(self, *args, **kwargs)
-            ctx = getattr(_page_progress_tls, "ctx", None)
-            if ctx is not None:
-                # plain dataclass attribute replacement; success_count/failure_count use len(),
-                # so the list subclass is fully compatible
-                self.pages = _PageNotifyList(ctx)
-                self.failed_pages = _PageNotifyList(ctx)
-
-        ProcessingResult.__init__ = _init_with_progress
-        logger.info("[DOCLING] page-progress observer installed (ProcessingResult)")
-    except ImportError:
-        pass
-
-    # --- Hook point 2: ≤2.111 paginated pipeline ---
-    try:
-        from docling.pipeline.base_pipeline import PaginatedPipeline
-
-        _orig_apply = PaginatedPipeline._apply_on_pages
-
-        def _apply_with_progress(self, conv_res, page_batch):
-            ctx = getattr(_page_progress_tls, "ctx", None)
-            for page in _orig_apply(self, conv_res, page_batch):
-                if ctx is not None:
-                    ctx["done"] += 1
-                    cb = ctx.get("cb")
-                    if cb is not None:
-                        try:
-                            cb("loading", ctx["done"], ctx.get("total"))
-                        except Exception:
-                            pass
-                yield page
-
-        PaginatedPipeline._apply_on_pages = _apply_with_progress
-        logger.info("[DOCLING] page-progress observer installed (PaginatedPipeline)")
-    except (ImportError, AttributeError):
-        pass
-
-
-def _pdf_page_count(file_path: str) -> Optional[int]:
-    """Page total for the progress bar, computed instantly without parsing.
-
-    PDFs are counted with PDFium (pdf_pages); images, which docling also runs through its
-    paged pipeline, count their frames (1, or N for a multi-page TIFF). Anything else, or
-    a file that cannot be opened, gives None and the console shows the bare stage.
-    """
-    from src.domain.rag.pdf_pages import page_count_or_none
-
-    count = page_count_or_none(file_path)
-    if count is not None:
-        return count
-    try:
-        from PIL import Image
-        with Image.open(file_path) as im:
-            return getattr(im, "n_frames", 1) or 1
-    except Exception:
-        return None
 
 
 def resolve_assets_dir() -> Optional[Path]:
-    """Resolve the assets/ resource directory (shared API; document_indexer.py also imports this).
-
-    The resource directory holds ML models, tokenizers, nltk_data, and other files that "must ship
-    together when packaged". The actual lookup logic lives in src.utils.runtime_paths.resolve_external_dir;
-    this is just a thin wrapper binding `name="assets"` and dev_root.
-
-    Note: after packaging, libs/ is occupied by .venv site-packages, so ML assets live separately
-    under assets/ — never move them back to libs/.
-    """
+    """Resolve the assets/ resource directory (tokenizers, nltk_data shipped with a package;
+    hierarchical_indexer imports this). The lookup lives in src.utils.runtime_paths."""
     return resolve_external_dir(
         "assets",
         dev_root=Path(__file__).resolve().parents[3],
     )
-
-
-def _resolve_artifacts_path() -> Optional[Path]:
-    """Resolve the Docling ML model directory: assets/docling_models
-
-    Produced by `docling-tools models download -o assets/docling_models`. Returns None if not found.
-    """
-    assets = resolve_assets_dir()
-    if assets:
-        p = assets / "docling_models"
-        if p.is_dir():
-            return p
-    return None
-
-
-def ocr_enabled() -> bool:
-    """config ``rag.docling.ocr_enabled`` (restart-level: the converter is a singleton).
-    Unreadable config keeps the default (on)."""
-    try:
-        from src.config.config_manager import Config as _Cfg
-        return bool(_Cfg.get_config_model().rag.docling.ocr_enabled)
-    except Exception:
-        return True
-
-
-def _local_pdf_models_wanted() -> bool:
-    """Whether rag.parsing keeps PDF or image parsing on the in-process docling models
-    (config unreadable → the old behaviour: yes)."""
-    try:
-        from src.config.config_manager import Config as _Cfg
-        from src.config.roles import needs_local_docling_models
-        rag = getattr(_Cfg.get_config_model(), "rag", None)
-        if rag is not None:
-            return needs_local_docling_models(rag)
-    except Exception:
-        pass
-    return True
 
 
 def get_hf_tokenizer(tokenizer_name: Optional[str]):
@@ -261,391 +90,33 @@ def get_hf_tokenizer(tokenizer_name: Optional[str]):
     return get_chunk_tokenizer(tokenizer_name)
 
 
-def _apply_docling_env():
-    """Read Docling settings from config and apply them to environment variables.
-
-    Deferred until Docling is first used, by which point Config is already loaded. Runs only once,
-    guarded by the _docling_env_applied flag.
-
-    Note: the device setting no longer goes through the DOCLING_DEVICE env var (Docling doesn't read
-    it). The actual GPU enablement point is `_get_accelerator_options()`, which passes AcceleratorOptions
-    into PdfPipelineOptions.
-    """
-    global _docling_env_applied
-    if _docling_env_applied:
-        return
-    _docling_env_applied = True
-
-    try:
-        from src.config.config_manager import Config
-        config = Config.get_config_model()
-
-        if config and config.rag:
-            docling_config = getattr(config.rag, 'docling', None)
-
-            if docling_config:
-                device = docling_config.device or "cpu"
-                # Keep the DOCLING_DEVICE env var (backward compatibility, for debug visibility).
-                # The entry point that actually takes effect is _get_accelerator_options().
-                os.environ["DOCLING_DEVICE"] = device
-                logger.info(f"[DOCLING_INIT] device={device} (resolves to AcceleratorOptions)")
-
-                # From docling 2.119, AcceleratorOptions supports "cuda:N" (see
-                # _get_accelerator_options), and cuda:N genuinely pins to the Nth card.
-                # If CUDA_VISIBLE_DEVICES is also set, N is the index *after remapping* —
-                # using both together easily misfires (e.g. CUDA_VISIBLE_DEVICES=4 + device=cuda:4
-                # → no visible 5th card, so it crashes). For shared-card scenarios, pick one:
-                #   (a) device=cuda:4 without setting CUDA_VISIBLE_DEVICES (recommended, intuitive)
-                #   (b) CUDA_VISIBLE_DEVICES=4 + device=cuda:0 (more thorough isolation)
-                if device.startswith("cuda:") and os.environ.get("CUDA_VISIBLE_DEVICES"):
-                    logger.warning(
-                        f"[DOCLING_INIT] device='{device}' set together with "
-                        f"CUDA_VISIBLE_DEVICES={os.environ['CUDA_VISIBLE_DEVICES']}: "
-                        f"N in cuda:N is the post-remap index; confirm it points to the right card"
-                    )
-
-                # HuggingFace offline mode
-                if docling_config.hf_offline:
-                    os.environ["HF_HUB_OFFLINE"] = "1"
-                    logger.info("[DOCLING_INIT] HuggingFace offline mode enabled")
-
-                # torch.compile toggle (disabling speeds startup by ~120s, but inference is slightly slower)
-                if not docling_config.compile_models:
-                    os.environ["DOCLING_INFERENCE"] = '{"compile_torch_models": false}'
-                    logger.info("[DOCLING_INIT] torch.compile disabled (faster startup)")
-
-                # OCR toggle: applied as PdfPipelineOptions(do_ocr=...) in _build_converter
-                # (docling reads no environment variable for it).
-                if not docling_config.ocr_enabled:
-                    logger.info("[DOCLING_INIT] OCR disabled")
-
-                return
-
-    except Exception as e:
-        logger.warning(f"[DOCLING_INIT] Failed to read config, using defaults: {e}")
-
-    # Fallback
-    if "DOCLING_DEVICE" not in os.environ:
-        os.environ["DOCLING_DEVICE"] = "cpu"
-        logger.info("[DOCLING_INIT] device=cpu (default)")
-
-
-def _get_rapidocr_options(artifacts_path, accelerator_options=None):
-    """Build RapidOcrOptions (PP-OCRv6, torch backend) per config.rag.docling.ocr_model_scale.
-
-    The OCR inference engine uniformly uses rapidocr's torch backend, no longer onnxruntime:
-    - Shares the same torch as docling's other models (layout/tables) — both CUDA and ROCm hit the
-      GPU directly (ROCm's torch masquerades as a cuda device, no separate handling needed)
-    - pyproject no longer has to maintain onnxruntime variants per GPU type (gpu/rocm/cpu)
-    - docling 2.111 wires up the torch backend's EngineConfig.torch.use_cuda correctly (the
-      disconnect bug was onnxruntime-engine-only), retiring the old GPU-key patch alongside
-
-    Models: PP-OCRv6 det/rec official torch weights (RapidAI conversion, accuracy on par with the
-    onnx version; all three tiny/small/medium scales) + PP-OCRv4 v2.0 cls (currently the only torch
-    cls weights; cls only judges 0/180 text-line orientation, so version differences are imperceptible).
-    torch weights don't embed a dictionary, so rec must carry rec_keys_path (tiny uses a dedicated dict).
-
-    Args:
-        artifacts_path: assets/docling_models path (Path).
-        accelerator_options: docling AcceleratorOptions. The GPU toggle isn't handled here —
-            docling's RapidOcrModel derives EngineConfig.torch.use_cuda / device_id from the
-            accelerator device itself; kept only for logging.
-
-    Returns:
-        RapidOcrOptions (backend="torch" + explicit model paths).
-    """
-    scale = "small"
-    try:
-        from src.config.config_manager import Config
-        config = Config.get_config_model()
-        if config and config.rag and config.rag.docling:
-            scale = (config.rag.docling.ocr_model_scale or "small").lower()
-    except Exception:
-        pass
-
-    if scale not in ("tiny", "small", "medium"):
-        logger.warning(f"[DOCLING] unknown ocr_model_scale='{scale}', fallback to small")
-        scale = "small"
-
-    rapid_root = Path(artifacts_path) / "RapidOcr"
-    det = rapid_root / "torch" / "PP-OCRv6" / "det" / f"PP-OCRv6_det_{scale}.pth"
-    rec = rapid_root / "torch" / "PP-OCRv6" / "rec" / f"PP-OCRv6_rec_{scale}.pth"
-    cls = rapid_root / "torch" / "PP-OCRv4" / "cls" / "ch_ptocr_mobile_v2.0_cls_mobile.pth"
-    # tiny's rec dictionary differs from small/medium (smaller character set) and can't be mixed
-    dict_name = "ppocrv6_tiny_dict.txt" if scale == "tiny" else "ppocrv6_dict.txt"
-    rec_keys = rapid_root / "paddle" / "PP-OCRv6" / "rec" / dict_name
-
-    missing = [str(p) for p in (det, rec, cls, rec_keys) if not p.exists()]
-    if missing:
-        # No fallback: docling's torch default is PP-OCRv4, whose files are likewise absent from
-        # assets, so a silent downgrade only defers the error. Let rapidocr fail loudly at model
-        # load so the deployment side knows assets are incomplete.
-        logger.error(
-            f"[DOCLING] OCR torch model files missing (scale={scale}): {missing} — "
-            f"ensure assets/docling_models/RapidOcr/torch/ is shipped in the package"
-        )
-
-    device_str = str(getattr(accelerator_options, "device", "") or "").lower()
-    from docling.datamodel.pipeline_options import RapidOcrOptions
-    logger.info(
-        f"[DOCLING] OCR = PP-OCRv6 {scale} det/rec + cls v2.0 mobile "
-        f"(torch backend, device={device_str or 'auto'})"
-    )
-    return RapidOcrOptions(
-        backend="torch",
-        det_model_path=str(det),
-        rec_model_path=str(rec),
-        cls_model_path=str(cls),
-        rec_keys_path=str(rec_keys),
-    )
-
-
-def _get_accelerator_options():
-    """Compute Docling AcceleratorOptions from config.
-
-    Returns:
-        An AcceleratorOptions instance whose device corresponds to config.rag.docling.device.
-        If config sets cuda* but PyTorch can't see a GPU, automatically downgrades to CPU and warns.
-    """
-    from docling.datamodel.pipeline_options import AcceleratorOptions, AcceleratorDevice
-
-    device_str = os.environ.get("DOCLING_DEVICE", "cpu").lower()
-
-    if device_str.startswith("cuda"):
-        # Cross-check that the GPU is actually available, to avoid a silent fallback
-        try:
-            import torch
-            if not torch.cuda.is_available():
-                logger.warning(
-                    f"[DOCLING_INIT] config device='{device_str}' but "
-                    f"torch.cuda.is_available()=False — fallback CPU"
-                )
-                return AcceleratorOptions(device=AcceleratorDevice.CPU, num_threads=4)
-        except ImportError:
-            logger.warning("[DOCLING_INIT] torch not importable, fallback CPU")
-            return AcceleratorOptions(device=AcceleratorDevice.CPU, num_threads=4)
-
-        # docling 2.119's AcceleratorOptions.device accepts a "cuda:N" string directly (the validator
-        # matches ^cuda(:\d+)?$). Passed through as-is → it genuinely pins to the specified card,
-        # no longer collapsed to bare CUDA (GPU 0). This separates docling from vLLM in shared-card
-        # scenarios, avoiding the CUBLAS_ALLOC_FAILED caused by gpt-oss saturating GPU 0.
-        # Indexing semantics: docling uses "the Nth card PyTorch can see". If CUDA_VISIBLE_DEVICES is
-        # also set, N is the index after remapping (see the _apply_docling_env warning).
-        logger.info(
-            f"[DOCLING_INIT] Using device='{device_str}' "
-            f"(CUDA_VISIBLE_DEVICES={os.environ.get('CUDA_VISIBLE_DEVICES', 'all')})"
-        )
-        return AcceleratorOptions(device=device_str, num_threads=4)
-
-    if device_str == "mps":
-        return AcceleratorOptions(device=AcceleratorDevice.MPS, num_threads=4)
-
-    return AcceleratorOptions(device=AcceleratorDevice.CPU, num_threads=4)
-
-
-# Audio extensions: transcribed by the rag.asr endpoint, never by docling
-_AUDIO_EXTENSIONS = {".wav", ".mp3", ".m4a", ".aac", ".ogg", ".flac"}  # docling's 6 official types
-
-
 def is_docling_supported(file_name: str) -> bool:
-    """Determine whether a file can be processed by Docling.
-
-    Audio is never parsed by docling (document_loader sends it to the rag.asr endpoint first).
-
-    Args:
-        file_name: The filename including its extension.
-
-    Returns:
-        True = Docling can process it; False = use the fallback.
-    """
+    """Whether docling parses this file: every listed document type except PDFs and images
+    (vision model / text layer) and audio (the rag.asr endpoint)."""
     ext = Path(file_name).suffix.lower()
-    if ext not in DOCLING_EXTENSIONS:
-        return False
-    if ext in _AUDIO_EXTENSIONS:
-        return False
-    return True
+    return ext in DOCLING_EXTENSIONS and ext not in _PAGE_EXTENSIONS and ext not in _AUDIO_EXTENSIONS
+
+
+def _document_formats() -> list:
+    """docling input formats Folio converts: everything but PDF, images, audio and video,
+    whose pipelines need models."""
+    from docling.datamodel.base_models import InputFormat
+    skip = {"PDF", "IMAGE", "AUDIO", "VIDEO"}
+    return [f for f in InputFormat if f.name not in skip]
 
 
 def get_converter():
-    """Get the singleton DocumentConverter (thread-safe), building it if not yet initialized.
-
-    The first call loads all ML models (layout, table structure, OCR); later calls return the
-    already-built instance.
-
-    Double-checked locking: if already built, take the lock-free fast path; if not, acquire the lock
-    and let _build_converter's None check confirm a second time — concurrent first-touch builds only once.
-    """
+    """The singleton DocumentConverter (thread-safe, built on first use). It only knows the
+    model-free document formats, so it never loads a model or imports torch."""
     global _converter
     if _converter is not None:
         return _converter
     with _converter_lock:
-        return _build_converter()
-
-
-def _build_converter():
-    """Actually build the singleton (the caller must hold _converter_lock).
-
-    Offline deployment (hf_offline=true): force use of the local models in assets/docling_models,
-    raising immediately if not found rather than blowing up later on the first uploaded file.
-    """
-    global _converter
-    if _converter is None:
-        _apply_docling_env()  # must run first: hf_offline=true sets HF_HUB_OFFLINE=1
-
-        # PDF/image layout + OCR models are only configured when rag.parsing keeps them
-        # local; under cloud parsing this converter serves Office/Markdown/HTML only and
-        # must not touch the model stack (or torch, via the CUDA check below).
-        local_models = _local_pdf_models_wanted()
-        artifacts_path = _resolve_artifacts_path() if local_models else None
-        offline = os.environ.get("HF_HUB_OFFLINE") == "1"
-
-        if local_models and not artifacts_path and offline:
-            raise RuntimeError(
-                "[DOCLING] hf_offline=true but assets/docling_models not found. "
-                "Prepare via: `uv run docling-tools models download -o assets/docling_models`"
-            )
-
-        from docling.datamodel.base_models import InputFormat
-        from docling.datamodel.pipeline_options import PdfPipelineOptions
-        from docling.document_converter import (
-            DocumentConverter,
-            PdfFormatOption,
-            ImageFormatOption,
-        )
-
-        format_options: dict = {}
-
-        # Compute the GPU/CPU choice from config — passed to the pipeline options so Docling's
-        # Layout / TableFormer / OCR run on the configured device
-        accelerator_options = _get_accelerator_options() if local_models else None
-
-        ocr_on = ocr_enabled()
-        pdf_kwargs = {
-            "accelerator_options": accelerator_options,
-            # rag.docling.ocr_enabled=false must really skip OCR (the model is not even loaded).
-            "do_ocr": ocr_on,
-        }
-        if local_models and ocr_on:
-            # The built-in OCR goes in 1.5 (advance notice, logged once per process).
-            from src.utils.deprecation import warn_once
-            warn_once("ocr")
-        if artifacts_path:
-            logger.info(f"[DOCLING] Using local artifacts_path: {artifacts_path}")
-            pdf_kwargs["artifacts_path"] = str(artifacts_path)
-            # OCR uses the rapidocr torch backend (PP-OCRv6, file selected per ocr_model_scale)
-            ocr_options = _get_rapidocr_options(artifacts_path, accelerator_options) if ocr_on else None
-            if ocr_options is not None:
-                pdf_kwargs["ocr_options"] = ocr_options
-        elif local_models:
-            logger.warning(
-                "[DOCLING] No local artifacts_path; models will be fetched from HuggingFace Hub "
-                "on first use (online machines only)"
-            )
-        if local_models:
-            if not ocr_on:
-                logger.info("[DOCLING] OCR off (rag.docling.ocr_enabled=false): scanned pages yield no text")
-            pdf_pipeline_options = PdfPipelineOptions(**pdf_kwargs)
-            # PDF and Image share the same pipeline_options (IMAGE internally goes through StandardPdfPipeline)
-            format_options[InputFormat.PDF] = PdfFormatOption(pipeline_options=pdf_pipeline_options)
-            format_options[InputFormat.IMAGE] = ImageFormatOption(pipeline_options=pdf_pipeline_options)
-        else:
-            logger.info("[DOCLING] PDF/image models not configured: rag.parsing sends them to the cloud")
-
-        # No audio pipeline: speech-to-text is the rag.asr endpoint (document_loader).
-        converter_kwargs = {"format_options": format_options} if format_options else {}
-
-        logger.info("[DOCLING] Creating DocumentConverter (loading ML models)...")
-        t0 = time.time()
-        _converter = DocumentConverter(**converter_kwargs)
-        elapsed = time.time() - t0
-        logger.info(f"[DOCLING] DocumentConverter ready ({elapsed:.1f}s)")
+        if _converter is None:
+            from docling.document_converter import DocumentConverter
+            _converter = DocumentConverter(allowed_formats=_document_formats())
+            logger.info("[DOCLING] DocumentConverter ready (document formats; no PDF/image models)")
     return _converter
-
-
-def warmup_docling():
-    """Preload Docling models at startup.
-
-    Called during app startup to load ML models into GPU/CPU ahead of time. Uses
-    DocumentConverter.initialize_pipeline() to initialize the PDF pipeline directly, forcing all ML
-    models (Layout Detection, TableFormer, OCR) to load without needing a dummy PDF.
-    """
-    logger.info("[DOCLING_WARMUP] Pre-loading Docling models...")
-    t0 = time.time()
-    try:
-        converter = get_converter()
-
-        # Force-initialize every pipeline exposed via /v1/ocr/general, so the first REST request after startup doesn't pay cold-start model load cost.
-        from docling.datamodel.base_models import InputFormat
-        warmup_formats = [InputFormat.PDF, InputFormat.DOCX, InputFormat.IMAGE]
-        for fmt in warmup_formats:
-            try:
-                logger.info(f"[DOCLING_WARMUP] Initializing pipeline for {fmt.value}...")
-                converter.initialize_pipeline(fmt)
-            except Exception as e:
-                logger.warning(f"[DOCLING_WARMUP] Pipeline init for {fmt.value} failed: {e}")
-
-        # GPU self-diagnosis: an OCR session's CUDA provider init failure silently falls back to CPU
-        # (ORT only grumbles to stderr), so print the truth into the real log — on deployment, the
-        # top of docker logs shows which device OCR/Layout actually landed on (cf. scripts/probe_gpu_pipeline.py)
-        try:
-            _log_pipeline_devices(converter)
-        except Exception as exc:
-            logger.warning(f"[DOCLING_WARMUP] GPU self-check skipped: {exc}")
-
-        elapsed = time.time() - t0
-        logger.info(f"[DOCLING_WARMUP] All models loaded successfully ({elapsed:.1f}s)")
-    except Exception as e:
-        logger.warning(f"[DOCLING_WARMUP] Failed to pre-load models: {e}")
-        logger.warning("[DOCLING_WARMUP] Models will be loaded on first document processing")
-
-
-def _log_pipeline_devices(converter) -> None:
-    """Log the actual device of the OCR sessions / Layout model (warmup self-diagnosis)."""
-    from docling.datamodel.base_models import InputFormat
-
-    pdf_pipeline = converter._get_pipeline(InputFormat.PDF)
-
-    ocr_model = getattr(pdf_pipeline, "ocr_model", None)
-    reader = getattr(ocr_model, "reader", None)
-    if reader is not None:
-        parts = []
-        all_gpu = True
-        for part_name in ("text_det", "text_cls", "text_rec"):
-            part = getattr(reader, part_name, None)
-            sess = getattr(getattr(part, "session", None), "session", None) or getattr(part, "session", None)
-            dev = None
-            if hasattr(sess, "get_providers"):  # onnxruntime engine (leftover from old deployments)
-                dev = "cuda" if "CUDAExecutionProvider" in sess.get_providers() else "cpu"
-            elif getattr(sess, "device", None) is not None:  # torch engine
-                dev = str(sess.device)
-            if dev is None:
-                continue
-            on_gpu = "cuda" in dev.lower()
-            all_gpu &= on_gpu
-            parts.append(f"{part_name}={'GPU' if on_gpu else 'CPU'}")
-        if parts:
-            line = f"[DOCLING_WARMUP] OCR sessions: {', '.join(parts)}"
-            if all_gpu:
-                logger.info(f"{line} ✓")
-            else:
-                logger.warning(
-                    f"{line} — ❌ a session landed on CPU! Scanned PDFs will be much slower. "
-                    f"Under the torch engine this means the accelerator device resolved to cpu "
-                    f"(check config docling.device and torch.cuda.is_available)"
-                )
-
-    layout = getattr(pdf_pipeline, "layout_model", None)
-    if layout is not None:
-        dev = getattr(layout, "device", None) or getattr(layout, "_device", None)
-        inner = getattr(layout, "layout_predictor", None) or getattr(layout, "model", None)
-        if dev is None and inner is not None:
-            dev = getattr(inner, "device", None) or getattr(inner, "_device", None)
-        if dev is not None:
-            msg = f"[DOCLING_WARMUP] Layout model device: {dev}"
-            if "cuda" in str(dev).lower():
-                logger.info(f"{msg} ✓")
-            else:
-                logger.warning(f"{msg} — ❌ landed on CPU")
 
 
 # Tokenizer-aware chunking helpers. We deliberately do NOT use HybridChunker: on a
@@ -1255,9 +726,10 @@ def chunk_docling_document(
 ) -> tuple[str, List[dict]]:
     """Export a DoclingDocument to Markdown and chunk it into records.
 
-    The single chunking entry point for every parse path: docling_convert_once (local
-    models) and cloud_parser (vision-model Markdown re-assembled into one document, with
-    page provenance attached) both end here, so they produce the same record shape
+    The single chunking entry point for every parse path: docling_convert_once (document
+    formats), cloud_parser (vision-model Markdown re-assembled into one document, with page
+    provenance attached) and pdf_text_layer (text-layer paragraphs with their pages) all end
+    here, so they produce the same record shape
     ``[{"text", "headings", "page_no", "content_type"}, ...]``.
     """
     from docling.chunking import HierarchicalChunker
@@ -1300,9 +772,8 @@ def docling_convert_once(
         file_name: Original file name
         max_tokens: Maximum tokens per chunk
         tokenizer: HuggingFace tokenizer name
-        progress_cb: ``(stage, done, total)`` optional page-level parse progress callback.
-            PDF reports ("loading", pages_done, total_pages) — OCR-heavy files finally get a progress
-            bar; non-paginated formats (docx etc.) don't report counts, with unchanged behavior.
+        progress_cb: accepted for the loader's common signature; document formats have no
+            pages to count, so it is not called.
         report: optional dict filled with ``warning`` (pages that could not be parsed,
             None when complete) and ``missing_pages``.
         table_max_tokens: budget a table may use before it is split (default max_tokens).
@@ -1312,19 +783,8 @@ def docling_convert_once(
             ``[{"text", "headings", "page_no"}, ...]`` (citation provenance)
     """
     try:
-        # 1. Convert once (using the singleton converter; models already preloaded)
+        # 1. Convert once (using the singleton converter)
         converter = get_converter()
-
-        # Page-level progress (observer, see _install_page_progress_patch):
-        # the denominator is computed instantly via PDFium; if it can't (non-PDF), only report
-        # done, and the frontend shows the bare stage
-        if progress_cb is not None:
-            _install_page_progress_patch()
-            _page_progress_tls.ctx = {
-                "done": 0,
-                "total": _pdf_page_count(file_path),
-                "cb": progress_cb,
-            }
 
         # FileStorage saves files as extensionless UUIDs. docling's _guess_format falls
         # back on extension when there are no magic bytes, so plain-text formats
@@ -1355,20 +815,18 @@ def docling_convert_once(
                 return file_path
 
         def _convert():
-            if progress_cb is not None:
-                _page_progress_tls.ctx["done"] = 0  # a retry restarts the page count
             with DOCLING_INFER_LOCK:
                 return converter.convert(source=_source())
 
-        # Status is checked: a partial result is retried (smaller stage batch after an
-        # OOM) and pages still missing come back as a warning for the file record.
+        # Status is checked: a partial result is retried once and what is still missing
+        # comes back as a warning for the file record.
         result, parse_warning = convert_checked(_convert, file_name)
         if report is not None:
             report["warning"] = parse_warning
             report["missing_pages"] = missing_pages(result) if parse_warning else []
         doc = result.document
 
-        # 2-3. Markdown export + chunking (shared with the cloud parser's documents)
+        # 2-3. Markdown export + chunking (shared with the vision and text-layer paths)
         return chunk_docling_document(doc, file_name, max_tokens=max_tokens, tokenizer=tokenizer,
                                       table_max_tokens=table_max_tokens)
 
@@ -1383,7 +841,7 @@ def docling_convert_once(
                 f"(original error: {e})"
             )
             raise ValueError(
-                f"PDF is password-protected: '{file_name}'. "
+                f"File is password-protected: '{file_name}'. "
                 f"Please decrypt it before uploading."
             ) from e
         if "is not valid" in err_msg or "corrupt" in err_msg:
@@ -1393,10 +851,3 @@ def docling_convert_once(
             ) from e
         logger.error(f"Docling processing failed for {file_name}: {e}")
         raise
-    finally:
-        # Page-progress TLS cleanup — the next file on the same thread must not inherit stale context
-        if getattr(_page_progress_tls, "ctx", None) is not None:
-            _page_progress_tls.ctx = None
-        # Hand cached GPU memory back after every file (the card is often shared with vLLM).
-        release_accelerator_cache()
-

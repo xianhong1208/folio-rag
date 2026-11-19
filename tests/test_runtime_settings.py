@@ -236,7 +236,43 @@ class TestService:
         if stored == "openai-compatible":
             assert dropped == []
         else:
-            assert len(dropped) == 1 and "docs/migrate-asr.md" in dropped[0]
+            assert len(dropped) == 1 and "docs/migrate-1.5.md" in dropped[0]
+
+    def test_startup_drops_removed_parsing_rows(self):
+        """1.5: rag.parsing.images and rag.parsing.pdf local|cloud are deleted before the replay
+        with a warning naming the guide; a valid pdf row (text) is kept and applied."""
+        cfg = _mk_config()
+        from src.adapter import runtime_settings_service as svc
+        with self._with_cfg(cfg), patch("db.db.get_engine"), \
+             patch(f"{_SVC}.RuntimeSettingsDB") as db, patch.object(svc.logger, "warning") as warn:
+            db.load_all.return_value = {"rag.parsing.images": "local", "rag.parsing.pdf": "cloud",
+                                        "rag.retrieval.default_top_k": 7}
+            applied = svc.load_overrides_on_startup()
+        assert sorted(c.args[0] for c in db.delete.call_args_list) == ["rag.parsing.images", "rag.parsing.pdf"]
+        assert applied == 1 and cfg.rag.retrieval.default_top_k == 7
+        dropped = [c.args[0] for c in warn.call_args_list if "Dropped stored setting rag.parsing" in c.args[0]]
+        assert len(dropped) == 2 and all("docs/migrate-1.5.md" in w for w in dropped)
+
+        cfg = _mk_config()
+        with self._with_cfg(cfg), patch("db.db.get_engine"), patch(f"{_SVC}.RuntimeSettingsDB") as db:
+            db.load_all.return_value = {"rag.parsing.pdf": "text"}
+            assert svc.load_overrides_on_startup() == 1
+        db.delete.assert_not_called()
+        assert cfg.rag.parsing.pdf == "text"
+
+    def test_removed_parsing_paths_are_not_editable(self):
+        assert "rag.parsing.images" not in ro.EDITABLE and "rag.docling.device" not in ro.EDITABLE
+        with pytest.raises(ValueError):
+            ro.validate_and_apply(_mk_config(), {"rag.parsing.images": "cloud"})
+
+    def test_forced_vision_without_a_model_is_refused_in_the_console(self):
+        cfg = _mk_config()
+        with pytest.raises(ValueError, match="rag.parsing.pdf is 'vision' but rag.parsing.vision is not configured"):
+            ro.validate_and_apply(cfg, {"rag.parsing.pdf": "vision"})
+        applied, _ = ro.validate_and_apply(cfg, {"rag.parsing.pdf": "vision",
+                                                 "rag.parsing.vision.model": "qwen3-vl-8b",
+                                                 "rag.parsing.vision.base_url": "https://fy.example/v1"})
+        assert applied["rag.parsing.pdf"] == "vision"
 
     def test_startup_overlay_binds_the_engine_before_reading(self):
         """main.py overlays the overrides before it calls init_db. Without binding the
@@ -452,6 +488,8 @@ class TestValueConstraints:
         ("rag.rerank.max_retries", 9),
         ("rag.rerank.timeout", 0),
         ("rag.parsing.pdf", "remote"),
+        ("rag.parsing.pdf", "local"),               # removed in 1.5 (docling OCR)
+        ("rag.parsing.pdf", "cloud"),
         ("rag.parsing.on_page_failure", "skip"),
         ("rag.parsing.max_concurrency", 0),
         ("rag.parsing.max_pages_per_file", -1),
@@ -518,8 +556,8 @@ class TestValueConstraints:
         ("rag.asr.segment_seconds", 600),
         ("rag.asr.timeout", 300),
         ("rag.asr.max_retries", 3),
-        ("rag.parsing.pdf", "LOCAL"),               # cloud needs a vision model (profile check)
-        ("rag.parsing.images", ""),                 # empty = follow the profile
+        ("rag.parsing.pdf", "Text"),
+        ("rag.parsing.pdf", "auto"),                # auto = the vision model if configured, else text
         ("rag.parsing.vision.provider", "vllm"),
         ("rag.parsing.vision.model", "Qwen2.5-VL"),
         ("rag.parsing.vision.base_url", "https://vlm.example.com/v1"),

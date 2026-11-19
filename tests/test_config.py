@@ -226,7 +226,7 @@ def test_rag_config_nested_assembly():
     assert cfg.retrieval.auto_merging.merge_threshold == 0.6
     assert cfg.llm is None
     assert cfg.rerank is None
-    assert cfg.docling is None
+    assert cfg.parsing is None and not hasattr(cfg, "docling")
     assert cfg.indexing is None
 
 

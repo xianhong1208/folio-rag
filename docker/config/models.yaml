@@ -42,14 +42,17 @@ rag:
     top_n: null
     score_threshold: 0.25
 
-  # PDFs and images are transcribed page by page by a vision model (profile cloud has no
-  # built-in OCR). Office, Markdown, HTML and text files need no model.
+  # PDFs and images: transcribed page by page by a vision model when VISION_BASE_URL and
+  # VISION_MODEL are set (e.g. Qwen3-VL on Forgeyard); otherwise PDFs are read from their
+  # text layer and image uploads are refused. Office, Markdown, HTML and text files need no model.
   parsing:
+    pdf: auto                                   # auto | vision | text
     vision:
       provider: "openai-compatible"
-      model: "${VISION_MODEL:-Qwen/Qwen3-VL-8B-Instruct}"
-      base_url: "${VISION_BASE_URL:-http://host.docker.internal:8000/v1}"
+      model: "${VISION_MODEL:-}"
+      base_url: "${VISION_BASE_URL:-}"
       api_key: "${VISION_API_KEY:-not-needed}"
+      ca_file: "${VISION_CA_FILE:-}"            # PEM of a private CA (Forgeyard's own); mount it read-only
 
   # Speech-to-text for audio files: an OpenAI-compatible /audio/transcriptions endpoint.
   # Off unless ASR_ENABLED=true.

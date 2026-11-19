@@ -62,3 +62,16 @@ class TestRetrievalMetrics:
         assert mrr(retrieved=["x", "hit", "y"], expected=["hit"]) == pytest.approx(1 / 2)
         assert mrr(retrieved=["hit"], expected=["hit"]) == 1.0
         assert mrr(retrieved=["x", "y"], expected=["hit"]) == 0.0
+
+
+class TestPageTranscriptionMetrics:
+    def test_page_text_drops_layout_and_markdown(self):
+        from evals.metrics import page_text
+        assert page_text("| 部門 | 預算 |\n|---|---|\n# Ｔｉｔｌｅ") == "部門預算title"
+
+    def test_char_f1(self):
+        from evals.metrics import char_f1
+        assert char_f1("港光科技", "港光科技") == 1.0
+        assert char_f1("", "") == 1.0 and char_f1("abc", "") == 0.0
+        assert char_f1("abcd", "abce") == 0.75
+        assert char_f1("| a | b |", "b a") == 1.0  # cell order and table syntax do not count

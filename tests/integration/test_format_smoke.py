@@ -5,8 +5,8 @@ format, run real docling parsing and retrieve the content back.
 Each format generates a minimal sample carrying a sentinel string, runs
 DocumentConverter.convert, and asserts the sentinel is in the output. Catches
 "allowlisted but the parser dependency is missing" breakage. Needs docling
-parsers + LibreOffice but no DB/GPU model; PDF/image OCR and audio are out of
-scope.
+parsers + LibreOffice but no DB/GPU model. PDFs are read from their text layer
+(pdf_text_layer) or by a vision model, never by docling; images and audio are out of scope.
 """
 
 import shutil
@@ -122,9 +122,10 @@ def samples(tmp_path_factory):
 
 @pytest.fixture(scope="module")
 def converter(itest_db):
-    # itest_db serves only as the opt-in gate (RAG_RUN_DB_ITESTS); the converter itself does not use a DB
-    from docling.document_converter import DocumentConverter
-    return DocumentConverter()
+    # itest_db serves only as the opt-in gate (RAG_RUN_DB_ITESTS); the converter itself does not use a DB.
+    # The production converter: docling's model-free document formats only.
+    from src.domain.rag.docling_loader import get_converter
+    return get_converter()
 
 
 _PURE_PARSER_EXTS = [
@@ -179,18 +180,15 @@ def test_chunk_records_carry_headings_md(samples, converter):
         "a real docling chunk's meta.headings did not reach the record (schema drift?)"
 
 
-def test_chunk_records_carry_page_no_pdf(samples, converter):
-    """PDF through the real chunker -> the record's page_no is not None (prov chain)."""
-    from docling.chunking import HierarchicalChunker
-    from src.domain.rag.docling_loader import _refine_chunks_for_token_budget
+def test_chunk_records_carry_page_no_pdf(samples, itest_db, monkeypatch):
+    """PDF text layer through the real chunker -> the record's page_no is set (prov chain)."""
+    from src.domain.rag import pdf_text_layer
     from tests.pdf_fixtures import make_pdf
 
+    monkeypatch.setattr("src.domain.rag.docling_loader.get_hf_tokenizer", lambda name: _LenTok())
     pdf_path = samples / "t.pdf"
-    make_pdf(pdf_path, ["SENTINEL provenance text for citations"])
-
-    doc = converter.convert(str(pdf_path)).document
-    chunks = list(HierarchicalChunker().chunk(doc))
-    recs = _refine_chunks_for_token_budget(chunks, _LenTok(), 512)
+    make_pdf(pdf_path, ["SENTINEL provenance text for citations", "Second page text"])
+    _, recs = pdf_text_layer.parse(str(pdf_path), "t.pdf", max_tokens=512)
     assert recs, "no chunk records after parsing the PDF"
-    assert any(r["page_no"] == 1 for r in recs), \
-        "a real docling chunk's prov.page_no did not reach the record (schema drift?)"
+    assert any(r["page_no"] == 1 for r in recs) and "SENTINEL" in recs[0]["text"], \
+        "a text-layer paragraph's page did not reach the record (schema drift?)"

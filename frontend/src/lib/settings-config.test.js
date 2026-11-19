@@ -30,7 +30,7 @@ describe('settings model integrity', () => {
   })
 })
 
-import { normalizeValue, keyIndicator, runsLabel, probeText } from './settings-config'
+import { normalizeValue, keyIndicator, runsLabel, probeText, parsingLabel } from './settings-config'
 
 describe('per-role settings', () => {
   it('every probing section names a backend role', () => {
@@ -50,12 +50,20 @@ describe('per-role settings', () => {
     expect(JSON.stringify(FIELDS)).not.toMatch(/fireredasr|docling-whisper/)
     expect(FIELDS['rag.asr.chinese_conversion'].options).toEqual(['s2twp', 'none'])
   })
+  it('offers no in-process PDF / image parsing (1.5)', () => {
+    expect(FIELDS).not.toHaveProperty('rag.parsing.images')
+    expect(FIELDS['rag.parsing.pdf'].options).toEqual(['auto', 'vision', 'text'])
+    expect(FIELDS['rag.parsing.pdf'].nullable).toBeFalsy()
+    expect(JSON.stringify({ ...META, ...FIELDS })).not.toMatch(/docling|"local"|"cloud"/)
+    expect(Object.keys(FIELDS).some((p) => p.startsWith('rag.docling'))).toBe(false)
+    expect(META['rag.parsing'].desc).toMatch(/text layer/)
+  })
   it('every api_key field is a secret input', () => {
     for (const [path, f] of Object.entries(FIELDS)) if (path.endsWith('.api_key')) expect(f.type).toBe('secret')
   })
   it('empty nullable values mean unset (inherit / follow the profile)', () => {
     expect(normalizeValue(FIELDS['rag.contextual_llm.model'], '')).toBeNull()
-    expect(normalizeValue(FIELDS['rag.parsing.pdf'], '')).toBeNull()
+    expect(normalizeValue(FIELDS['rag.retrieval.segmenter'] || { nullable: true }, '')).toBeNull()
     expect(normalizeValue(FIELDS['rag.llm.model'], '')).toBe('')
     expect(normalizeValue(undefined, 'x')).toBe('x')
   })
@@ -83,5 +91,19 @@ describe('runsLabel / probeText', () => {
     expect(probeText({ status: 'local', detail: 'Local weights found' }).cls).toBe('ok')
     expect(probeText({ status: 'disabled', detail: 'Disabled in settings' })).toEqual({ cls: '', text: 'Disabled in settings' })
     expect(probeText({ status: 'down', detail: 'HTTP 401', latency_ms: null })).toEqual({ cls: 'bad', text: '✗ HTTP 401' })
+  })
+})
+
+describe('parsing mode in effect', () => {
+  it('names the vision model, or says text layer only', () => {
+    expect(parsingLabel(null)).toMatchObject({ text: 'Text layer only', state: 'unset' })
+    expect(parsingLabel({ pdf: 'text', images: 'refused', model: null }).text).toBe('Text layer only')
+    expect(parsingLabel({ pdf: 'vision', images: 'vision', model: 'qwen3-vl-8b', summary: 's' }))
+      .toEqual({ text: 'qwen3-vl-8b · PDFs + images', state: 'ready', title: 's' })
+    expect(parsingLabel({ pdf: 'text', images: 'vision', model: 'qwen3-vl-8b' }).text).toBe('qwen3-vl-8b · images (PDFs: text layer)')
+  })
+  it('the vision role without a model reads as text layer only, not off', () => {
+    expect(runsLabel({ role: 'vision', runs: 'off' })).toEqual({ cls: 'mute', text: 'Text layer only' })
+    expect(runsLabel({ role: 'rerank', runs: 'off' }).text).toBe('Off')
   })
 })

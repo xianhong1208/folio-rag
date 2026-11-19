@@ -47,6 +47,7 @@ def load_overrides_on_startup() -> int:
     overrides = RuntimeSettingsDB.load_all()
     overrides = _drop_removed_roles(overrides)
     overrides = _drop_asr_provider(overrides)
+    overrides = _drop_removed_parsing(overrides)
     if not overrides:
         return 0
     applied = 0
@@ -100,6 +101,28 @@ def _drop_asr_provider(overrides: Dict[str, Any]) -> Dict[str, Any]:
     else:
         logger.info("[RUNTIME] Dropped stored setting rag.asr.provider: openai-compatible is the only provider")
     return {k: v for k, v in overrides.items() if k != "rag.asr.provider"}
+
+
+def _drop_removed_parsing(overrides: Dict[str, Any]) -> Dict[str, Any]:
+    """Delete stored parsing overrides that 1.5 no longer accepts: ``rag.parsing.images``
+    (gone: images follow rag.parsing.vision) and ``rag.parsing.pdf`` set to ``local`` /
+    ``cloud`` (the in-process docling models were removed). Each is dropped with a warning
+    that points at the migration guide; rag.parsing.pdf then follows config/models.yaml
+    (auto by default: the vision model when configured, else the text layer). Returns the rest."""
+    from src.config.model import MIGRATION_GUIDE, REMOVED_PDF_MODES
+    kept: Dict[str, Any] = {}
+    for path, value in overrides.items():
+        removed = path == "rag.parsing.images" or (
+            path == "rag.parsing.pdf" and str(value).strip().lower() in REMOVED_PDF_MODES)
+        if not removed:
+            kept[path] = value
+            continue
+        RuntimeSettingsDB.delete(path)
+        logger.warning(f"[RUNTIME] Dropped stored setting {path}={value!r}: in-process PDF/image "
+                       "parsing (docling layout, TableFormer, OCR) was removed in Folio 1.5. PDFs go "
+                       "to rag.parsing.vision when it is configured and are read from their text "
+                       f"layer otherwise; images need rag.parsing.vision. See {MIGRATION_GUIDE}.")
+    return kept
 
 
 def get_settings_view() -> Dict[str, Any]:
