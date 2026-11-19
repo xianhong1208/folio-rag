@@ -35,13 +35,14 @@ personal access token 與 OAuth 登入都看到同一組資料夾,舊資料夾�
 
 **1.4.2(2026-11-13)。** 修掉已知風險:模型金鑰設定不能再被用來把伺服器的環境變數送到別處;過大的上傳在占滿記憶體之前就會被拒絕;更換 embedding 模型後,需要重建索引的檔案會被標出來;搜尋從未索引過的資料夾會回傳空結果。所有已知的相依套件漏洞都已更新修正(transformers 5、CUDA 13 的 torch 2.14)。事先公告 1.5 將移除內建 OCR、語音轉文字與 `/v1` 媒體端點。
 
+**1.5.0(2026-11-19)。** 一行指令安裝,資料不會遺失:輕量的 Docker 映像檔與含 PostgreSQL + pgvector 的 compose 檔(另有可選的 MCP Gate profile),以及部署指南;`main.py backup` / `restore` 與排程備份;單一資料夾的匯出與匯入(CLI 與 console 都能用);`/metrics` 提供 Prometheus 指標。內建的 OCR、版面與語音模型已移除:PDF 與圖片改由 OpenAI 相容 API 上的視覺模型讀取(例如 [Forgeyard](https://github.com/xianhong1208/forgeyard) 上的 Qwen3-VL),沒有設定模型時 PDF 從文字層讀取;音訊交給任何 OpenAI 相容的轉錄端點;`/v1` 媒體端點已移除。請見[升級到 1.5](docs/migrate-1.5.zh-TW.md)。
+
 細節見 [CHANGELOG.md](CHANGELOG.md)。
 
 ## 接下來
 
 | 版本 | 你會得到 |
 |---|---|
-| **1.5:一行指令安裝,資料不會遺失** | **輕量的 Docker 映像檔**,以及含 PostgreSQL + pgvector 的 compose 檔,另有可選的 MCP Gate profile。內建的 OCR、版面與語音模型從 Folio 移除:PDF 與圖片改由 **OpenAI 相容 API 上的視覺模型**讀取(例如由 [Forgeyard](https://github.com/xianhong1208/forgeyard) 提供的 Qwen3-VL),沒有設定模型時 PDF 從文字層讀取,音訊交給 Forgeyard 轉錄。`/v1` 的 OCR 與語音端點一併移除;**遷移指南**說明怎麼讓 Folio 改用 Forgeyard。**部署指南。** **`folio backup` / `folio restore`** 與排程備份。**單一資料夾的匯出與匯入。** **`/metrics`** 提供 Prometheus 指標。 |
 | **1.6:找到那份文件** | 文件的**中繼資料與標籤**,在 REST、主控台與 MCP 都能用來篩選。**以文件為單位的結果**,不只是段落。**跨你所有資料夾搜尋。** **Library** 頁面。回傳文件的 MCP **`find`** 模式。 |
 | **1.7:更好的答案** | **查詢改寫與多重查詢**,HyDE 與翻譯為選用。每一項都只有在黃金測試集變好時才保留。**圖片**由視覺模型寫出說明,讓它們也搜得到。**引用會開啟 PDF** 並標示出該段文字。答案的**讚 / 倒讚**。 |
 | **1.8:資料夾保持最新** | 資料夾的**來源**:網址或 sitemap、Git repository、伺服器上的目錄、S3 或 WebDAV。**依排程重新同步**,只處理有變動的部分,來源刪掉的檔案也會從資料夾移除。 |
@@ -96,7 +97,6 @@ contextual retrieval),涵蓋了 RAG 的兩個典型弱點:chunk 破碎與精準�
 - **撤銷不是即時的,而且預設關閉。** Token 是離線驗證。沒開 `auth.revocation` 時,被撤銷的 token 會用到
   到期為止;開了之後,會用到下一次輪詢 MCP Gate 為止(預設 30 秒)。在 `fail_mode: open` 下,MCP Gate
   連不上期間做的撤銷,要等它恢復連線後才生效。
-- **`/v1` 媒體端點沒有驗證,** 這是刻意的決定;請只開放在可信任的網路。它們會在 1.5 移除。
 - **主控台只有英文,** 這是刻意的決定。(英文 + 繁體中文的完整版本曾經做出來後又移除;在 git 歷史的
   `5103cbd` / `53aa71a`,由 `be480d6` 還原。)
 - **伺服器關閉時會 abort。** 每次重啟,舊的行程都會在直譯器結束時因某個原生函式庫觸發 SIGABRT 而結束,
