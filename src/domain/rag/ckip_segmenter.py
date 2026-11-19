@@ -43,38 +43,6 @@ def _cloud_profile() -> bool:
         return False
 
 
-def _configured_device() -> str:
-    """``rag.retrieval.ckip_device`` (default ``cpu``)."""
-    try:
-        from src.config.config_manager import Config
-        rag = getattr(Config.get_config_model(), "rag", None)
-        return str(getattr(getattr(rag, "retrieval", None), "ckip_device", None) or "cpu")
-    except Exception:
-        return "cpu"
-
-
-def resolve_device(spec: Optional[str]) -> int:
-    """Device spec -> ckip-transformers' device index (-1 = CPU, N = cuda:N).
-
-    Accepts ``cpu``, ``cuda`` (= cuda:0), ``cuda:N`` and ``auto`` (cuda:0 when torch
-    sees a GPU). Anything else falls back to the CPU with a warning."""
-    s = (spec or "cpu").strip().lower()
-    if s == "cpu":
-        return -1
-    if s == "auto":
-        try:
-            import torch
-            return 0 if torch.cuda.is_available() else -1
-        except Exception:
-            return -1
-    if s == "cuda":
-        return 0
-    if s.startswith("cuda:") and s[5:].isdigit():
-        return int(s[5:])
-    logger.warning(f"Unknown rag.retrieval.ckip_device {spec!r}; CKIP runs on the CPU")
-    return -1
-
-
 class CkipSegmenter:
     """Lazy, thread-safe wrapper around ckip_transformers CkipWordSegmenter.
 
@@ -85,9 +53,8 @@ class CkipSegmenter:
 
     name = "ckip"
 
-    def __init__(self, model: str = _DEFAULT_MODEL, device: Optional[str] = None):
+    def __init__(self, model: str = _DEFAULT_MODEL):
         self._model_name = model
-        self._device = device  # None = rag.retrieval.ckip_device, read at load time
         self._ws = None  # the underlying CkipWordSegmenter (lazy)
         self._load_lock = threading.Lock()
         self._load_failed = False  # once True, we permanently fall back
@@ -123,13 +90,10 @@ class CkipSegmenter:
                 # module import or the non-Chinese retrieval path.
                 from ckip_transformers.nlp import CkipWordSegmenter
 
-                spec = self._device or _configured_device()
-                device = resolve_device(spec)
-                logger.info(
-                    f"Loading CKIP word segmenter (model={self._model_name}, "
-                    f"device={'cpu' if device < 0 else f'cuda:{device}'})..."
-                )
-                self._ws = CkipWordSegmenter(model=self._model_name, device=device)
+                # Always the CPU (device -1): Folio installs the CPU build of torch (1.5.1),
+                # and rag.retrieval.ckip_device accepts only cpu.
+                logger.info(f"Loading CKIP word segmenter (model={self._model_name}, device=cpu)...")
+                self._ws = CkipWordSegmenter(model=self._model_name, device=-1)
                 logger.info("✅ CKIP word segmenter ready")
                 return True
             except Exception as e:  # noqa: BLE001 — degrade on ANY failure

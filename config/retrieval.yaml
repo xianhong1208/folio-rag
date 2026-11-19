@@ -52,7 +52,7 @@ rag:
     hybrid_search: true
     text_search_config: "simple"                # Postgres FTS config; Chinese is segmented in Python first
     segmenter: "${FOLIO_SEGMENTER:-}"           # ckip | jieba | bigram; empty = the profile's default
-    ckip_device: "${CKIP_DEVICE:-cpu}"          # CKIP segmenter device: cpu / cuda / cuda:N / auto
+    ckip_device: "${CKIP_DEVICE:-cpu}"          # CKIP segmenter device: cpu (the only value)
 
     # Auto-merging — promote to the parent when enough of its leaves hit
     auto_merging:

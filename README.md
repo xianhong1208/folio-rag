@@ -68,8 +68,9 @@ read through OpenAI-compatible APIs).
   files and index, to another Folio or keep a copy of it — also from the console's Folders page.
 - **Prometheus metrics** at [`/metrics`](docs/metrics.md): requests, per-stage search latency, MCP
   tool calls, index jobs and model endpoint calls, with no folder or user names in any label.
-- **Local GPU, CPU or cloud.** AMD ROCm, NVIDIA CUDA or CPU for in-process models, or every model
-  behind an OpenAI-compatible API with no torch at all.
+- **Self-hosted or cloud models.** Embeddings, LLM, reranker, vision and speech-to-text run behind
+  OpenAI-compatible endpoints on your own GPUs (e.g. Forgeyard) or a cloud API; the only in-process
+  models, CKIP segmentation and optional HuggingFace embeddings, run on the CPU.
 
 ## Installation
 
@@ -98,10 +99,9 @@ the audience with MCP Gate, a reverse proxy with HTTPS, backups and upgrades.
 git clone https://github.com/xianhong1208/folio-rag.git
 cd folio-rag
 
-# Local models need the `local` extra, and torch comes from a dependency group:
-# always pass one of rocm-r714 | cuda | cpu with it (cuda = CUDA 13.0, NVIDIA driver 580+).
-# All-cloud: plain `uv sync`.
-uv sync --extra local --group cuda
+# In-process models (CKIP, HuggingFace embeddings) need the `local` extra, which brings the
+# CPU build of torch. All-cloud: plain `uv sync`.
+uv sync --extra local
 
 cp .env.example .env         # DATABASE_URL (PostgreSQL + pgvector), model endpoints and keys,
                              # MCP_GATE_URL / FOLIO_AUDIENCE: every secret and per-machine value
@@ -160,7 +160,7 @@ its source file and heading.
 
 | Profile | Models | Install |
 |---|---|---|
-| `local` (default) | Anything goes. The shipped config calls self-hosted embedding, LLM and reranker endpoints, and runs CKIP segmentation in-process; the vision model and speech-to-text are always endpoints | `uv sync --extra local --group rocm-r714 \| cuda \| cpu` |
+| `local` (default) | Anything goes. The shipped config calls self-hosted embedding, LLM and reranker endpoints, and runs CKIP segmentation in-process; the vision model and speech-to-text are always endpoints | `uv sync --extra local` |
 | `hybrid` | The same, for a mix of self-hosted and cloud endpoints; API keys written literally in the config files are warned about | as `local` |
 | `cloud` | Every role is an HTTP endpoint and keys must be `${ENV}` references; no torch and no model downloads | `uv sync` |
 
@@ -208,6 +208,5 @@ redistribute an install or an image that includes them:
 
 - `--extra local`: `ckip-transformers` and the CKIP models it downloads are **GPL-3.0**. The
   `jieba` (MIT) and `bigram` segmenters avoid it; the published Docker image does not include it.
-- `--group cuda`: PyTorch's CUDA wheels install NVIDIA's CUDA libraries, under NVIDIA's own licence.
 - The Docker image adds PostgreSQL's client tools (PostgreSQL Licence) and Debian packages, each
   under its own licence.

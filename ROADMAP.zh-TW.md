@@ -37,6 +37,8 @@ personal access token 與 OAuth 登入都看到同一組資料夾,舊資料夾�
 
 **1.5.0(2026-11-19)。** 一行指令安裝,資料不會遺失:輕量的 Docker 映像檔與含 PostgreSQL + pgvector 的 compose 檔(另有可選的 MCP Gate profile),以及部署指南;`main.py backup` / `restore` 與排程備份;單一資料夾的匯出與匯入(CLI 與 console 都能用);`/metrics` 提供 Prometheus 指標。內建的 OCR、版面與語音模型已移除:PDF 與圖片改由 OpenAI 相容 API 上的視覺模型讀取(例如 [Forgeyard](https://github.com/xianhong1208/forgeyard) 上的 Qwen3-VL),沒有設定模型時 PDF 從文字層讀取;音訊交給任何 OpenAI 相容的轉錄端點;`/v1` 媒體端點已移除。請見[升級到 1.5](docs/migrate-1.5.zh-TW.md)。
 
+**1.5.1(2026-11-19)。** 只剩一種 CPU 安裝:GPU 相依群組已移除,因為 Folio 仍自己執行的模型(CKIP 斷詞、選用的 HuggingFace embedding)都在 CPU 上跑;比 CUDA 安裝少大約 4–5 GB。Docker 映像檔重新發布 `linux/amd64` 與 `linux/arm64`(1.5.0 的 arm64 建置失敗)。請見[升級到 1.5.1](docs/migrate-1.5.zh-TW.md#升級到-151)。
+
 細節見 [CHANGELOG.md](CHANGELOG.md)。
 
 ## 接下來
@@ -93,7 +95,6 @@ contextual retrieval),涵蓋了 RAG 的兩個典型弱點:chunk 破碎與精準�
 
 - **需要 PostgreSQL 與 pgvector。** 沒有 SQLite 的退路:混合檢索與每個資料夾的資料表都依賴它。
 - 設定的 DSN 走**同步 SQLAlchemy**(psycopg2);不要用 `+asyncpg`。
-- **GPU 要自己選,** 用 `uv sync --extra local --group rocm-r714 | cuda | cpu`。
 - **撤銷不是即時的,而且預設關閉。** Token 是離線驗證。沒開 `auth.revocation` 時,被撤銷的 token 會用到
   到期為止;開了之後,會用到下一次輪詢 MCP Gate 為止(預設 30 秒)。在 `fail_mode: open` 下,MCP Gate
   連不上期間做的撤銷,要等它恢復連線後才生效。

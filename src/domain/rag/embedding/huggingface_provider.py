@@ -35,7 +35,7 @@ class HuggingFaceEmbeddingProvider(IEmbeddingProvider):
             model_name: HuggingFace model identifier
             dimension: Embedding dimension
             embed_batch_size: Batch size for encoding (higher = faster but more memory)
-            device: Device to run on ('cpu', 'cuda', 'mps')
+            device: Device to run on. Folio installs the CPU build of torch (1.5.1), so 'cpu'.
         """
         self._model_name = model_name
         self._dimension = dimension

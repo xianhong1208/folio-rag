@@ -1,5 +1,5 @@
-"""CKIP runs on the configured device without progress bars, and a segmenter that
-falls back to raw text flags the folder for Rebuild FTS (M7)."""
+"""CKIP runs on the CPU (the only rag.retrieval.ckip_device since 1.5.1) without progress
+bars, and a segmenter that falls back to raw text flags the folder for Rebuild FTS (M7)."""
 
 import sys
 import types
@@ -7,22 +7,37 @@ from types import SimpleNamespace
 
 import pytest
 
+from pydantic import ValidationError
+
+from src.config.model import RAGRetrievalConfig
 from src.domain.rag import ckip_segmenter as cs
 from src.domain.rag import text_segmenter as ts
 
 
-@pytest.mark.parametrize("spec, expected", [
-    ("cpu", -1), (None, -1), ("CUDA", 0), ("cuda:1", 1), ("cuda:x", -1), ("tpu", -1)])
-def test_resolve_device(spec, expected):
-    assert cs.resolve_device(spec) == expected
+def _retrieval(ckip_device):
+    return RAGRetrievalConfig(default_top_k=5, default_similarity_cutoff=0.0, hybrid_search=True,
+                              ckip_device=ckip_device)
 
 
-def test_resolve_auto_follows_torch(monkeypatch):
-    fake_torch = SimpleNamespace(cuda=SimpleNamespace(is_available=lambda: True))
-    monkeypatch.setitem(sys.modules, "torch", fake_torch)
-    assert cs.resolve_device("auto") == 0
-    fake_torch.cuda.is_available = lambda: False
-    assert cs.resolve_device("auto") == -1
+@pytest.mark.parametrize("value", ["cpu", "CPU", " cpu ", "", None])
+def test_ckip_device_accepts_cpu(value):
+    assert _retrieval(value).ckip_device == "cpu"
+
+
+@pytest.mark.parametrize("value", ["cuda", "CUDA", "cuda:0", "cuda:4", "auto"])
+def test_ckip_device_refuses_gpu_values_with_the_upgrade_guide(value):
+    """1.5.1 installs CPU torch only: a GPU device stops the start (no silent CPU fallback)
+    and says what to change."""
+    with pytest.raises(ValidationError) as e:
+        _retrieval(value)
+    msg = str(e.value)
+    assert "removed in Folio 1.5.1" in msg and "CKIP_DEVICE" in msg and "docs/migrate-1.5.md" in msg
+
+
+@pytest.mark.parametrize("value", ["tpu", "mps", "gpu"])
+def test_ckip_device_refuses_unknown_values(value):
+    with pytest.raises(ValidationError, match="the only value is cpu"):
+        _retrieval(value)
 
 
 class _FakeWS:
@@ -52,28 +67,17 @@ def fake_ckip(monkeypatch):
     return _FakeWS
 
 
-def test_device_from_config_and_no_progress_bar(fake_ckip, monkeypatch):
-    monkeypatch.setattr(cs, "_configured_device", lambda: "cuda:2")
+def test_runs_on_the_cpu_without_progress_bar(fake_ckip):
     seg = cs.CkipSegmenter()
     assert seg.segment_batch(["台北", ""]) == ["台 北", ""]
     assert seg.segment("市政府") == "市 政 府"
     ws = fake_ckip.instances[0]
-    assert ws.device == 2
+    assert ws.device == -1  # ckip-transformers' CPU
     assert ws.calls == [False, False]  # tqdm off on both paths
 
 
-def test_configured_device_reads_retrieval_key(monkeypatch):
-    monkeypatch.setattr("src.config.config_manager.Config.get_config_model",
-                        lambda: SimpleNamespace(rag=SimpleNamespace(
-                            retrieval=SimpleNamespace(ckip_device="cuda:0"))))
-    assert cs._configured_device() == "cuda:0"
-    monkeypatch.setattr("src.config.config_manager.Config.get_config_model",
-                        lambda: (_ for _ in ()).throw(RuntimeError("x")))
-    assert cs._configured_device() == "cpu"
-
-
 def test_batch_report_flags_runtime_fallback(fake_ckip):
-    seg = cs.CkipSegmenter(device="cpu")
+    seg = cs.CkipSegmenter()
     assert seg.segment_batch_report(["台北"]) == (["台 北"], False)
     assert seg.segment_batch_report(["boom 台北"]) == (["boom 台北"], True)
     assert seg.segment_batch(["boom"]) == ["boom"]

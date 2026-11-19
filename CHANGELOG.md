@@ -6,6 +6,15 @@ to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [1.5.1] — 2026-11-19
+
+### Changed
+- **Breaking for installs: one CPU install, no GPU dependency groups.** `uv sync --extra local` now installs everything the in-process models need, with the CPU build of torch (2.14.1+cpu on Linux x86_64 and aarch64, the CPU index's macOS arm64 wheel) from PyTorch's CPU index. The `cuda`, `rocm-r714` and `cpu` groups, the AMD and CUDA wheel indexes and `[tool.uv] conflicts` are removed. Since 1.5.0 the only in-process models are CKIP segmentation (on the CPU by default) and optional HuggingFace embeddings, so a CUDA install carried about 4–5 GB of NVIDIA libraries nothing used. The lock goes from 280 to 200 entries (74 packages fewer: every `nvidia-*`, `cuda-*`, `rocm*`, `amd-torch-device-*` and `triton`); no other package changes version. An old `uv sync --group cuda|rocm-r714|cpu` fails with "Group … is not defined": drop the flag ([Upgrading to 1.5.1](docs/migrate-1.5.md#upgrading-to-151)).
+- **Breaking: `rag.retrieval.ckip_device` (`CKIP_DEVICE`) accepts only `cpu`.** `cuda`, `cuda:N` and `auto` stop the start with a message pointing at the upgrade guide, and any other value is refused too (it used to fall back to the CPU with a warning). The default was already `cpu`. `main.py` no longer sets `PYTORCH_CUDA_ALLOC_CONF`.
+
+### Fixed
+- **The `linux/arm64` Docker image could not be built, so 1.5.0 was not published to Docker Hub.** The AMD ROCm wheel index is not explicit (torch's ROCm runtime libraries live there), and uv takes a package from the first index that has it, so `jinja2`, `markupsafe`, `mpmath`, `networkx` and `sympy` were locked to that index for every install, the core one and the Docker image included. Its `markupsafe` has no arm64 wheel. The five packages keep their versions and now come from PyPI (the AMD index itself is gone with the GPU groups, below). A test fails if any package other than torch is locked to an index other than PyPI.
+
 ## [1.5.0] — 2026-11-19
 
 ### Added

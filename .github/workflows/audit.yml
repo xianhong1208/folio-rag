@@ -38,8 +38,8 @@ jobs:
       - run: pip install "uv==${{ env.UV_VERSION }}"
       - name: Python (pip-audit on the locked runtime dependencies, local extra included)
         run: |
-          # Local builds (torch/triton from the CPU / ROCm /
-          # CUDA indexes) are not on PyPI and cannot be audited, so they are left out.
+          # Local builds (torch from PyTorch's CPU index, +cpu) are not on PyPI and
+          # cannot be audited, so they are left out.
           uv export --locked --no-dev --extra local --no-hashes --no-emit-project --format requirements-txt \
             | grep -vE '^\./|^-e |\+(git|rocm|cpu|cu[0-9])|^(torch|torchvision|torchaudio|triton|pytorch-triton)==' \
             > requirements-audit.txt

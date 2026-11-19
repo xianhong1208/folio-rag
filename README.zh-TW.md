@@ -58,8 +58,9 @@ Folio 是一套開源、給 Model Context Protocol 用的檢索增強生成(RAG)
   `import-folder` 可以把單一資料夾連同檔案與索引搬到另一個 Folio,或留一份副本;console 的 Folders 頁面也能做。
 - **Prometheus 監控指標**在 [`/metrics`](docs/metrics.zh-TW.md):請求、搜尋各階段延遲、MCP 工具呼叫、
   索引工作與模型端點呼叫,任何標籤都不含資料夾或使用者名稱。
-- **本機 GPU、CPU 或雲端。** 行程內模型可跑在 AMD ROCm、NVIDIA CUDA 或 CPU 上,也可以讓所有模型都走
-  OpenAI 相容 API,完全不需要 torch。
+- **自架或雲端模型。** Embedding、LLM、reranker、視覺模型與語音轉文字都走 OpenAI 相容端點,可以是你自己
+  GPU 上的服務(例如 Forgeyard)或雲端 API;僅有的行程內模型 —— CKIP 斷詞與選用的 HuggingFace embedding ——
+  跑在 CPU 上。
 
 ## 安裝
 
@@ -87,10 +88,9 @@ HTTPS、備份和升級。
 git clone https://github.com/xianhong1208/folio-rag.git
 cd folio-rag
 
-# 本地模型需要 `local` extra,torch 則來自 dependency group:
-# 一定要一起帶 rocm-r714 | cuda | cpu 其中一個(cuda = CUDA 13.0,需要 NVIDIA driver 580 以上)。
+# 行程內模型(CKIP、HuggingFace embedding)需要 `local` extra,它會帶入 CPU 版的 torch。
 # 全雲端:直接 `uv sync`。
-uv sync --extra local --group cuda
+uv sync --extra local
 
 cp .env.example .env         # DATABASE_URL(PostgreSQL + pgvector)、模型端點與金鑰、
                              # MCP_GATE_URL / FOLIO_AUDIENCE:所有機密與每台機器各自的值
@@ -148,7 +148,7 @@ Folio_product-docs  mode="search"  query="how do I rotate the signing key?"
 
 | Profile | 模型 | 安裝 |
 |---|---|---|
-| `local`(預設) | 什麼都可以。內附的設定呼叫自架的 embedding、LLM 與 reranker 端點,並在行程內執行 CKIP 斷詞;視覺模型與語音轉文字一律走端點 | `uv sync --extra local --group rocm-r714 \| cuda \| cpu` |
+| `local`(預設) | 什麼都可以。內附的設定呼叫自架的 embedding、LLM 與 reranker 端點,並在行程內執行 CKIP 斷詞;視覺模型與語音轉文字一律走端點 | `uv sync --extra local` |
 | `hybrid` | 同上,用於自架與雲端端點混用;直接寫在設定檔裡的 API 金鑰會被警告 | 同 `local` |
 | `cloud` | 每個角色都是 HTTP 端點,金鑰必須是 `${ENV}` 參照;不需要 torch,也不下載模型 | `uv sync` |
 
@@ -191,5 +191,4 @@ Folio 本身的程式碼是 MIT。部分選用元件使用其他授權;若要再
 
 - `--extra local`:`ckip-transformers` 以及它下載的 CKIP 模型是 **GPL-3.0**。改用 `jieba`(MIT)或
   `bigram` 分詞器即可避開;發布的 Docker 映像不包含它。
-- `--group cuda`:PyTorch 的 CUDA 版本會安裝 NVIDIA 的 CUDA 函式庫,依 NVIDIA 自己的授權條款。
 - Docker 映像另含 PostgreSQL 用戶端工具(PostgreSQL License)與 Debian 套件,各依其授權。

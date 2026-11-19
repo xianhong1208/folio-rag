@@ -41,6 +41,8 @@ phone.
 
 **1.5.0 (2026-11-19).** Install in one command and never lose data: a lightweight Docker image and a compose file with PostgreSQL + pgvector (plus an optional MCP Gate profile) and a deploy guide; `main.py backup` / `restore` with scheduled backups; export and import of one folder, from the CLI and the console; Prometheus metrics at `/metrics`. The built-in OCR, layout and speech models are gone: PDFs and images are read by a vision model over an OpenAI-compatible API (for example Qwen3-VL on [Forgeyard](https://github.com/xianhong1208/forgeyard)), or PDFs from their text layer when no model is set, and audio goes to any OpenAI-compatible transcription endpoint; the `/v1` media endpoints are removed. See [Upgrading to 1.5](docs/migrate-1.5.md).
 
+**1.5.1 (2026-11-19).** One CPU install: the GPU dependency groups are gone, since the only models Folio still runs itself (CKIP segmentation, optional HuggingFace embeddings) run on the CPU; an install is about 4–5 GB smaller than a CUDA one. The Docker image is published for `linux/amd64` and `linux/arm64` again (1.5.0's arm64 build failed). See [Upgrading to 1.5.1](docs/migrate-1.5.md#upgrading-to-151).
+
 Details: [CHANGELOG.md](CHANGELOG.md).
 
 ## Next
@@ -106,7 +108,6 @@ Kept here so they are not lost; none of them is planned.
 - **PostgreSQL with pgvector is required.** There is no SQLite fallback: hybrid retrieval and the
   per-folder tables depend on it.
 - **Synchronous SQLAlchemy** (psycopg2) for the configured DSN; never `+asyncpg`.
-- **The GPU is chosen by hand,** with `uv sync --extra local --group rocm-r714 | cuda | cpu`.
 - **Revocation is not instant, and is off by default.** Tokens are verified offline. Without
   `auth.revocation` a revoked token keeps working until it expires; with it, until the next poll of
   MCP Gate (30 s by default). With `fail_mode: open`, revocations made while MCP Gate is unreachable
