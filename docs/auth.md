@@ -43,5 +43,5 @@ The first poll fetches the whole list; later polls ask only for revocations sinc
    FOLIO_REVOCATION_CLIENT_ID=mcpc_...
    FOLIO_REVOCATION_CLIENT_SECRET=...
    ```
-   (If your `config/config.yaml` predates this feature, copy the `auth.revocation` block from the template first.)
+   (`config/auth.yaml` reads these three variables; `.env.example` lists them.)
 4. **Check it.** The startup log says `MCP Gate revocation feed: ENABLED …`; `curl -s localhost:5039/health/detailed | jq .checks.revocation` shows a recent `last_success`. Revoke a test PAT in MCP Gate; within `poll_interval_sec` a request with it gets 401. A `HTTP 401: invalid_client` in `last_error` means wrong credentials; `HTTP 403: unauthorized_client` means the client is not bound to a server.

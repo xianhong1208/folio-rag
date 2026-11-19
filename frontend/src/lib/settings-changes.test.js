@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest'
 import { META, PRESETS } from './settings-config'
-import { TABS, tabFromParam, tabOfSection, diffChanges, changesPerTab, stagePreset, needsReindex, showValue } from './settings-changes'
+import { TABS, OVERRIDE_SECTIONS, tabFromParam, tabOfSection, diffChanges, changesPerTab, stagePreset, needsReindex, showValue } from './settings-changes'
 
 const state = {
   'rag.retrieval.default_top_k': { value: 10 },
@@ -25,9 +25,19 @@ describe('tabs', () => {
     expect(tabFromParam('settings')).toBe('models')
     expect(tabFromParam(undefined)).toBe('models')
   })
+  it('old answer-llm / eval-llm links still open the Models tab (roles removed in 1.5)', () => {
+    expect(tabFromParam('answer-llm')).toBe('models')
+    expect(tabFromParam('eval-llm')).toBe('models')
+    expect(tabFromParam('contextual-llm')).toBe('models')
+  })
+  it('the Models tab holds the LLM plus one optional contextual override', () => {
+    const models = TABS.find((t) => t.key === 'models')
+    expect(models.sections).toEqual(['rag.embedding', 'rag.llm', 'rag.contextual_llm'])
+    expect(OVERRIDE_SECTIONS).toEqual(['rag.contextual_llm'])
+  })
   it('maps sections to tabs', () => {
     expect(tabOfSection('rag.rerank')).toBe('retrieval')
-    expect(tabOfSection('rag.answer_llm')).toBe('models')
+    expect(tabOfSection('rag.contextual_llm')).toBe('models')
   })
 })
 

@@ -99,7 +99,7 @@ class QueryRequest(BaseModel):
     """Query request model.
 
     All retrieval-tuning fields allow ``None``; when None, the API reads the defaults from
-    `rag.retrieval.*` in `config.yaml`, keeping API behavior consistent with the server config.
+    `rag.retrieval.*` in `config/retrieval.yaml`, keeping API behavior consistent with the server config.
     This way an ops change to config immediately affects the API's default behavior, eliminating
     the "hardcoded Pydantic values drift out of sync with config" problem.
     """

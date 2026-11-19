@@ -1,5 +1,5 @@
 import { useEffect, useState, useCallback, useRef } from 'react'
-import { Folder, Play, Pencil, Trash2, Download, Eye, X, RefreshCw, RotateCcw, XCircle } from 'lucide-react'
+import { Folder, Play, Pencil, Trash2, Download, Eye, X, RefreshCw, RotateCcw, XCircle, FolderInput, FolderOutput } from 'lucide-react'
 import { get, post, api, upload as uploadFile } from '../services/api'
 import { fmtNum, fmtBytes, fmtTime, shortModel } from '../lib/format'
 import { pillClass, statusLabel, needsRetry, canRetry, canCancel, isJobActive } from '../lib/jobs'
@@ -9,6 +9,8 @@ import ChunkText, { ContentBadge } from '../components/ui/ChunkText'
 import { isPartial, needsReindex, reindexNote, countNeedsReindex, folderStaleCount, staleFileIds, batches } from '../lib/fileStatus'
 import { useModal } from '../contexts/ModalContext'
 import { useToast } from '../contexts/ToastContext'
+import ImportFolderDialog from '../components/ImportFolderDialog'
+import { exportProblem, importSummary, importWarnings, needsIndexAfterImport } from '../lib/folderArchive'
 
 function statusPill(s) {
   return <span className={'pill ' + pillClass(s)}>{statusLabel(s)}</span>
@@ -199,6 +201,36 @@ export default function FoldersPage() {
     catch (e) { toast('Cancel failed: ' + e.message, 'bad') }
   }
   const ftsProgress = rebuilding && ftsJob.job.total_files ? ` ${ftsJob.job.processed_files}/${ftsJob.job.total_files}` : ''
+  // Export: the server writes the archive (refused while an index job runs), then the
+  // browser downloads it once from download_url — streamed, never held in page memory.
+  const [exporting, setExporting] = useState(null) // folder id while its export is written
+  const exportFolder = async (f) => {
+    setExporting(f.id)
+    try {
+      const r = await post(`/api/admin/manage/folders/${f.id}/export`, {})
+      const d = r.data
+      const a = document.createElement('a')
+      a.href = d.download_url
+      a.download = d.file_name
+      document.body.appendChild(a)
+      a.click()
+      a.remove()
+      toast(`Exported "${f.name}" — ${fmtNum(d.files)} file(s), ${fmtNum(d.chunks)} chunks, ${fmtBytes(d.size)}`, 'ok')
+      for (const w of d.warnings || []) toast(w, 'warn')
+    } catch (e) { toast('Export failed: ' + exportProblem(e), 'bad') }
+    finally { setExporting(null) }
+  }
+  const [importing, setImporting] = useState(false)
+  const imported = async (d) => {
+    setImporting(false)
+    toast(importSummary(d), 'ok')
+    for (const w of importWarnings(d)) toast(w, 'warn')
+    if (needsIndexAfterImport(d)) {
+      try { const r = await post(`/api/admin/manage/folders/${d.folder_id}/index`, { skip_existing: true }); toast(r.message || 'Indexing started', 'ok') }
+      catch (e) { toast('Indexing did not start: ' + e.message, 'bad') }
+    }
+    loadFolders()
+  }
   const editFolder = async (f) => {
     const r = await form({ title: 'Rename Folder', action: 'Save', fields: [{ id: 'name', label: 'Name', defaultValue: f.name, required: true }] })
     if (!r) return
@@ -273,6 +305,10 @@ export default function FoldersPage() {
             </button>
             {rebuilding && <button className="act-btn danger" title="Cancel rebuild" aria-label="Cancel rebuild" onClick={cancelFts}><XCircle size={14} /></button>}
             <button className="btn-ghost" onClick={() => reindexFolder(cur.id, false)}>Reindex Folder</button>
+            <button className="btn-ghost tip" onClick={() => exportFolder(cur)} disabled={exporting === cur.id}
+              data-tip="Download this folder — files, index and settings — as one .tar archive. Import it here or in another Folio.">
+              <FolderOutput size={13} />{exporting === cur.id ? 'Exporting…' : 'Export'}
+            </button>
             <button className="btn-cyber" onClick={() => fileInput.current?.click()}>Upload Files</button>
             <input type="file" ref={fileInput} multiple hidden onChange={upload} />
           </div>
@@ -367,6 +403,7 @@ export default function FoldersPage() {
           <div><h2>Folders</h2><div className="desc">Files and index status per folder — click a row for details</div></div>
           <div className="grow" />
           <div className="search-box"><input placeholder="Search folders…" value={q} onChange={(e) => setQ(e.target.value)} /></div>
+          <button className="btn-ghost" onClick={() => setImporting(true)} title="Import a folder archive as a new folder"><FolderInput size={13} />Import</button>
           <button className="btn-cyber" onClick={createFolder}>+ New Folder</button>
         </div>
         <div className="tablewrap">
@@ -392,6 +429,7 @@ export default function FoldersPage() {
                       <td onClick={(e) => e.stopPropagation()}><div className="actions">
                         <button className="act-btn" title="Start indexing" onClick={() => reindexFolder(f.id, true)}><Play size={14} /></button>
                         {folderStaleCount(f) > 0 && <button className="act-btn" title={`Re-index ${folderStaleCount(f)} stale file(s)`} aria-label="Re-index stale files" disabled={staleBusy === f.id} onClick={() => reindexStale(f)}><RotateCcw size={14} /></button>}
+                        <button className="act-btn" title="Export (download as an archive)" aria-label="Export" disabled={exporting === f.id} onClick={() => exportFolder(f)}><FolderOutput size={14} /></button>
                         <button className="act-btn" title="Rename" onClick={() => editFolder(f)}><Pencil size={14} /></button>
                         <button className="act-btn danger" title="Delete folder" onClick={() => deleteFolder(f)}><Trash2 size={14} /></button>
                       </div></td>
@@ -401,6 +439,7 @@ export default function FoldersPage() {
           </table>
         </div>
       </div>
+      {importing && <ImportFolderDialog onClose={() => setImporting(false)} onDone={imported} />}
     </div>
   )
 }

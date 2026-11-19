@@ -18,6 +18,7 @@ from typing import Any, Dict, List, Optional
 
 from cachetools import TTLCache
 
+from src import metrics
 from src.config.model import IndexingConfig  # single source for the timeout default
 from src.domain.exceptions import ConflictError
 from src.log import get_api_logger
@@ -201,6 +202,7 @@ class IndexProgressTracker:
         status: str,
         message: str,
     ):
+        metrics.file_finished(status)
         self._manager._update_job_state(
             self._job_id,
             processed_files=processed_files,
@@ -425,6 +427,7 @@ class IndexingJobManager:
                 )
             self._jobs[job_id] = state
             self._active_folders[folder_id] = job_id
+        metrics.job_submitted(state.kind)
 
         # initial persist so the job is queryable from DB immediately
         self._persist(state.to_dict())
@@ -545,6 +548,7 @@ class IndexingJobManager:
                 self._jobs[job_id] = state
                 self._active_folders[folder_id] = job_id
                 queued = False
+        metrics.job_submitted(state.kind)
 
         if queued:
             self._persist(state.to_dict())
@@ -759,6 +763,16 @@ class IndexingJobManager:
                 jobs.append(state.to_dict())
             return jobs
 
+    def live_job_counts(self) -> Dict[tuple, int]:
+        """{(kind, status): n} for the jobs waiting or running now (the metrics gauge)."""
+        counts: Dict[tuple, int] = {}
+        with self._lock:
+            for state in list(self._jobs.values()):
+                if state.status in (JobStatus.PENDING, JobStatus.RUNNING):
+                    key = (state.kind, state.status.value)
+                    counts[key] = counts.get(key, 0) + 1
+        return counts
+
     def active_file_stages(self) -> Dict[str, Dict[str, Any]]:
         """Return {file_id: {folder_id, stage, done, total, eta, job_id}} for files with live work.
 
@@ -830,6 +844,7 @@ class IndexingJobManager:
                 )
             self._jobs[job_id] = state
             self._active_folders[folder_id] = job_id
+        metrics.job_submitted(state.kind)
         self._persist(state.to_dict())
 
         def progress(done: int, total: int, label: Optional[str] = None) -> None:
@@ -1452,6 +1467,7 @@ class IndexingJobManager:
                 )
                 return
 
+            previous = state.status
             for key, value in updates.items():
                 if hasattr(state, key):
                     setattr(state, key, value)
@@ -1465,6 +1481,10 @@ class IndexingJobManager:
             self._jobs[job_id] = state
             if updates.get("status") in _TERMINAL_STATUSES and state.completed_at is None:
                 state.completed_at = datetime.now(timezone.utc).isoformat()
+            # Metrics: each transition is seen once (terminal jobs return at the gate above).
+            started = previous != JobStatus.RUNNING and state.status == JobStatus.RUNNING
+            finished = state.status in _TERMINAL_STATUSES
+            transition = (state.kind, state.status, state.started_at, state.completed_at)
 
             # The folder lock is not released here — its only exit is _cleanup_job_slot (when the task
             # truly exits). A terminal status does not mean the task stopped: it may still be in an
@@ -1479,6 +1499,10 @@ class IndexingJobManager:
             else:
                 persist_db = True
                 self._last_persist[job_id] = now
+        if started:
+            metrics.job_started(transition[0])
+        if finished:
+            metrics.job_finished(*transition)
         if persist_db:
             self._persist(snapshot)
         else:

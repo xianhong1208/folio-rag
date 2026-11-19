@@ -165,6 +165,7 @@ class TestCli:
         monkeypatch.setattr(mod, "run_eval", _boom)
         monkeypatch.setattr(sys, "argv", ["rag_eval.py", "--folder", "nope"])
         with patch("src.config.config_manager.Config.set_config"), \
+             patch("src.config.dotenv.load_dotenv"), \
              patch("db.runtime_settings_db.RuntimeSettingsDB.ensure_table"):
             with pytest.raises(SystemExit) as exc:
                 mod.main()

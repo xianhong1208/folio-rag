@@ -1,5 +1,5 @@
-"""Lazy imports for the cloud profile: torch-free chunk token counting, warm-up gating, CKIP
-skip, the lazy HuggingFace embedding import and the docling converter's model gating.
+"""Lazy imports for the cloud profile: torch-free chunk token counting, CKIP skip, the lazy
+HuggingFace embedding import and the docling converter's document-formats-only setup.
 
 The end-to-end "nothing local is imported" proof is tests/test_cloud_profile_no_local_models.py.
 """
@@ -10,7 +10,6 @@ from types import SimpleNamespace
 import pytest
 
 from src.config.model import RAGConfig
-from src.config.roles import docling_warmup_needed
 from src.domain.rag import chunk_tokenizer as ct
 
 _CFG = "src.config.config_manager.Config.get_config_model"
@@ -97,48 +96,33 @@ class TestChunkTokenizerInCloud:
         assert tok.name in (ct.BUNDLED_TOKENIZER_NAME, "char-estimate")
 
 
-class TestWarmupAndConverterGating:
-    def test_docling_warmup_needed(self):
-        assert docling_warmup_needed(None)
-        assert docling_warmup_needed(_rag())  # local parsing
-        assert not docling_warmup_needed(_rag(**CLOUD))
-        hybrid = _rag(profile="hybrid", parsing={"pdf": "cloud", "images": "cloud",
-                                                 "vision": {"model": "v"}},
-                      asr={"provider": "fireredasr"})
-        assert not docling_warmup_needed(hybrid)  # FireRedASR is not docling
-        hybrid.asr.provider = "docling-whisper"
-        assert docling_warmup_needed(hybrid)
-
-    def test_local_pdf_models_wanted(self, monkeypatch):
+class TestConverterHasNoModels:
+    def test_converter_is_built_for_document_formats_only(self, monkeypatch):
+        """In every profile the shared converter knows only docling's model-free formats:
+        PDFs and images never reach it, so no layout / OCR pipeline can be built."""
+        from docling.datamodel.base_models import InputFormat
         from src.domain.rag import docling_loader as dl
-        monkeypatch.setattr(_CFG, lambda: SimpleNamespace(rag=_rag(**CLOUD)))
-        assert dl._local_pdf_models_wanted() is False
-        monkeypatch.setattr(_CFG, lambda: None)
-        assert dl._local_pdf_models_wanted() is True
-
-        def boom():
-            raise RuntimeError("x")
-        monkeypatch.setattr(_CFG, boom)
-        assert dl._local_pdf_models_wanted() is True
-
-    def test_cloud_converter_configures_no_models(self, monkeypatch):
-        """Under cloud parsing the shared converter gets no PDF/image/audio pipelines, never
-        probes the accelerator (which imports torch for cuda) and logs no weights warning."""
-        from src.domain.rag import docling_loader as dl
-        rag = _rag(**CLOUD)
-        monkeypatch.setattr(_CFG, lambda: SimpleNamespace(rag=rag))
         monkeypatch.setattr(dl, "_converter", None)
-        monkeypatch.setattr(dl, "_resolve_artifacts_path", lambda: pytest.fail("artifacts looked up"))
-        monkeypatch.setattr(dl, "_get_accelerator_options", lambda: pytest.fail("accelerator probed"))
         captured = {}
 
         class FakeConverter:
             def __init__(self, **kw):
                 captured.update(kw)
         monkeypatch.setattr("docling.document_converter.DocumentConverter", FakeConverter)
-        dl._build_converter()
-        assert captured == {}  # no format_options: Office/Markdown/HTML backends only
+        conv = dl.get_converter()
+        assert dl.get_converter() is conv  # a singleton
+        formats = set(captured["allowed_formats"])
+        assert InputFormat.DOCX in formats and InputFormat.MD in formats and InputFormat.XLSX in formats
+        assert formats.isdisjoint({InputFormat.PDF, InputFormat.IMAGE, InputFormat.AUDIO, InputFormat.VIDEO})
+        assert "format_options" not in captured
         monkeypatch.setattr(dl, "_converter", None)
+
+    def test_pdfs_images_and_audio_never_go_to_docling(self):
+        from src.domain.rag.docling_loader import is_docling_supported
+        for name in ("a.pdf", "b.PNG", "c.jpeg", "d.tiff", "e.wav", "f.mp3"):
+            assert not is_docling_supported(name), name
+        for name in ("a.docx", "b.md", "c.xlsx", "d.html", "e.epub"):
+            assert is_docling_supported(name), name
 
 
 class TestCkipUnderCloud:

@@ -1,19 +1,19 @@
-# Evals — RAG Retrieval and ASR Evaluation
+# Evals — RAG Retrieval, Page Reading (Vision Model) and ASR Evaluation
 
 
-**Purpose**: an acceptance net for every model / tuning decision. Run it before and after each change — switching the embedding model, switching ASR (FireRedASR), or tuning `ef_search` — and let the numbers decide.
+**Purpose**: an acceptance net for every model / tuning decision. Run it before and after each change — switching the embedding model, switching the vision model that reads PDF pages and images, switching the speech-to-text model or endpoint, or tuning `ef_search` — and let the numbers decide.
 
 ## Layout
 
 ```
 evals/
-  metrics.py                  # Metric pure functions (CER / simplified-char rate / recall@k / MRR; unit-tested)
+  metrics.py                  # Metric pure functions (CER / char F1 / simplified-char rate / recall@k / MRR; unit-tested)
   rag/
     documents/                # <- Representative document set (any format in the allowlist)
     golden_qa.yaml            # <- QA set (format described in the file's comments)
   asr/
     audio/                    # <- 3-5 representative audio clips (meeting / presentation / with leading silence)
-    drafts/                   # Machine drafts (produced by whisper; a proofreading starting point only, never scored)
+    drafts/                   # Machine drafts (from the rag.asr endpoint; a proofreading starting point only, never scored)
     golden_transcripts/       # <- Same-named .txt: only **human-proofread** full Traditional-Chinese text belongs here
   baselines/                  # Scoring output (JSON; baselines are committed to the repo)
 ```
@@ -72,6 +72,33 @@ What the harness measures, per question type and question language:
   ratio, p50/p95 latency; run-to-run variance over `--runs`.
 - gold reachability: evidence spans the indexed chunks no longer contain (parser loss).
 
+## Page reading: the vision model (`scripts/eval_ocr.py`)
+
+How well the model behind `rag.parsing.vision` reads PDF pages. Every page of the two public
+PDFs in `rag/documents/` (a Traditional Chinese budget and an English price list, both with
+tables) is rendered at `rag.parsing.dpi` and sent with Folio's own transcription prompt; the
+reference is the page's text layer. `--degrade` turns each render into a cheap office scan
+first (grey, 1.5° skew, 120 dpi, blur, speckles, JPEG quality 35), which is where OCR fails.
+Scores are CER and an order-free character F1 after dropping whitespace and Markdown table
+syntax (`evals/metrics.py`).
+
+```bash
+VISION_BASE_URL=https://<forgeyard-host>:7860/v1 VISION_MODEL=qwen3-vl-8b \
+VISION_API_KEY=<key> VISION_CA_FILE=forgeyard-ca.pem \
+.venv/bin/python scripts/eval_ocr.py --degrade --out evals/baselines/ocr-<date>-degraded.json
+```
+
+Measured 2026-11-18 (the decision to drop docling's OCR, #7): Qwen3-VL-8B on Forgeyard read the
+4 clean and 4 degraded pages with no misread character and kept the tables as Markdown tables;
+docling's RapidOCR (PP-OCRv6) fell to a character F1 of 0.935–0.970 on the degraded Chinese pages.
+With this script (2026-11-19, Qwen3-VL-8B on Forgeyard, mean char F1 / CER): clean (150 dpi) 0.9994 / 0.003;
+`--degrade` at 200 dpi 0.9947 / 0.012; `--degrade` at 150 dpi (≈ 90 dpi after the scan's 0.6
+shrink) 0.9639 / 0.067, where the model left out the top block of the second Chinese page
+(F1 0.876). That is why `rag.parsing.dpi` defaults to 200 (an A4 page is then about 3.9 MP, inside
+a 4096-image-token limit such as Forgeyard's); very low-resolution scans may still need more.
+Without a vision model Folio reads these PDFs from their text layer (the reference itself), so
+the eval is only meaningful for the model.
+
 ## Material Source A: Common Voice zh-TW (no proofreading, recommended)
 
 Mozilla Common Voice Scripted Speech (zh-TW, CC0-1.0) ships with **human-verified** per-sentence text, so no proofreading is needed. After logging in to the Mozilla Data Collective and downloading the tar.gz:
@@ -88,12 +115,14 @@ Limitation: CV consists of read-aloud short sentences (phonetically clean). It m
 
 Transcribing 20 minutes of audio from scratch is impractical, so start from a machine draft:
 
-1. Generate drafts (whisper turbo -> `drafts/*.txt`):
+1. Generate drafts with the configured `rag.asr` endpoint (-> `drafts/*.txt`):
    `uv run --no-sync python scripts/make_asr_drafts.py`
-2. **Proofread** the contents of `drafts/` (listen to the audio and fix errors; once a FireRedASR draft is ready you can compare side by side and prioritize listening where the two disagree).
+   A second model's drafts are a useful second opinion:
+   `uv run --no-sync python scripts/make_asr_drafts.py --model <other-model> --suffix other`
+2. **Proofread** the contents of `drafts/` (listen to the audio and fix errors; where two drafts disagree is where to listen first).
 3. Once proofread, move the files into `golden_transcripts/` under the same names.
 
-Warning: putting unproofread machine output into `golden_transcripts/` means CER is measured against whisper's own errors, distorting the scores of both ASR engines. This line is the floor of evaluation credibility.
+Warning: putting unproofread machine output into `golden_transcripts/` means CER is measured against whisper's own errors, distorting the scores of every model compared. This line is the floor of evaluation credibility.
 
 ## Running
 
@@ -102,10 +131,11 @@ Warning: putting unproofread machine output into `golden_transcripts/` means CER
 uv run --no-sync python scripts/run_rag_eval.py
 uv run --no-sync python scripts/run_rag_eval.py --baseline evals/baselines/rag_<date>.json
 
-# ASR (against the configured provider; --provider overrides)
+# ASR (against the rag.asr OpenAI-compatible endpoint: ASR_BASE_URL / ASR_API_KEY / ASR_MODEL;
+# --model overrides the model; Folio has no in-process speech-to-text since 1.5)
 uv run --no-sync python scripts/run_asr_eval.py
-uv run --no-sync python scripts/run_asr_eval.py --provider openai-compatible \
-    --baseline evals/baselines/asr_docling-whisper_<date>.json
+uv run --no-sync python scripts/run_asr_eval.py --model whisper-large-v3-turbo \
+    --baseline evals/baselines/asr_<model>_<date>.json
 ```
 
 ## Metrics
@@ -115,7 +145,7 @@ uv run --no-sync python scripts/run_asr_eval.py --provider openai-compatible \
 | RAG | recall@5 / recall@10 | Fraction of expected files hit within the top-k retrieval results |
 | RAG | MRR | Reciprocal rank of the first hit file (ranking quality) |
 | ASR | CER | Character error rate (whitespace and punctuation stripped; normalization in metrics.py) |
-| ASR | Simplified-char rate | For Traditional-Chinese output, acceptance is ~0 (catches cases where FireRedASR emits simplified characters) |
+| ASR | Simplified-char rate | For Traditional-Chinese output, acceptance is ~0 (whisper writes Simplified; the provider converts it per `rag.asr.chinese_conversion`) |
 | ASR | Hallucination hit count | Count of audio_defense pattern hits against the provider's raw output |
 
 ## Conventions

@@ -46,6 +46,10 @@ class TokenVerifyResult:
     error_code: Optional[str] = None
 
 
+# Where the FastMCP app serves MCP (app.py mounts it at the root; its transport path is /mcp)
+MCP_PATH = "/mcp"
+
+
 @dataclass(frozen=True)
 class AuthSettings:
     """Resolved authentication settings (issuer, audience and public base URL)."""
@@ -53,11 +57,20 @@ class AuthSettings:
     base_url: str
     audience: str
     required_scopes: list[str] = field(default_factory=list)
+    # auth.internal_url: where this server reaches MCP Gate, when not at the issuer URL
+    internal_url: Optional[str] = None
+
+    @property
+    def fetch_base(self) -> str:
+        """The MCP Gate base URL this server sends its own requests to (JWKS, revocation feed,
+        discovery documents): ``auth.internal_url`` when set, else the issuer. Tokens are
+        still checked against ``issuer``."""
+        return self.internal_url or self.issuer
 
     @property
     def jwks_uri(self) -> str:
-        """JWKS endpoint published by the issuer (MCP Gate)."""
-        return f"{self.issuer}/.well-known/jwks.json"
+        """JWKS endpoint published by the issuer (MCP Gate), fetched from ``fetch_base``."""
+        return f"{self.fetch_base}/.well-known/jwks.json"
 
 
 def settings_from_config(config) -> Optional[AuthSettings]:
@@ -85,13 +98,20 @@ def settings_from_config(config) -> Optional[AuthSettings]:
     base_url = f"http://{host}:{port}".rstrip("/")
 
     audience = getattr(auth, "audience", None) or f"{base_url}/mcp"
+    # The audience is this server's public MCP URL. Advertise that address, not the bind
+    # address: in a container or behind a reverse proxy, http://127.0.0.1:<port> in the 401
+    # challenge (resource_metadata) and the RFC 9728 document sends OAuth clients nowhere.
+    if str(audience).rstrip("/").endswith(MCP_PATH):
+        base_url = str(audience).rstrip("/")[: -len(MCP_PATH)]
     required_scopes = list(getattr(auth, "required_scopes", None) or [])
+    internal_url = str(getattr(auth, "internal_url", None) or "").strip().rstrip("/") or None
 
     return AuthSettings(
         issuer=str(issuer).rstrip("/"),
         base_url=base_url,
         audience=audience,
         required_scopes=required_scopes,
+        internal_url=internal_url,
     )
 
 

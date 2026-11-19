@@ -4,7 +4,6 @@ per-role settings view: env-referenced secrets, key indicators, profile enforcem
 Every endpoint is the in-process fake server; no network, no keys.
 """
 
-from types import SimpleNamespace
 from unittest.mock import patch
 
 import pytest
@@ -29,8 +28,7 @@ def _config(base: str = "http://127.0.0.1:9", profile: str = "local", **rag_over
         "contextual_retrieval": {"enabled": True},
         "rerank": {"enabled": True, "api": "cohere", "model": "rr", "base_url": base, "api_key": "k"},
         "asr": {"provider": "openai-compatible", "model": "whisper-1", "base_url": base + "/v1", "api_key": "k"},
-        "parsing": {"pdf": "cloud", "images": "cloud",
-                    "vision": {"model": "vlm", "base_url": base + "/v1", "api_key": "k"}},
+        "parsing": {"vision": {"model": "vlm", "base_url": base + "/v1", "api_key": "k"}},
     }
     rag.update(rag_over)
     return ConfigModel.model_validate({
@@ -55,7 +53,7 @@ class TestProbes:
         with FakeModelServer(dim=8) as srv:
             rag = _config(srv.url).rag
             results = {r: probe_role(rag, r) for r in
-                       ("embedding", "contextual_llm", "answer_llm", "eval_llm", "rerank", "vision", "asr")}
+                       ("embedding", "llm", "contextual_llm", "rerank", "vision", "asr")}
             vision_req = [b for b in srv.posts("/chat/completions")
                           if isinstance(b["messages"][0]["content"], list)][0]
             asr_form = srv.posts("/audio/transcriptions")[0]
@@ -77,7 +75,7 @@ class TestProbes:
     def test_http_error_shows_only_the_status(self):
         with FakeModelServer() as srv:
             srv.fail_next = [(401, None)]
-            r = probe_role(_config(srv.url).rag, "answer_llm")
+            r = probe_role(_config(srv.url).rag, "llm")
         assert r == {**r, "status": "down", "detail": "HTTP 401"}
 
     def test_rerank_and_asr_errors(self):
@@ -94,22 +92,30 @@ class TestProbes:
     def test_disabled_and_local_roles_send_nothing(self):
         rag = _config(rerank={"enabled": False},
                       embedding={"provider": "huggingface", "model": "BAAI/bge-m3", "dimension": 8},
-                      parsing=None, asr={"provider": "fireredasr"}).rag
+                      parsing=None, asr={"enabled": False}).rag
         assert probe_role(rag, "rerank")["status"] == "disabled"
         assert probe_role(rag, "embedding")["status"] == "local"
-        assert probe_role(rag, "vision")["status"] == "local"
-        with patch("src.domain.rag.model_probe._asr_ready", return_value=False):
-            assert probe_role(rag, "asr") == {**probe_role(rag, "asr"), "status": "down"}
-        with patch("src.domain.rag.model_probe._asr_ready", return_value=True):
-            assert probe_role(rag, "asr")["status"] == "local"
+        r = probe_role(rag, "vision")
+        assert r["status"] == "unset" and "text layer" in r["detail"]
+        assert probe_role(rag, "asr")["status"] == "disabled"
 
     def test_asr_without_endpoint_is_unset(self):
         rag = _config(asr={"provider": "openai-compatible", "base_url": None}).rag
         assert probe_role(rag, "asr")["status"] == "unset"
 
-    def test_asr_ready_helper_is_fail_safe(self):
-        from src.domain.rag.model_probe import _asr_ready
-        assert _asr_ready(SimpleNamespace(asr=SimpleNamespace(provider="bogus"))) is False
+    def test_asr_without_section_is_unset(self):
+        rag = _config().rag
+        rag.asr = None
+        assert probe_role(rag, "asr")["status"] == "unset"
+
+    def test_asr_probe_uses_the_ca_file(self):
+        """An endpoint with its own CA (Forgeyard's) is probed with rag.asr.ca_file trusted."""
+        with FakeModelServer() as srv:
+            rag = _config(srv.url).rag
+            rag.asr.ca_file = "/ca.pem"
+            with patch("src.domain.rag.asr_provider.tls_verify", return_value=True) as tv:
+                assert probe_role(rag, "asr")["status"] == "ok"
+        tv.assert_called_once_with("/ca.pem")
 
     def test_default_llm_probe(self):
         with FakeModelServer() as srv:
@@ -161,7 +167,7 @@ class TestSecretsThroughTheConsole:
     def test_env_reference_is_resolved_and_persisted_as_reference(self, monkeypatch):
         monkeypatch.setenv("NEW_KEY", "sk-live-123")
         cfg = _config()
-        ro.capture_startup(cfg, refs={"rag.rerank.api_key": "NEW_KEY"})  # config.yaml's variable
+        ro.capture_startup(cfg, refs={"rag.rerank.api_key": "NEW_KEY"})  # config/models.yaml's variable
         applied, _ = ro.validate_and_apply(cfg, {"rag.rerank.api_key": "${NEW_KEY}"})
         assert cfg.rag.rerank.api_key == "sk-live-123"
         assert applied == {"rag.rerank.api_key": "${NEW_KEY}"}  # what the DB stores
@@ -202,8 +208,8 @@ class TestSecretsThroughTheConsole:
                             classmethod(lambda cls: {}))
         cfg = _config(profile="cloud")
         with pytest.raises(ValueError, match="profile 'cloud' rejects"):
-            ro.validate_and_apply(cfg, {"rag.asr.provider": "fireredasr"})
-        assert cfg.rag.asr.provider == "openai-compatible"
+            ro.validate_and_apply(cfg, {"rag.embedding.provider": "huggingface"})
+        assert cfg.rag.embedding.provider != "huggingface"
 
     def test_literal_clears_previous_reference(self, monkeypatch):
         monkeypatch.setenv("A", "1")
@@ -216,8 +222,8 @@ class TestSecretsThroughTheConsole:
     def test_new_paths_resolve_and_parsing_section_is_created(self):
         cfg = _config(parsing=None)
         ro.validate_and_apply(cfg, {"rag.parsing.max_pages_per_file": 10,
-                                    "rag.answer_llm.model": "big"})
-        assert cfg.rag.parsing.max_pages_per_file == 10 and cfg.rag.answer_llm.model == "big"
+                                    "rag.contextual_llm.model": "small"})
+        assert cfg.rag.parsing.max_pages_per_file == 10 and cfg.rag.contextual_llm.model == "small"
         assert ro.rebind_groups_for(["rag.contextual_llm.model", "rag.parsing.pdf"]) == ["rag.contextual_llm"]
 
 
@@ -234,10 +240,14 @@ class TestSettingsView:
         by_path = {s["path"]: s for s in view["settings"]}
         emb = by_path["rag.embedding.api_key"]
         assert emb["value"] == "•••" and emb["is_set"] is True and emb["env"] == "EMB_KEY"
-        assert by_path["rag.answer_llm.api_key"]["is_set"] is False
+        assert by_path["rag.contextual_llm.api_key"]["is_set"] is False
+        # The LLM roles removed in 1.5 are not returned any more.
+        assert not [p for p in by_path if p.startswith(("rag.answer_llm.", "rag.eval_llm."))]
+        assert {r["role"] for r in view["roles"]}.isdisjoint({"answer_llm", "eval_llm"})
         assert view["profile"] == "cloud" and isinstance(view["usage"], dict)
         roles = {r["role"]: r for r in view["roles"]}
-        assert roles["answer_llm"]["key_env"] == "LLM_KEY"  # inherited from rag.llm
+        assert roles["llm"]["key_env"] == "LLM_KEY"
+        assert roles["contextual_llm"]["key_env"] == "LLM_KEY"  # inherited from rag.llm
         assert roles["vision"]["key_set"] is True and roles["vision"]["key_env"] is None
         assert all(v != "k" for r in view["roles"] for v in r.values())  # no key values anywhere
 
@@ -264,16 +274,27 @@ class TestHealthListsVision:
         return TestClient(as_identity(app, make_identity("sub:owner-tok", admin=False)))
 
     @pytest.mark.parametrize("parsing,listed", [
-        ({"pdf": "cloud", "vision": {"model": "vlm", "base_url": "http://v/v1"}}, True),
-        (None, False),
+        ({"pdf": "auto", "vision": {"model": "vlm", "base_url": "http://v/v1"}}, "ok"),
+        ({"vision": {"model": "vlm", "base_url": "https://v/v1", "ca_file": "/fy-ca.pem"}}, "ok"),
+        (None, "unset"),
+        ({"vision": {"model": "vlm"}}, "unset"),  # no endpoint: not configured
     ])
     def test_document_parsing_row(self, as_identity, make_identity, parsing, listed):
-        async def ok(url, key):
+        cas = []
+
+        async def ok(url, key, ca_file=None):
+            cas.append((url, ca_file))
             return "ok", "HTTP 200", 1
         with patch("src.config.config_manager.Config.get_config_model",
                    return_value=_config(parsing=parsing)), \
              patch("src.api.router.admin_overview._probe_db_health", return_value=("ok", "x", 1)), \
              patch("src.api.router.admin_overview._probe_endpoint_health", side_effect=ok):
             r = self._client(as_identity, make_identity).get("/api/admin/health")
-        names = [c["name"] for c in r.json()["data"]["checks"]]
-        assert ("Document Parsing" in names) is listed
+        rows = {c["name"]: c for c in r.json()["data"]["checks"]}
+        assert rows["Document Parsing"]["status"] == listed
+        if listed == "unset":
+            assert rows["Document Parsing"]["detail"].startswith("Text layer only")
+            assert all(url != "http://v/v1" for url, _ in cas)
+        else:
+            want = (parsing or {}).get("vision", {}).get("ca_file")
+            assert (parsing["vision"]["base_url"], want) in cas  # probed with its own CA

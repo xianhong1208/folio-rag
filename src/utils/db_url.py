@@ -37,23 +37,21 @@ def alembic_safe_url(url: str) -> str:
     return url.replace("%", "%%")
 
 
-def db_url_from_config_file(config_path) -> str:
-    """Resolve the connection URL straight from a config YAML file.
+def db_url_from_config_dir(config_dir) -> str:
+    """Resolve the connection URL straight from a config directory (config/*.yaml).
 
     For callers that cannot go through the Config singleton (the integration-test
     harness reads the config before choosing a database). Applies the same
     ``${VAR:-default}`` expansion as Config and the same port rule as
     resolve_db_url.
     """
-    from pathlib import Path
     from types import SimpleNamespace
 
-    import yaml
+    from src.config.config_manager import expand_env_vars, load_config_dir
 
-    from src.config.config_manager import expand_env_vars
-
-    raw = yaml.safe_load(Path(config_path).read_text(encoding="utf-8")) or {}
+    raw, _ = load_config_dir(config_dir)
     db = expand_env_vars(raw.get("database") or {})
     if not db.get("url"):
-        raise RuntimeError(f"{config_path} has no database.url")
-    return resolve_db_url(SimpleNamespace(url=db["url"], port=db.get("port")))
+        raise RuntimeError(f"{config_dir} has no database.url")
+    port = db.get("port")
+    return resolve_db_url(SimpleNamespace(url=db["url"], port=port))

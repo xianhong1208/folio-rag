@@ -279,6 +279,15 @@ class RevocationList:
 
     # -- observability ------------------------------------------------------------
 
+    def metrics_snapshot(self) -> dict[str, Any]:
+        """Numbers for the Prometheus gauges (last_success is unix seconds or None)."""
+        return {
+            "last_success": self._last_success,
+            "consecutive_failures": self._failures,
+            "stale": self.is_stale(),
+            "revoked": len(self._revoked),
+        }
+
     def status(self) -> dict[str, Any]:
         stale = self.is_stale()
         return {

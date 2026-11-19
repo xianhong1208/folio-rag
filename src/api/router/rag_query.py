@@ -83,7 +83,7 @@ _FALLBACK_RETRIEVAL_DEFAULTS = {
 
 
 def _resolve_retrieval_defaults() -> dict:
-    """Read retrieval defaults live from config.yaml.
+    """Read retrieval defaults live from the config (config/retrieval.yaml).
 
     Returns:
         A dict with top_k / similarity_cutoff / sparse_top_k / hybrid_alpha; falls back to the
@@ -136,7 +136,7 @@ async def query_rag(
     """
     try:
         # Resolve config-driven defaults for any missing retrieval params so
-        # API behavior tracks config.yaml instead of stale Pydantic literals.
+        # API behavior tracks the config instead of stale Pydantic literals.
         defaults = _resolve_retrieval_defaults()
         top_k = query_request.top_k if query_request.top_k is not None else defaults["top_k"]
         similarity_cutoff = (

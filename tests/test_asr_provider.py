@@ -1,96 +1,181 @@
 
-"""AsrProvider factory and implementations (docling local + openai-compatible cloud).
+"""AsrProvider factory, the removed in-process providers, the upload refusal and the
+Chinese-script conversion (1.5: speech-to-text only through an OpenAI-compatible endpoint).
 
-Covers: factory routing by config.provider (openai-compatible without base_url
-errors immediately; unknown provider raises ValueError; fireredasr routes to
-FireRedAsrProvider); DoclingWhisperAsrProvider wrapping docling_convert_once;
-and OpenAICompatibleAsrProvider POSTing multipart to {base_url}/audio/transcriptions.
+Covers: factory routing (no base_url -> unconfigured, never a crash at startup;
+disabled; removed providers refused with the migration guide named); the config
+model refusing docling-whisper / fireredasr; asr_upload_refusal for audio only;
+convert_chinese (s2twp for Chinese, English untouched); the ca_file trust.
 """
 
 from unittest.mock import patch
 
 import pytest
+from pydantic import ValidationError
 
 from src.config.model import AsrConfig
 from src.domain.rag.asr_provider import (
     AsrResult,
-    DoclingWhisperAsrProvider,
+    DisabledAsrProvider,
     OpenAICompatibleAsrProvider,
+    SpeechToTextUnavailableError,
+    UnconfiguredAsrProvider,
+    asr_upload_refusal,
+    check_audio_upload,
     create_asr_provider,
+    tls_verify,
 )
 
 _AP = "src.domain.rag.asr_provider"
 
 
 class TestFactory:
-    def test_default_docling_whisper(self):
+    def test_default_is_openai_compatible_and_unconfigured(self):
+        """No base_url: the service still starts; audio is refused instead (no crash at startup)."""
+        assert AsrConfig().provider == "openai-compatible"
         p = create_asr_provider(AsrConfig())
-        assert isinstance(p, DoclingWhisperAsrProvider)
+        assert isinstance(p, UnconfiguredAsrProvider) and p.available() is False
+        with pytest.raises(RuntimeError, match="not configured.*ASR_BASE_URL.*migrate-1.5"):
+            p.transcribe(audio_path="a.wav", file_name="a.wav")
 
-    def test_none_config_gives_default(self):
-        """rag.asr unset (None) -> default provider (backward compat)."""
-        assert isinstance(create_asr_provider(None), DoclingWhisperAsrProvider)
-
-    def test_openai_compatible_requires_base_url(self):
-        with pytest.raises(ValueError, match="base_url"):
-            create_asr_provider(AsrConfig(provider="openai-compatible"))
+    def test_none_config_is_unconfigured(self):
+        assert isinstance(create_asr_provider(None), UnconfiguredAsrProvider)
 
     def test_openai_compatible_built_with_config(self):
         cfg = AsrConfig(
-            provider="openai-compatible",
             base_url="http://stt:8000/v1", api_key="k", model="whisper-1",
             timeout=30, max_retries=1, segment_seconds=120, language="zh",
+            chinese_conversion="none", ca_file="/ca.pem",
         )
         p = create_asr_provider(cfg)
-        assert isinstance(p, OpenAICompatibleAsrProvider)
+        assert isinstance(p, OpenAICompatibleAsrProvider) and p.available()
         assert p._timeout == 30 and p._max_retries == 1
         assert p._segment_seconds == 120 and p._language == "zh"
+        assert p._chinese_conversion == "none" and p._ca_file == "/ca.pem"
         assert p.url == "http://stt:8000/v1/audio/transcriptions"
 
-    def test_fireredasr_routes_to_provider(self):
-        from src.domain.rag.fireredasr_provider import FireRedAsrProvider
-        p = create_asr_provider(AsrConfig(provider="fireredasr"))
-        assert isinstance(p, FireRedAsrProvider)
+    def test_disabled_needs_no_endpoint(self):
+        """enabled: false (the cloud profile's default section, without base_url) builds a provider
+        that transcribes nothing, instead of failing every indexing job and query."""
+        p = create_asr_provider(AsrConfig(enabled=False))
+        assert isinstance(p, DisabledAsrProvider) and p.available() is False
+        with pytest.raises(RuntimeError, match="disabled"):
+            p.transcribe(audio_path="a.wav", file_name="a.wav")
 
-    def test_unknown_provider_rejected(self):
+    def test_removed_provider_on_a_built_object_is_refused(self):
+        cfg = AsrConfig(base_url="http://x/v1").model_copy(update={"provider": "fireredasr"})
+        with pytest.raises(ValueError, match="removed in Folio 1.5.*migrate-1.5"):
+            create_asr_provider(cfg)
+        cfg = AsrConfig(base_url="http://x/v1").model_copy(update={"provider": "bogus"})
         with pytest.raises(ValueError, match="bogus"):
-            create_asr_provider(AsrConfig(provider="bogus"))
+            create_asr_provider(cfg)
 
 
-class TestDoclingProvider:
-    def test_delegates_to_docling_convert_once(self):
-        cb = object()
-        # convert_once now returns chunk-record dicts; audio has no heading/page,
-        # so the provider must flatten to plain text (also compatible with the old bare-string form)
-        records = [
-            {"text": "c1", "headings": None, "page_no": None},
-            "c2",
-        ]
-        with patch(f"{_AP}.docling_convert_once",
-                   return_value=("full text", records)) as m:
-            r = DoclingWhisperAsrProvider().transcribe(
-                audio_path="/tmp/a.mp3", file_name="a.mp3",
-                max_tokens=380, tokenizer="intfloat/multilingual-e5-large",
-                progress_cb=cb,
-            )
-        assert isinstance(r, AsrResult)
-        assert r.text == "full text"
-        assert r.chunks == ["c1", "c2"]
-        m.assert_called_once_with(
-            file_path="/tmp/a.mp3", file_name="a.mp3",
-            max_tokens=380, tokenizer="intfloat/multilingual-e5-large",
-            progress_cb=cb,
-        )
+class TestRemovedProviders:
+    @pytest.mark.parametrize("name", ["fireredasr", "docling-whisper", " FireRedASR "])
+    def test_config_refuses_removed_providers_with_the_guide(self, name):
+        with pytest.raises(ValidationError, match="removed in Folio 1.5.*docs/migrate-1.5.md"):
+            AsrConfig(provider=name)
 
-    def test_default_max_tokens_not_none(self):
-        # Called without max_tokens (the shape of the evals draft script) -- None
-        # must not be passed straight into convert_once (it would override the
-        # default 512 -> None//2 TypeError inside refine)
-        with patch(f"{_AP}.docling_convert_once",
-                   return_value=("t", [])) as m:
-            DoclingWhisperAsrProvider().transcribe(
-                audio_path="/tmp/a.mp3", file_name="a.mp3")
-        assert m.call_args.kwargs["max_tokens"] == 512
+    def test_unknown_provider_refused(self):
+        with pytest.raises(ValidationError, match="only provider is openai-compatible"):
+            AsrConfig(provider="bogus")
+
+    @pytest.mark.parametrize("value", [None, "", "OpenAI-Compatible"])
+    def test_blank_or_cased_means_openai_compatible(self, value):
+        assert AsrConfig(provider=value).provider == "openai-compatible"
+
+    def test_chinese_conversion_values(self):
+        assert AsrConfig().chinese_conversion == "s2twp"
+        assert AsrConfig(chinese_conversion=" NONE ").chinese_conversion == "none"
+        assert AsrConfig(chinese_conversion=None).chinese_conversion == "none"
+        with pytest.raises(ValidationError, match="s2twp or none"):
+            AsrConfig(chinese_conversion="s2t")
+
+
+class TestUploadRefusal:
+    @pytest.mark.parametrize("name", ["a.mp3", "b.WAV", "c.m4a", "d.flac", "e.ogg", "f.aac"])
+    def test_audio_refused_without_endpoint(self, name):
+        reason = asr_upload_refusal(name, AsrConfig())
+        assert reason and name in reason and "rag.asr.base_url" in reason
+
+    def test_audio_refused_when_disabled(self):
+        reason = asr_upload_refusal("a.mp3", AsrConfig(enabled=False, base_url="http://x/v1"))
+        assert reason and "disabled" in reason
+
+    def test_audio_refused_without_section(self):
+        assert asr_upload_refusal("a.mp3", None)
+
+    def test_configured_audio_and_other_files_pass(self):
+        assert asr_upload_refusal("a.mp3", AsrConfig(base_url="http://x/v1")) is None
+        assert asr_upload_refusal("a.pdf", AsrConfig()) is None
+        assert asr_upload_refusal("notes.txt", None) is None
+
+    def test_check_reads_the_live_config(self):
+        with patch(f"{_AP}.current_asr_config", return_value=AsrConfig()):
+            with pytest.raises(SpeechToTextUnavailableError, match="not configured"):
+                check_audio_upload("a.mp3")
+            check_audio_upload("a.pdf")
+        with patch(f"{_AP}.current_asr_config", return_value=AsrConfig(base_url="http://x/v1")):
+            check_audio_upload("a.mp3")
+
+    def test_refusal_is_a_value_error(self):
+        """The REST layer maps it to 422; batch uploads list it as a failed file."""
+        assert issubclass(SpeechToTextUnavailableError, ValueError)
+
+    def test_current_config_follows_the_config_model(self):
+        from src.domain.rag.asr_provider import current_asr_config
+        cfg = AsrConfig(base_url="http://x/v1")
+
+        class _Rag:
+            asr = cfg
+
+        class _Model:
+            rag = _Rag()
+        with patch("src.config.config_manager.Config.get_config_model", return_value=_Model()):
+            assert current_asr_config() is cfg
+
+
+class TestChineseConversion:
+    def test_s2twp_converts_simplified(self):
+        from src.domain.rag.han_script import convert_chinese
+        assert convert_chinese("今天天气很好，我们去看视频。", "s2twp") == "今天天氣很好，我們去看影片。"
+
+    def test_english_and_none_pass_through(self):
+        from src.domain.rag.han_script import convert_chinese
+        text = "The quick brown fox jumps over the lazy dog, 42 times."
+        assert convert_chinese(text, "s2twp") == text
+        assert convert_chinese("今天天气", "none") == "今天天气"
+        assert convert_chinese("", "s2twp") == ""
+
+    def test_unknown_mode_is_an_error(self):
+        from src.domain.rag.han_script import convert_chinese
+        with pytest.raises(ValueError):
+            convert_chinese("天气", "s2t")
+
+
+class TestTlsVerify:
+    def test_no_ca_file_keeps_default_trust(self):
+        assert tls_verify(None) is True and tls_verify("") is True
+
+    def test_ca_file_is_added_to_default_trust(self, tmp_path):
+        import ssl
+        import subprocess
+        key, crt = tmp_path / "k.pem", tmp_path / "c.pem"
+        subprocess.run(["openssl", "req", "-x509", "-newkey", "rsa:2048", "-nodes", "-keyout", str(key),
+                        "-out", str(crt), "-days", "1", "-subj", "/CN=test-ca"],
+                       check=True, capture_output=True)
+        import httpx
+        default = len(httpx.create_ssl_context().get_ca_certs())
+        ctx = tls_verify(str(crt))
+        assert isinstance(ctx, ssl.SSLContext)
+        subjects = [c["subject"] for c in ctx.get_ca_certs()]
+        assert ((("commonName", "test-ca"),),) in subjects
+        assert len(subjects) >= default  # added, not replaced
+
+    def test_missing_ca_file_is_an_error_not_unverified(self, tmp_path):
+        with pytest.raises(RuntimeError, match="ca_file"):
+            tls_verify(str(tmp_path / "missing.pem"))
 
 
 # OpenAICompatibleAsrProvider (segmented upload, retries, content guard) is covered in
@@ -151,8 +236,7 @@ class TestDocumentLoaderAudioRouting:
         assert "打赏" not in doc.text and "開始" in doc.text
 
     def test_disabled_asr_fails_the_file_without_transcribing(self, tmp_path):
-        # Disabled must not fall through to docling's whisper or
-        # SimpleDirectoryReader (which still transcribed the audio).
+        # Disabled must not fall through to docling or SimpleDirectoryReader.
         p = _FakeAsr()
         loader = _loader(p, enabled=False)
         with patch(f"{_DL}.is_docling_supported", return_value=True), \
@@ -167,14 +251,13 @@ class TestDocumentLoaderAudioRouting:
         fb.assert_not_called()
 
     def test_unavailable_provider_raises_clear_error(self, tmp_path):
-        # The config-selected provider is the sole speech source: if unavailable
-        # -> error explicitly so the file is marked failed (with an actionable
-        # message), never silently fall back to no transcription (user decision)
+        # An audio file stored before speech-to-text lost its endpoint: error explicitly
+        # so the file is marked failed (with what to set), never an empty index entry.
         p = _FakeAsr(avail=False)
         loader = _loader(p)
         with patch(f"{_DL}.FileStorage.resolve_path", return_value=tmp_path / "m.mp3"):
             (tmp_path / "m.mp3").write_bytes(b"x")
-            with pytest.raises(RuntimeError, match="not available"):
+            with pytest.raises(RuntimeError, match="not configured.*ASR_BASE_URL"):
                 loader.load(file_path="s/m.mp3", file_id="f1", file_name="m.mp3")
         assert p.calls == []  # transcription was not attempted
 

@@ -3,8 +3,8 @@
 
 apply:   validate -> mutate ConfigModel in place -> persist to DB (survives
          restart) -> rebind live objects.
-reset:   delete the DB override -> restore the field from its config.yaml
-         value -> rebind.
+reset:   delete the DB override -> restore the field from its value in the
+         config files (config/*.yaml, as on disk now) -> rebind.
 startup: at main.py startup, overlay the DB overrides onto the freshly loaded
          ConfigModel. The adapter is not built yet, so there is nothing to
          rebind — the first construction picks up the overlaid values.
@@ -42,9 +42,12 @@ def load_overrides_on_startup() -> int:
     from db.db import get_engine
     get_engine()
     config_model = Config.get_config_model()
-    # Which key variables config.yaml pairs with which servers: taken before any override.
+    # Which key variables the config files pair with which servers: taken before any override.
     ro.capture_startup(config_model)
     overrides = RuntimeSettingsDB.load_all()
+    overrides = _drop_removed_roles(overrides)
+    overrides = _drop_asr_provider(overrides)
+    overrides = _drop_removed_parsing(overrides)
     if not overrides:
         return 0
     applied = 0
@@ -59,10 +62,67 @@ def load_overrides_on_startup() -> int:
             logger.warning(f"[RUNTIME] Skipping invalid override {path}={shown!r}: {e}")
     for path in ro.enforce_reference_pairing(config_model):
         logger.warning(f"[RUNTIME] {path} cleared: its ${{...}} reference is not paired with "
-                       "the server this role now points to (config.yaml decides which). "
+                       "the server this role now points to (config/models.yaml decides which). "
                        "Enter the key again on the Settings page.")
     logger.info(f"[RUNTIME] Applied {applied}/{len(overrides)} runtime override(s) on startup")
     return applied
+
+
+def _drop_removed_roles(overrides: Dict[str, Any]) -> Dict[str, Any]:
+    """Delete stored overrides of the LLM roles removed in 1.5 (rag.answer_llm,
+    rag.eval_llm): answers and evaluation use rag.llm now. Returns the rest."""
+    from src.config.layout import REMOVED_SECTIONS
+    kept: Dict[str, Any] = {}
+    for path, value in overrides.items():
+        if any(path.startswith(sec + ".") for sec in REMOVED_SECTIONS):
+            RuntimeSettingsDB.delete(path)
+            logger.warning(f"[RUNTIME] Dropped stored setting {path}: that LLM role was removed "
+                           "in Folio 1.5 (answers and evaluation use rag.llm)")
+            continue
+        kept[path] = value
+    return kept
+
+
+def _drop_asr_provider(overrides: Dict[str, Any]) -> Dict[str, Any]:
+    """Delete a stored ``rag.asr.provider`` override (1.5): openai-compatible is the only
+    provider, so the console no longer offers the choice. A row naming a removed in-process
+    provider (docling-whisper, fireredasr) is dropped with a warning that points at the
+    migration guide; rag.asr then follows config/models.yaml, and audio uploads are refused
+    until base_url is set there or in the console. Returns the rest."""
+    from src.config.model import ASR_MIGRATION_GUIDE, REMOVED_ASR_PROVIDERS
+    value = overrides.get("rag.asr.provider")
+    if "rag.asr.provider" not in overrides:
+        return overrides
+    RuntimeSettingsDB.delete("rag.asr.provider")
+    if str(value).strip().lower() in REMOVED_ASR_PROVIDERS:
+        logger.warning(f"[RUNTIME] Dropped stored setting rag.asr.provider={value!r}: in-process "
+                       "speech-to-text was removed in Folio 1.5. Audio now goes to rag.asr.base_url "
+                       f"(an OpenAI-compatible endpoint); see {ASR_MIGRATION_GUIDE}.")
+    else:
+        logger.info("[RUNTIME] Dropped stored setting rag.asr.provider: openai-compatible is the only provider")
+    return {k: v for k, v in overrides.items() if k != "rag.asr.provider"}
+
+
+def _drop_removed_parsing(overrides: Dict[str, Any]) -> Dict[str, Any]:
+    """Delete stored parsing overrides that 1.5 no longer accepts: ``rag.parsing.images``
+    (gone: images follow rag.parsing.vision) and ``rag.parsing.pdf`` set to ``local`` /
+    ``cloud`` (the in-process docling models were removed). Each is dropped with a warning
+    that points at the migration guide; rag.parsing.pdf then follows config/models.yaml
+    (auto by default: the vision model when configured, else the text layer). Returns the rest."""
+    from src.config.model import MIGRATION_GUIDE, REMOVED_PDF_MODES
+    kept: Dict[str, Any] = {}
+    for path, value in overrides.items():
+        removed = path == "rag.parsing.images" or (
+            path == "rag.parsing.pdf" and str(value).strip().lower() in REMOVED_PDF_MODES)
+        if not removed:
+            kept[path] = value
+            continue
+        RuntimeSettingsDB.delete(path)
+        logger.warning(f"[RUNTIME] Dropped stored setting {path}={value!r}: in-process PDF/image "
+                       "parsing (docling layout, TableFormer, OCR) was removed in Folio 1.5. PDFs go "
+                       "to rag.parsing.vision when it is configured and are read from their text "
+                       f"layer otherwise; images need rag.parsing.vision. See {MIGRATION_GUIDE}.")
+    return kept
 
 
 def get_settings_view() -> Dict[str, Any]:
@@ -129,11 +189,11 @@ def apply_settings(patch: Dict[str, Any], updated_by: Optional[str] = None
 
 
 def reset_setting(path: str, updated_by: Optional[str] = None) -> bool:
-    """Remove a single override, restore the config.yaml value, and rebind. Returns whether an override existed to delete.
+    """Remove a single override, restore the config files' value, and rebind. Returns whether an override existed to delete.
 
     The factory value is resolved and validated *before* the override row is deleted:
     deleting first meant a failure here (e.g. a whole optional section missing from
-    config.yaml) left the DB reset but the running value unchanged, behind a 500.
+    the config files) left the DB reset but the running value unchanged, behind a 500.
     """
     if path not in ro.EDITABLE:
         raise ValueError(f"Setting path is not editable: {path}")
@@ -177,8 +237,18 @@ def audit_log(limit: int = 100):
     return SettingsAuditDB.recent(limit)
 
 
+def _factory_node(path: str) -> Any:
+    """The raw (unexpanded) value at a dotted path in the config files; KeyError if absent."""
+    node: Any = Config.factory_raw()
+    for part in path.split("."):
+        if not isinstance(node, dict):
+            raise KeyError(path)
+        node = node[part]
+    return node
+
+
 def _yaml_reference(path: str) -> Optional[str]:
-    """For a key config.yaml writes as a ``${VAR}`` reference: that reference, unexpanded.
+    """For a key the config files write as a ``${VAR}`` reference: that reference, unexpanded.
 
     Resetting a key must restore the reference, not the expanded key: under the cloud
     profile a literal key is refused (the reset failed with 422), and anywhere else it
@@ -186,38 +256,26 @@ def _yaml_reference(path: str) -> Optional[str]:
     """
     if path not in ro.SECRET_PATHS or not Config.get_env_refs().get(path):
         return None
-    import yaml
     from src.config.profile import WHOLE_ENV_REF_RE
     try:
-        with open(Config._config_path, "r", encoding="utf-8") as f:
-            node: Any = yaml.safe_load(f) or {}
-        for part in path.split("."):
-            node = node[part]
+        node = _factory_node(path)
     except Exception:
         return None
     return node if isinstance(node, str) and WHOLE_ENV_REF_RE.match(node) else None
 
 
 def _yaml_value(path: str) -> Any:
-    """The factory value at a dotted path: config.yaml on disk (``${ENV}`` placeholders
-    expanded, as at startup), else the field's pydantic default.
+    """The factory value at a dotted path: the merged config files on disk (``${ENV}``
+    placeholders expanded, as at startup), else the field's pydantic default.
 
     The default is found by walking the schema *types*, not the live objects: an
-    optional section absent from config.yaml (e.g. ``rag.asr``) is None at runtime,
+    optional section absent from the files (e.g. ``rag.asr``) is None at runtime,
     and walking instances raised AttributeError (a 500 on reset).
     """
     import typing
-    import yaml
     from src.config.config_manager import expand_env_vars
-    raw_path = Config._config_path
     try:
-        if raw_path:
-            with open(raw_path, "r", encoding="utf-8") as f:
-                data = expand_env_vars(yaml.safe_load(f) or {})
-            node: Any = data
-            for part in path.split("."):
-                node = node[part]
-            return node
+        return expand_env_vars(_factory_node(path))
     except Exception:
         pass
     # Fallback: the field's declared default, found through the model classes

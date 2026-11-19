@@ -42,7 +42,8 @@ async def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--keep", action="store_true", help="keep the eval folder")
     ap.add_argument("--baseline", help="compare against an existing baseline JSON")
-    ap.add_argument("--config", default="config/config.yaml")
+    ap.add_argument("--config-dir", default="config",
+                    help="directory with the six config files (secrets come from .env)")
     args = ap.parse_args()
 
     docs = ([f for f in sorted(DOCS_DIR.iterdir())
@@ -58,8 +59,10 @@ async def main() -> int:
         print(f"   {QA_FILE.relative_to(REPO)} — QA set (format described in the file)")
         return 2
 
+    from src.config.dotenv import load_dotenv
+    load_dotenv()
     from src.config.config_manager import Config
-    Config.set_config(args.config)
+    Config.set_config(args.config_dir)
 
     # Preflight the embedding service (needed for both indexing and querying); fail fast with a clear message
     from src.adapter.rag_context import RAGContext

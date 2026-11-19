@@ -97,18 +97,18 @@ def main(workdir: str, mode: str) -> dict:
                 return "[true]"
             return "A short context line." if "<chunk>" in content else "An answer [1]."
         srv.chat_reply = chat
-        Path("config").mkdir(exist_ok=True)
-        Path("config/config.yaml").write_text(CONFIG.format(url=srv.url), encoding="utf-8")
+        from tests.config_helpers import write_config_dir
+        write_config_dir("config", CONFIG.format(url=srv.url))
 
         # ---- boot
         from src.config.config_manager import Config
-        Config.set_config("config/config.yaml")
+        Config.set_config("config")
         cfg = Config.get_config_model()
         assert cfg is not None and cfg.rag.profile == "cloud", "cloud config failed to load"
         import app
         app.create_app(cfg, transport="http")
-        from src.config.roles import docling_warmup_needed, startup_lines
-        steps["warmup_skipped"] = not docling_warmup_needed(cfg.rag)
+        from src.config.roles import pdf_parsing, startup_lines
+        steps["pdf_parsing"] = pdf_parsing(cfg.rag)
         steps["startup_lines"] = len(startup_lines(cfg.rag))
         from src.adapter.rag_context import RAGContext
         ctx = RAGContext.from_config()
@@ -117,15 +117,13 @@ def main(workdir: str, mode: str) -> dict:
         # ---- index-time work
         if mode == "full":
             import docx
-            import fitz
             from PIL import Image
+            from tests.pdf_fixtures import make_pdf
             d = docx.Document()
             d.add_heading("Travel Policy", 1)
             d.add_paragraph("Trips must be approved by a manager before booking.")
             d.save("policy.docx")
-            pdf = fitz.open()
-            pdf.new_page().insert_text((72, 72), "scanned")
-            pdf.save("scan.pdf")
+            make_pdf("scan.pdf", ["scanned"])
             Image.new("RGB", (64, 64), "white").save("photo.png")
             files = [("policy.docx", "policy.docx"), ("scan.pdf", "scan.pdf"), ("photo.png", "photo.png")]
             if shutil.which("ffmpeg"):

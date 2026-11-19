@@ -19,18 +19,18 @@ from sqlalchemy.engine import make_url
 # Overridable so parallel runs (or a CI service) never share one throwaway database.
 _ITEST_DB = os.getenv("RAG_ITEST_DB", "agentic_rag_itest")
 _REPO = Path(__file__).resolve().parents[2]
-_TMP_CONFIG = _REPO / "config" / "_itest_config.yaml"
+_TMP_CONFIG = _REPO / "config" / "_itest"
 
 
 def _base_url():
-    """Connection info from config/config.yaml (everything except dbname).
+    """Connection info from config/database.yaml + DATABASE_URL (everything except dbname).
 
     Resolved exactly like the server does it: ${VAR:-default} expanded and
     database.port applied when the URL has no port. Reading only the raw url line
     used to connect to 5432, find nothing and skip the whole group silently.
     """
-    from src.utils.db_url import db_url_from_config_file
-    return make_url(db_url_from_config_file(_REPO / "config" / "config.yaml"))
+    from src.utils.db_url import db_url_from_config_dir
+    return make_url(db_url_from_config_dir(_REPO / "config"))
 
 
 def _admin_conn():
@@ -92,17 +92,22 @@ def itest_db():
         cur.execute("CREATE EXTENSION IF NOT EXISTS vector")
     econn.close()
 
-    # 2. Temporary config (the config path safety check requires it to be
+    # 2. Temporary config dir (the config dir safety check requires it to be
     # inside the repo) pointing at the throwaway DB
     # Write the resolved URL (port included) rather than patching the text: the
-    # url line may be a ${DATABASE_URL:-...} placeholder, and an env override
+    # url line is a ${DATABASE_URL:-...} placeholder, and an env override
     # would otherwise point the run at a real database.
+    import shutil
     import yaml
-    raw = yaml.safe_load((_REPO / "config" / "config.yaml").read_text(encoding="utf-8"))
+    shutil.rmtree(_TMP_CONFIG, ignore_errors=True)
+    shutil.copytree(_REPO / "config", _TMP_CONFIG,
+                    ignore=shutil.ignore_patterns("_itest", "config.yaml"))
+    db_file = _TMP_CONFIG / "database.yaml"
+    raw = yaml.safe_load(db_file.read_text(encoding="utf-8"))
     raw["database"]["url"] = _base_url().set(database=_ITEST_DB).render_as_string(
         hide_password=False)
-    _TMP_CONFIG.write_text(
-        yaml.safe_dump(raw, sort_keys=False, allow_unicode=True), encoding="utf-8")
+    raw["database"]["port"] = None
+    db_file.write_text(yaml.safe_dump(raw, sort_keys=False, allow_unicode=True), encoding="utf-8")
 
     from src.config.config_manager import Config
     Config.set_config(str(_TMP_CONFIG))
@@ -132,7 +137,7 @@ def itest_db():
     with conn.cursor() as cur:
         cur.execute(f'DROP DATABASE IF EXISTS {_ITEST_DB} WITH (FORCE)')
     conn.close()
-    _TMP_CONFIG.unlink(missing_ok=True)
+    shutil.rmtree(_TMP_CONFIG, ignore_errors=True)
 
 
 # ---- Shared data fixtures (FileIndex has an FK: Folder before File) ----------

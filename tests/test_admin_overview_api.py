@@ -51,7 +51,8 @@ class TestOverviewApi:
                "rag.embedding.base_url": "http://e", "rag.llm.model": "l",
                "rag.llm.base_url": "http://l", "rag.rerank.enabled": True,
                "rag.rerank.model": "r", "rag.rerank.base_url": "http://r",
-               "rag.asr.enabled": True, "rag.asr.provider": "fireredasr"}
+               "rag.asr.enabled": True,
+               "rag.asr.model": "whisper-large-v3-turbo", "rag.asr.base_url": "https://stt/v1"}
         with patch(f"{_STATS}.overview", return_value=dict(base)), \
              patch("src.config.runtime_overrides.get_effective", return_value=eff), \
              patch("src.config.config_manager.Config.get_config_model",
@@ -62,7 +63,8 @@ class TestOverviewApi:
         assert d["folders"] == 2 and d["index"]["total_chunks"] == 99
         assert d["models"]["embedding"] == {"model": "m", "dimension": 1024,
                                             "base_url": "http://e"}
-        assert d["models"]["asr"]["provider"] == "fireredasr"
+        assert d["models"]["asr"]["provider"] == "openai-compatible"
+        assert d["models"]["asr"]["model"] == "whisper-large-v3-turbo"
 
     @pytest.mark.parametrize("fusion", ["rrf", "concat"])
     def test_overview_reports_the_fusion_in_use(self, client, fusion):
@@ -289,7 +291,8 @@ class TestHealth:
         eff = {"rag.embedding.base_url": "http://e", "rag.embedding.api_key": "SECRETKEY123",
                "rag.llm.base_url": "http://l", "rag.llm.api_key": "SECRETKEY123",
                "rag.rerank.enabled": True, "rag.rerank.base_url": "http://r", "rag.rerank.api_key": "SECRETKEY123",
-               "rag.asr.enabled": True, "rag.asr.provider": "fireredasr"}
+               "rag.asr.enabled": True, "rag.asr.base_url": "https://stt/v1",
+               "rag.asr.model": "whisper-large-v3-turbo"}
         with patch("src.config.config_manager.Config.get_config_model", return_value=self._cfg()), \
              patch("src.config.runtime_overrides.get_effective", return_value=eff), \
              patch(f"{_OV}._probe_db_health", return_value=("ok", "verified", 3)), \
@@ -304,6 +307,34 @@ class TestHealth:
         # The endpoint returns only base_url, never api_key (does not leak keys)
         assert "SECRETKEY123" not in str(d)
         assert names["Speech-to-Text"]["status"] == "ok"
+        assert names["Speech-to-Text"]["endpoint"] == "https://stt/v1"
+        assert "whisper-large-v3-turbo" in names["Speech-to-Text"]["detail"]
+
+    def test_unconfigured_speech_to_text_is_not_set_not_down(self, client):
+        """No endpoint: shown as "not set" with what to configure; it does not make the page red."""
+        from unittest.mock import AsyncMock
+        eff = {"rag.embedding.base_url": "http://e", "rag.llm.base_url": "http://l",
+               "rag.rerank.enabled": False, "rag.asr.enabled": True}
+        with patch("src.config.config_manager.Config.get_config_model", return_value=self._cfg()), \
+             patch("src.config.runtime_overrides.get_effective", return_value=eff), \
+             patch(f"{_OV}._probe_db_health", return_value=("ok", "verified", 3)), \
+             patch(f"{_OV}._probe_endpoint_health", new=AsyncMock(return_value=("ok", "HTTP 200", 40))), \
+             patch(f"{_OV}._asr_available", return_value=False):
+            d = client.get("/api/admin/health").json()["data"]
+        stt = {c["name"]: c for c in d["checks"]}["Speech-to-Text"]
+        assert stt["status"] == "unset" and "rag.asr.base_url" in stt["detail"]
+        assert d["overall"] == "ok"
+
+    def test_asr_available_follows_the_endpoint(self):
+        from src.api.router.admin_overview import _asr_available
+        from src.config.model import AsrConfig
+
+        def cfg(asr):
+            return SimpleNamespace(rag=SimpleNamespace(asr=asr))
+        assert _asr_available(cfg(AsrConfig(base_url="http://x/v1"))) is True
+        assert _asr_available(cfg(AsrConfig())) is False
+        assert _asr_available(cfg(AsrConfig(enabled=False, base_url="http://x/v1"))) is False
+        assert _asr_available(cfg(None)) is False
 
     def test_rerank_disabled_and_db_down_makes_overall_down(self, client):
         from unittest.mock import AsyncMock

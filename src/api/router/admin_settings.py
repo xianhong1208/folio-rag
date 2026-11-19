@@ -3,7 +3,7 @@
 
 - GET  /api/admin/settings        — whitelisted settings view (effective value/level/override status)
 - PUT  /api/admin/settings        — hot update ({"settings": {path: value}}); all-or-nothing validation
-- DELETE /api/admin/settings/{path} — remove one override, restoring the config.yaml value
+- DELETE /api/admin/settings/{path} — remove one override, restoring the config files' value
 - POST /api/admin/probe           — test model-service connectivity (GET {base_url}/models)
 - POST /api/admin/probe/{role}    — per-role health probe: one minimal real request with the
                                     saved settings (the key stays server-side)
@@ -37,9 +37,11 @@ router = APIRouter(tags=["Admin: Runtime Settings"])
 from src.api.router.admin_overview import router as _overview_router  # noqa: E402
 from src.api.router.admin_manage import router as _manage_router  # noqa: E402
 from src.api.router.console_session import router as _session_router  # noqa: E402
+from src.api.router.admin_folder_archive import router as _archive_router  # noqa: E402
 router.include_router(_overview_router)
 router.include_router(_manage_router)
 router.include_router(_session_router)
+router.include_router(_archive_router)
 
 
 @router.get("/api/admin/settings", dependencies=[Depends(require_console_session)])
@@ -71,7 +73,7 @@ async def put_settings(
 
 @router.delete("/api/admin/settings/{path:path}")
 async def delete_setting(path: str, ident: ConsoleIdentity = Depends(require_console_admin)):
-    """Remove one override -> restore the config.yaml factory value (takes effect immediately)."""
+    """Remove one override -> restore the config files' factory value (takes effect immediately)."""
     from src.adapter import runtime_settings_service as svc
     try:
         removed = svc.reset_setting(path, updated_by=ident.actor)

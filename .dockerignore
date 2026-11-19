@@ -1,35 +1,47 @@
-# Tooling and caches
-.venv
-__pycache__
-*.pyc
-.git
-.gitignore
-node_modules
-*.egg-info
-.mypy_cache
-.pytest_cache
-.ruff_cache
-.coverage
-htmlcov
-Dockerfile*
-.dockerignore
+# Only what the image needs goes into the build context (see Dockerfile). Never local state or secrets.
 
-# Secrets
+# Secrets and local state: uploaded documents, logs, eval reports, model weights
 .env
 .env.*
-
-# Local runtime artefacts: uploaded documents, logs, eval reports, local data
-# and assets/ (downloaded model weights, local images). None of them belong in
-# an image, and they can hold private material; mount model weights at runtime
-# or download them in the image build instead.
+!.env.example
 assets/
 storage/
 reports/
 logs/
 data/
-config/_itest_config.yaml
+config/_itest/
+config/config.yaml
+.env.split
 
-# config/config.yaml is NOT excluded: the committed template is what the image
-# starts from. A working-tree copy can hold a real password, so build images
-# from a clean checkout (or CI) and supply real values at runtime through
-# DATABASE_URL / *_API_KEY or a mounted config file.
+# Environments, caches, build output
+.venv/
+venv/
+__pycache__/
+*.py[cod]
+*.egg-info/
+.mypy_cache/
+.pytest_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+frontend/node_modules/
+frontend/dist/
+
+# Repository and editor metadata
+.git
+.github/
+.claude/
+.idea/
+.vscode/
+Dockerfile*
+.dockerignore
+
+# Not used at run time (static/console is the committed console build; scripts/rag_eval.py is copied on its own)
+tests/
+docs/
+evals/
+frontend/
+
+# config/*.yaml is NOT excluded: the committed files hold no secrets (every secret and per-machine value is a
+# ${VAR} reference), and the image starts from them. Supply the real values at runtime through environment
+# variables (see .env.example).

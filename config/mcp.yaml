@@ -1,0 +1,24 @@
+# MCP surface — tool names, per-folder tools and the modules that run.
+app:
+  tool_prefix: "Folio"                       # per-folder MCP tools are named Folio_<folder>
+
+auth:
+  dynamic_tools:
+    enabled: true                            # a token sees only the per-folder tools of its own folders
+
+# Which modules run. Their wiring (routers, tool registration) is in src/config/modules.py.
+#   folder, file      folder and file REST API
+#   rag_indexing      index / reindex / delete-index / job status
+#   rag_query         hybrid retrieval REST endpoint
+#   rag               the MCP tools (Folio_<folder> per folder)
+#   media             OpenAI-style speech-to-text / OCR (/v1)
+#   admin             the console (/admin) and its API (/api/admin)
+modules:
+  enabled:
+    - folder
+    - file
+    - rag_indexing
+    - rag_query
+    - rag
+    - media
+    - admin

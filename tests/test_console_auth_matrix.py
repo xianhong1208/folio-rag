@@ -96,7 +96,7 @@ def _admin_routes():
 
 def test_route_inventory_is_complete():
     # If this changes, extend the matrix below (and the report table) for the new route.
-    assert len(_admin_routes()) == 35
+    assert len(_admin_routes()) == 38
 
 
 @pytest.mark.parametrize("method, path", _admin_routes())
@@ -132,6 +132,7 @@ PER_FOLDER = [
     ("POST", "/api/admin/manage/folders/{f}/query", {"query": "hello"}, "src.api.router.rag_query.query_rag"),
     ("POST", "/api/admin/manage/folders/{f}/query/stream", {"query": "hello"}, "src.api.router.rag_query.query_rag"),
     ("POST", "/api/admin/manage/folders/{f}/jobs/j1/cancel", None, "src.api.router.rag_indexing.cancel_index_job"),
+    ("POST", "/api/admin/manage/folders/{f}/export", None, "src.backup.folder.export_folder"),
 ]
 
 

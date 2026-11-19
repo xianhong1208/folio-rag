@@ -43,5 +43,5 @@ Folio 以離線方式驗證 MCP Gate 的 token,因此預設情況下,在 MCP Gat
    FOLIO_REVOCATION_CLIENT_ID=mcpc_...
    FOLIO_REVOCATION_CLIENT_SECRET=...
    ```
-   (若你的 `config/config.yaml` 早於此功能,先從範本複製 `auth.revocation` 區塊。)
+   (`config/auth.yaml` 會讀這三個變數;`.env.example` 有列出。)
 4. **確認。** 啟動 log 會出現 `MCP Gate revocation feed: ENABLED …`;`curl -s localhost:5039/health/detailed | jq .checks.revocation` 會看到最近的 `last_success`。在 MCP Gate 撤銷一個測試 PAT,`poll_interval_sec` 內用它發請求會得到 401。`last_error` 出現 `HTTP 401: invalid_client` 表示憑證錯誤;`HTTP 403: unauthorized_client` 表示 client 尚未綁定伺服器。

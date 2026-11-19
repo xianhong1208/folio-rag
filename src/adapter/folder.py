@@ -76,7 +76,11 @@ class FolderAdapter:
                 user_token=user_token,
                 name=name,
                 description=description)
-            
+            # A deleted folder of the same owner and name may still be cached by name
+            # (with its query results): searches must resolve to this new folder.
+            from db.cached_folderdb import CachedFolderDB
+            CachedFolderDB.invalidate_folder_caches(folder_dict)
+
             FileStorage._get_folder_storage_path(user_token, name)
 
             logger.info(f"Successfully created folder: {folder_dict.name}")
@@ -304,6 +308,12 @@ class FolderAdapter:
                 f"Storage cleanup skipped for folder {folder.id} "
                 f"(invalid name, likely ghost row): {e}")
         FolderDB.delete(id=folder.id)
+        # Then drop the cached lookups (by id, by owner + name, the owner's list) and the
+        # folder's cached query results, once the row is gone (a search racing the delete
+        # cannot cache it again): otherwise a search by name keeps answering from the
+        # deleted folder for up to the cache TTL.
+        from db.cached_folderdb import CachedFolderDB
+        CachedFolderDB.invalidate_folder_caches(folder)
 
     @staticmethod
     async def delete_folder(

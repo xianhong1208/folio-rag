@@ -18,6 +18,7 @@ Contract:
 
 from unittest.mock import MagicMock, patch
 
+from tests.config_helpers import config_dir_from_file
 import pytest
 
 from src.config import runtime_overrides as ro
@@ -45,7 +46,7 @@ def _mk_config() -> ConfigModel:
             "llm": {"provider": "vllm", "model": "m", "base_url": "http://x/v1"},
             "rerank": {"enabled": False, "model": "r", "base_url": "http://x"},
             "contextual_retrieval": {"enabled": True},
-            "asr": {"enabled": True, "provider": "docling-whisper"},
+            "asr": {"enabled": True, "provider": "openai-compatible"},
         },
     })
 
@@ -110,9 +111,9 @@ class TestValidateAndApply:
         # rag.asr unset (None) → patch auto-creates the default section before writing
         cfg = _mk_config()
         cfg.rag.asr = None
-        ro.validate_and_apply(cfg, {"rag.asr.provider": "fireredasr"})
+        ro.validate_and_apply(cfg, {"rag.asr.model": "whisper-large-v3-turbo"})
         assert cfg.rag.asr is not None
-        assert cfg.rag.asr.provider == "fireredasr"
+        assert cfg.rag.asr.model == "whisper-large-v3-turbo"
 
     def test_coercion_follows_pydantic(self):
         # "12" (a numeric string) → pydantic's lenient coercion, consistent with yaml behavior
@@ -196,6 +197,82 @@ class TestService:
             applied = svc.load_overrides_on_startup()
         assert applied == 1
         assert cfg.rag.retrieval.default_top_k == 15
+
+    def test_startup_drops_rows_of_the_removed_llm_roles(self):
+        """Rows stored for rag.answer_llm / rag.eval_llm (removed in 1.5) are deleted with a
+        warning; the other rows still apply, and nothing else is deleted."""
+        cfg = _mk_config()
+        from src.adapter import runtime_settings_service as svc
+        with self._with_cfg(cfg), patch("db.db.get_engine"), \
+             patch(f"{_SVC}.RuntimeSettingsDB") as db, patch.object(svc.logger, "warning") as warn:
+            db.load_all.return_value = {
+                "rag.answer_llm.model": "big",
+                "rag.eval_llm.api_key": "${LLM_KEY}",
+                "rag.retrieval.default_top_k": 7,
+                "rag.answer_llmx.model": "kept",   # not a removed role (prefix only)
+            }
+            applied = svc.load_overrides_on_startup()
+        deleted = sorted(c.args[0] for c in db.delete.call_args_list)
+        assert deleted == ["rag.answer_llm.model", "rag.eval_llm.api_key"]
+        assert applied == 1 and cfg.rag.retrieval.default_top_k == 7
+        dropped = [c.args[0] for c in warn.call_args_list if "Dropped stored setting" in c.args[0]]
+        assert len(dropped) == 2 and all("rag.llm" in w for w in dropped)
+        assert all("${LLM_KEY}" not in str(c) for c in warn.call_args_list)
+
+    @pytest.mark.parametrize("stored", ["fireredasr", "docling-whisper", "openai-compatible"])
+    def test_startup_drops_a_stored_asr_provider(self, stored):
+        """1.5: rag.asr.provider is no longer a console setting. A stored row is deleted before the
+        replay; a removed in-process provider gets a warning naming the migration guide, and
+        rag.asr then follows the config files (no silent switch to another local model)."""
+        cfg = _mk_config()
+        from src.adapter import runtime_settings_service as svc
+        with self._with_cfg(cfg), patch("db.db.get_engine"), \
+             patch(f"{_SVC}.RuntimeSettingsDB") as db, patch.object(svc.logger, "warning") as warn:
+            db.load_all.return_value = {"rag.asr.provider": stored, "rag.asr.model": "m"}
+            applied = svc.load_overrides_on_startup()
+        assert [c.args[0] for c in db.delete.call_args_list] == ["rag.asr.provider"]
+        assert applied == 1 and cfg.rag.asr.model == "m" and cfg.rag.asr.provider == "openai-compatible"
+        dropped = [c.args[0] for c in warn.call_args_list if "rag.asr.provider" in c.args[0]]
+        if stored == "openai-compatible":
+            assert dropped == []
+        else:
+            assert len(dropped) == 1 and "docs/migrate-1.5.md" in dropped[0]
+
+    def test_startup_drops_removed_parsing_rows(self):
+        """1.5: rag.parsing.images and rag.parsing.pdf local|cloud are deleted before the replay
+        with a warning naming the guide; a valid pdf row (text) is kept and applied."""
+        cfg = _mk_config()
+        from src.adapter import runtime_settings_service as svc
+        with self._with_cfg(cfg), patch("db.db.get_engine"), \
+             patch(f"{_SVC}.RuntimeSettingsDB") as db, patch.object(svc.logger, "warning") as warn:
+            db.load_all.return_value = {"rag.parsing.images": "local", "rag.parsing.pdf": "cloud",
+                                        "rag.retrieval.default_top_k": 7}
+            applied = svc.load_overrides_on_startup()
+        assert sorted(c.args[0] for c in db.delete.call_args_list) == ["rag.parsing.images", "rag.parsing.pdf"]
+        assert applied == 1 and cfg.rag.retrieval.default_top_k == 7
+        dropped = [c.args[0] for c in warn.call_args_list if "Dropped stored setting rag.parsing" in c.args[0]]
+        assert len(dropped) == 2 and all("docs/migrate-1.5.md" in w for w in dropped)
+
+        cfg = _mk_config()
+        with self._with_cfg(cfg), patch("db.db.get_engine"), patch(f"{_SVC}.RuntimeSettingsDB") as db:
+            db.load_all.return_value = {"rag.parsing.pdf": "text"}
+            assert svc.load_overrides_on_startup() == 1
+        db.delete.assert_not_called()
+        assert cfg.rag.parsing.pdf == "text"
+
+    def test_removed_parsing_paths_are_not_editable(self):
+        assert "rag.parsing.images" not in ro.EDITABLE and "rag.docling.device" not in ro.EDITABLE
+        with pytest.raises(ValueError):
+            ro.validate_and_apply(_mk_config(), {"rag.parsing.images": "cloud"})
+
+    def test_forced_vision_without_a_model_is_refused_in_the_console(self):
+        cfg = _mk_config()
+        with pytest.raises(ValueError, match="rag.parsing.pdf is 'vision' but rag.parsing.vision is not configured"):
+            ro.validate_and_apply(cfg, {"rag.parsing.pdf": "vision"})
+        applied, _ = ro.validate_and_apply(cfg, {"rag.parsing.pdf": "vision",
+                                                 "rag.parsing.vision.model": "qwen3-vl-8b",
+                                                 "rag.parsing.vision.base_url": "https://fy.example/v1"})
+        assert applied["rag.parsing.pdf"] == "vision"
 
     def test_startup_overlay_binds_the_engine_before_reading(self):
         """main.py overlays the overrides before it calls init_db. Without binding the
@@ -345,7 +422,7 @@ class TestServiceViewAndReset:
         with self._with_cfg(cfg), \
              patch(f"{_SVC}.RuntimeSettingsDB") as db, \
              patch(f"{_SVC}._rebind") as rb, \
-             patch.object(Config, "_config_path", str(yaml_file)):
+             patch.object(Config, "_config_dir", config_dir_from_file(yaml_file)):
             db.delete.return_value = True
             assert svc.reset_setting("rag.rerank.score_threshold") is True
         assert cfg.rag.rerank.score_threshold == 0.25  # restored to the yaml factory value
@@ -361,7 +438,7 @@ class TestServiceViewAndReset:
         cfg = _mk_config()
         from src.adapter import runtime_settings_service as svc
         from src.config.config_manager import Config
-        with self._with_cfg(cfg), patch.object(Config, "_config_path", None):
+        with self._with_cfg(cfg), patch.object(Config, "_config_dir", None):
             v = svc._yaml_value("rag.contextual_retrieval.reasoning_effort")
         from src.config.model import ContextualRetrievalConfig
         assert v == ContextualRetrievalConfig.model_fields["reasoning_effort"].get_default()
@@ -369,6 +446,12 @@ class TestServiceViewAndReset:
 
 class TestValueConstraints:
     """The settings API rejects values that would hang or empty the service."""
+
+    def test_asr_provider_is_not_a_console_setting(self):
+        """openai-compatible is the only provider (1.5), so the console cannot set one."""
+        assert "rag.asr.provider" not in ro.EDITABLE
+        with pytest.raises(ValueError, match="cannot be changed at runtime"):
+            ro.validate_and_apply(_mk_config(), {"rag.asr.provider": "fireredasr"})
 
     @pytest.mark.parametrize("path, value", [
         ("rag.contextual_retrieval.max_concurrent", 0),      # Semaphore(0) hangs indexing
@@ -387,7 +470,7 @@ class TestValueConstraints:
         ("rag.retrieval.hybrid_fusion", "foo"),
         ("rag.embedding.provider", "nope"),
         ("rag.llm.provider", "nope"),
-        ("rag.asr.provider", "nope"),
+        ("rag.asr.chinese_conversion", "s2t"),
         ("rag.contextual_retrieval.reasoning_effort", "max"),
         ("rag.rerank.base_url", "localhost:8787"),            # scheme missing
         ("rag.rerank.query_template", "no placeholder"),
@@ -396,7 +479,7 @@ class TestValueConstraints:
         ("rag.rerank.gap_threshold", 1.5),
         # cloud-profile keys
         ("rag.llm.provider", "huggingface"),
-        ("rag.answer_llm.provider", "nope"),
+        ("rag.contextual_llm.provider", "nope"),
         ("rag.parsing.vision.provider", "huggingface"),
         ("rag.parsing.vision.base_url", "api.example.com/v1"),
         ("rag.parsing.vision.model", "  "),
@@ -405,6 +488,8 @@ class TestValueConstraints:
         ("rag.rerank.max_retries", 9),
         ("rag.rerank.timeout", 0),
         ("rag.parsing.pdf", "remote"),
+        ("rag.parsing.pdf", "local"),               # removed in 1.5 (docling OCR)
+        ("rag.parsing.pdf", "cloud"),
         ("rag.parsing.on_page_failure", "skip"),
         ("rag.parsing.max_concurrency", 0),
         ("rag.parsing.max_pages_per_file", -1),
@@ -418,6 +503,14 @@ class TestValueConstraints:
         with pytest.raises(ValueError, match="Settings validation failed"):
             ro.validate_and_apply(cfg, {path: value})
         assert ro.get_effective(cfg, mask_secrets=False)[path] == before
+
+    @pytest.mark.parametrize("path", ["rag.answer_llm.model", "rag.eval_llm.provider",
+                                      "rag.answer_llm.api_key", "rag.eval_llm.base_url"])
+    def test_removed_llm_roles_are_not_editable(self, path):
+        """answer_llm / eval_llm were removed in 1.5 (answers and evaluation use rag.llm)"""
+        assert path not in ro.EDITABLE
+        with pytest.raises(ValueError, match="cannot be changed at runtime"):
+            ro.validate_and_apply(_mk_config(), {path: "x"})
 
     @pytest.mark.parametrize("path, value", [
         ("rag.contextual_retrieval.max_concurrent", 1),
@@ -447,10 +540,9 @@ class TestValueConstraints:
         ("rag.contextual_llm.provider", "openai-compatible"),
         ("rag.contextual_llm.model", "gpt-4o-mini"),
         ("rag.contextual_llm.base_url", "https://api.example.com/v1"),
-        ("rag.answer_llm.provider", ""),            # empty = inherit rag.llm
-        ("rag.answer_llm.model", None),
-        ("rag.eval_llm.provider", "azure"),
-        ("rag.eval_llm.base_url", ""),
+        ("rag.contextual_llm.provider", ""),        # empty = inherit rag.llm
+        ("rag.contextual_llm.model", None),
+        ("rag.contextual_llm.base_url", ""),
         ("rag.contextual_retrieval.max_calls_per_file", 200),
         ("rag.contextual_retrieval.max_tokens_per_day", 0),
         ("rag.rerank.api", "cohere"),
@@ -464,8 +556,8 @@ class TestValueConstraints:
         ("rag.asr.segment_seconds", 600),
         ("rag.asr.timeout", 300),
         ("rag.asr.max_retries", 3),
-        ("rag.parsing.pdf", "LOCAL"),               # cloud needs a vision model (profile check)
-        ("rag.parsing.images", ""),                 # empty = follow the profile
+        ("rag.parsing.pdf", "Text"),
+        ("rag.parsing.pdf", "auto"),                # auto = the vision model if configured, else text
         ("rag.parsing.vision.provider", "vllm"),
         ("rag.parsing.vision.model", "Qwen2.5-VL"),
         ("rag.parsing.vision.base_url", "https://vlm.example.com/v1"),
@@ -524,13 +616,14 @@ class TestResetMissingSection:
 
     def test_yaml_value_walks_schema_when_section_is_none(self):
         cfg = _mk_config()
-        cfg.rag.asr = None  # optional section absent from config.yaml
+        cfg.rag.asr = None  # optional section absent from the config files
         from src.adapter import runtime_settings_service as svc
         from src.config.config_manager import Config
         from src.config.model import AsrConfig
         with patch(f"{_SVC}.Config.get_config_model", return_value=cfg), \
-             patch.object(Config, "_config_path", None):
-            assert svc._yaml_value("rag.asr.provider") == AsrConfig.model_fields["provider"].get_default()
+             patch.object(Config, "_config_dir", None):
+            assert svc._yaml_value("rag.asr.chinese_conversion") == \
+                AsrConfig.model_fields["chinese_conversion"].get_default()
 
     def test_reset_with_missing_section_succeeds(self, tmp_path):
         cfg = _mk_config()
@@ -541,10 +634,10 @@ class TestResetMissingSection:
         from src.config.config_manager import Config
         with patch(f"{_SVC}.Config.get_config_model", return_value=cfg), \
              patch(f"{_SVC}.RuntimeSettingsDB") as db, patch(f"{_SVC}._rebind"), \
-             patch(f"{_SVC}._audit"), patch.object(Config, "_config_path", str(yaml_file)):
+             patch(f"{_SVC}._audit"), patch.object(Config, "_config_dir", config_dir_from_file(yaml_file)):
             db.delete.return_value = True
-            assert svc.reset_setting("rag.asr.provider") is True
-        assert cfg.rag.asr.provider == "docling-whisper"
+            assert svc.reset_setting("rag.asr.chinese_conversion") is True
+        assert cfg.rag.asr.chinese_conversion == "s2twp"
 
     def test_reset_resolves_value_before_deleting_override(self, tmp_path):
         """If the factory value cannot be applied, the override row must survive."""
@@ -555,7 +648,7 @@ class TestResetMissingSection:
         from src.config.config_manager import Config
         with patch(f"{_SVC}.Config.get_config_model", return_value=cfg), \
              patch(f"{_SVC}.RuntimeSettingsDB") as db, patch(f"{_SVC}._rebind"), \
-             patch.object(Config, "_config_path", str(yaml_file)):
+             patch.object(Config, "_config_dir", config_dir_from_file(yaml_file)):
             with pytest.raises(ValueError):
                 svc.reset_setting("rag.rerank.score_threshold")
             db.delete.assert_not_called()
@@ -569,5 +662,5 @@ class TestResetMissingSection:
         from src.adapter import runtime_settings_service as svc
         from src.config.config_manager import Config
         with patch(f"{_SVC}.Config.get_config_model", return_value=cfg), \
-             patch.object(Config, "_config_path", str(yaml_file)):
+             patch.object(Config, "_config_dir", config_dir_from_file(yaml_file)):
             assert svc._yaml_value("rag.rerank.base_url") == "http://rr:1"

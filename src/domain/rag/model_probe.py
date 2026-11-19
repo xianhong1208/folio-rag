@@ -109,12 +109,14 @@ def _probe_rerank(cfg) -> str:
 
 def _probe_asr(cfg) -> str:
     import httpx
+    from src.domain.rag.asr_provider import tls_verify
     from src.utils.http_retry import join_endpoint
     headers = {"Authorization": f"Bearer {cfg.api_key}"} if cfg.api_key else {}
     data = {"response_format": "json"}
     if cfg.model:
         data["model"] = cfg.model
-    with httpx.Client(timeout=min(cfg.timeout, PROBE_TIMEOUT), follow_redirects=False) as c:
+    with httpx.Client(timeout=min(cfg.timeout, PROBE_TIMEOUT), follow_redirects=False,
+                      verify=tls_verify(getattr(cfg, "ca_file", None))) as c:
         resp = c.post(join_endpoint(cfg.base_url, "/audio/transcriptions"), data=data,
                       files={"file": ("probe.wav", _silent_wav(), "audio/wav")}, headers=headers)
     resp.raise_for_status()
@@ -123,14 +125,6 @@ def _probe_asr(cfg) -> str:
 
 class _Mismatch(Exception):
     pass
-
-
-def _asr_ready(rag) -> bool:
-    try:
-        from src.domain.rag.asr_provider import create_asr_provider
-        return bool(create_asr_provider(getattr(rag, "asr", None)).available())
-    except Exception:
-        return False
 
 
 def probe_role(rag, role: str) -> Dict[str, Any]:
@@ -150,14 +144,12 @@ def probe_role(rag, role: str) -> Dict[str, Any]:
                        llm.azure_deployment or llm.model)
     summary = {r["role"]: r for r in role_summary(rag)}[role]
     model = summary.get("model")
+    if role == "vision" and summary["runs"] == "off":
+        return _probe_result(role, "unset", "No vision model: PDFs are read from their text layer "
+                                            "and image uploads are refused", model=model)
     if summary["runs"] == "off":
         return _probe_result(role, "disabled", "Disabled in settings", model=model)
     if summary["runs"] == "in-process":
-        if role == "asr":
-            ready = _asr_ready(rag)
-            return _probe_result(role, "local" if ready else "down",
-                           "Local weights found" if ready else "Local weights missing under assets/",
-                           model=summary.get("provider"))
         return _probe_result(role, "local", "Runs in-process (no endpoint to probe)", model=model)
 
     t0 = time.perf_counter()
@@ -171,7 +163,7 @@ def probe_role(rag, role: str) -> Dict[str, Any]:
         elif role == "rerank":
             detail = _probe_rerank(rag.rerank)
         else:
-            if not rag.asr.base_url:
+            if getattr(rag, "asr", None) is None or not rag.asr.base_url:
                 return _probe_result(role, "unset", "No endpoint configured", model=model)
             detail = _probe_asr(rag.asr)
         status = "ok"

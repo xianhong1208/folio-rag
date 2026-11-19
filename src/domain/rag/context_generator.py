@@ -312,11 +312,12 @@ class ContextGenerator:
             return None
 
     @staticmethod
-    def _create_sync_client(llm_config):
+    def _create_sync_client(llm_config, metrics_role: str = "contextual_llm"):
         """Build a sync OpenAI client for the contextual-prefix role (see llm_client:
-        every OpenAI-compatible provider honours base_url, timeout and max_retries)."""
+        every OpenAI-compatible provider honours base_url, timeout and max_retries).
+        ``metrics_role`` labels its requests in /metrics (answers pass ``llm``)."""
         from src.domain.rag.llm_client import create_openai_client
-        return create_openai_client(llm_config)
+        return create_openai_client(llm_config, metrics_role=metrics_role)
 
     def _call_llm_sync(self, prompt: str, client) -> str:
         """Call the LLM synchronously (run in a thread pool via asyncio.to_thread)."""

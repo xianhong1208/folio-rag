@@ -1,8 +1,7 @@
 """Folio MCP Server CLI entry point.
 
-Default run (`uv run python main.py`) does DB bootstrap, auto migration, Docling
-warmup (only when a role uses docling's local models), then starts the FastAPI +
-FastMCP server. See main() for the CLI flags.
+Default run (`uv run python main.py`) does DB bootstrap, auto migration, logs where
+every model role runs, then starts the FastAPI + FastMCP server. See main() for the CLI flags.
 
 Note: this file deliberately does not use `from __future__ import annotations`.
 Nuitka's libs-loader injection prepends executable code to the top of main.py,
@@ -14,27 +13,18 @@ import argparse
 import sys
 from pathlib import Path
 
-# Load the project's .env before anything reads os.environ. Config expands
-# ${DATABASE_URL:-...}, so DATABASE_URL must be present first. override=True lets
-# this project's .env win over a stale global export lingering in the shell.
-def _load_dotenv() -> None:
-    import os
-    env_file = Path(__file__).resolve().parent / ".env"
-    if not env_file.exists():
-        return
-    for line in env_file.read_text(encoding="utf-8").splitlines():
-        line = line.strip()
-        if not line or line.startswith("#") or "=" not in line:
-            continue
-        key, _, value = line.partition("=")
-        os.environ[key.strip()] = value.strip().strip('"').strip("'")
+# Load the project's .env before anything reads os.environ. config/*.yaml expands
+# ${DATABASE_URL:-...}, ${LLM_BASE_URL:-...} and the other per-machine values, so they
+# must be present first. override=True lets this project's .env win over a stale global
+# export lingering in the shell.
+from src.config.dotenv import load_dotenv as _load_dotenv  # noqa: E402
 
+_load_dotenv(Path(__file__).resolve().parent / ".env")
 
-_load_dotenv()
-
-# Let the PyTorch CUDA allocator grow segments instead of fragmenting them: on a
-# card shared with vLLM, fragmentation alone causes out-of-memory errors in the
-# docling stages. Must be set before torch is imported; a user value wins.
+# Let the PyTorch CUDA allocator grow segments instead of fragmenting them: on a card
+# shared with vLLM, fragmentation alone causes out-of-memory errors in the in-process
+# models (HuggingFace embeddings, CKIP). Must be set before torch is imported; a user
+# value wins.
 import os as _os
 _os.environ.setdefault("PYTORCH_CUDA_ALLOC_CONF", "expandable_segments:True")
 
@@ -63,7 +53,7 @@ import uvicorn
 from app import create_app
 from db import db as db_module
 from db.migrate import DatabaseMigrator
-from src.config.config_manager import Config
+from src.config.config_manager import Config, ConfigFileError
 from src.log import get_server_logger, setup_logger
 
 
@@ -118,12 +108,48 @@ def run_migration_command(action: str, message: str = None, revision: str = "-1"
         return False
 
 
+def default_config_dir() -> str:
+    """--config-dir's default: FOLIO_CONFIG_DIR, else ``config`` (relative to the working
+    directory, which it must stay inside)."""
+    return (_os.environ.get("FOLIO_CONFIG_DIR") or "").strip() or "config"
+
+
+def log_directory() -> str:
+    """Where the log files go: FOLIO_LOG_DIR, else ``logs``. Set but empty = no files, the
+    console only (the Docker image's default: ``docker logs`` has everything)."""
+    value = _os.environ.get("FOLIO_LOG_DIR")
+    return "logs" if value is None else value.strip()
+
+
+def storage_matches_database(db_url: str, database_was_new: bool, logger) -> bool:
+    """Run the startup storage check (src/storage/consistency.py); False = refuse to start."""
+    from src.storage.consistency import StorageMismatchError, check_storage_matches_database
+    from src.storage.file_storage import FileStorage
+    try:
+        check_storage_matches_database(db_url, database_was_new=database_was_new,
+                                       storage_root=FileStorage.STORAGE_ROOT,
+                                       resolve=FileStorage.resolve_path, logger=logger)
+    except StorageMismatchError as e:
+        logger.error(f"❌ {e}")
+        return False
+    return True
+
+
 def main():
+    # `main.py backup ...` / `main.py restore ...` (docs/backup.md): the same entry point
+    # as the server, so a packaged binary has them too.
+    if len(sys.argv) > 1 and sys.argv[1] in ("backup", "restore", "export-folder", "import-folder"):
+        from src.backup.cli import main as backup_main
+        sys.exit(backup_main(sys.argv[1:]))
+
     parser = argparse.ArgumentParser(
         description="Folio MCP Server",
         formatter_class=argparse.ArgumentDefaultsHelpFormatter,
     )
-    parser.add_argument("--config", type=str, default="config/config.yaml")
+    parser.add_argument("--config-dir", type=str, default=default_config_dir(),
+                        help="Directory holding the six config files (database.yaml, auth.yaml, "
+                             "models.yaml, mcp.yaml, retrieval.yaml, system.yaml); "
+                             "env FOLIO_CONFIG_DIR sets the default")
     parser.add_argument("--host", type=str)
     parser.add_argument("--port", type=int)
     parser.add_argument("--log-level", type=str,
@@ -143,10 +169,10 @@ def main():
     args = parser.parse_args()
 
     try:
-        Config.set_config(args.config)
+        Config.set_config(args.config_dir)
         config_obj = Config.get_config_model()
         if not config_obj:
-            raise RuntimeError("Pydantic ConfigModel not loaded")
+            raise RuntimeError("the configuration is invalid (see the error above)")
 
         log_conf = Config.get_logging_config()
         if not log_conf:
@@ -155,13 +181,17 @@ def main():
         log_level = str(getattr(log_conf, "level", "INFO")).upper()
         if args.log_level:
             log_level = args.log_level.upper()
-        log_dir = getattr(log_conf, "log_dir", "logs")
+        log_dir = log_directory()
 
         # logging.max_size / backup_count: rotate at that size, keep that many old files.
         setup_logger(console_level=log_level, file_level="DEBUG", log_base_dir=log_dir,
                      rotation=getattr(log_conf, "max_size", None) or "5 MB",
                      retention=getattr(log_conf, "backup_count", None))
         logger = get_server_logger()
+        # The notices from loading the config (an old config.yaml left behind, removed
+        # sections, profile warnings) were logged before the log files existed: log them again
+        # so they are in logs/ too.
+        Config.log_startup_notices(logger)
 
         # Migration-only mode: run the action and exit without starting the server.
         if args.migrate_only:
@@ -183,7 +213,7 @@ def main():
                 ensure_database_ready(db_url, logger)
             except Exception as e:
                 logger.error(f"❌ DB bootstrap failed: {e}")
-                logger.error("   Check Postgres is running and credentials in config.yaml are correct")
+                logger.error("   Check Postgres is running and DATABASE_URL (.env / config/database.yaml) is correct")
                 sys.exit(1)
 
             # Compare the vector-table dimension against config to catch a model swap or
@@ -197,6 +227,15 @@ def main():
             except Exception as e:
                 logger.warning(f"⚠️ Vector dim startup check failed (continuing): {e}")
 
+            # The database and the storage directory (uploads) must belong together: refuse to
+            # start when either one is missing, instead of looking healthy without the data.
+            # A new database next to old uploads is refused before migrating it, so that a restart
+            # does not find a migrated, empty database and carry on.
+            from src.storage.consistency import database_is_new
+            database_was_new = database_is_new(db_url)
+            if database_was_new and not storage_matches_database(db_url, True, logger):
+                sys.exit(1)
+
             # Auto-migrate to align the schema with head.
             logger.info("🔄 Running auto migration...")
             success = run_migration_command("auto")
@@ -205,6 +244,10 @@ def main():
             else:
                 logger.error("❌ Auto migration failed — aborting startup")
                 logger.error("   Use --no-migrate to skip migration if this is intentional")
+                sys.exit(1)
+
+            # An existing database whose uploads are missing from the storage directory
+            if not database_was_new and not storage_matches_database(db_url, False, logger):
                 sys.exit(1)
         else:
             logger.warning("⚠️ Skipping bootstrap + migration (--no-migrate)")
@@ -237,11 +280,11 @@ def main():
 
         for change in getattr(config_obj.app, "renamed_defaults", []) if config_obj.app else []:
             logger.warning(
-                f"⚠️ config.yaml still has the pre-Folio default ({change}); "
-                "update config/config.yaml to silence this warning")
+                f"⚠️ the config still has the pre-Folio default ({change}); "
+                "update config/system.yaml or config/mcp.yaml to silence this warning")
 
         logger.info(f"Starting {getattr(config_obj.app, 'title', None) or 'Folio MCP Server'}...")
-        logger.info(f"Config: {args.config}")
+        logger.info(f"Config: {args.config_dir}/ (+ .env)")
         logger.info(f"URL: http://{host}:{port}")
         mcp_endpoint = "mcp" if transport == "http" else transport
         logger.info(f"MCP Endpoint: http://{host}:{port}/{mcp_endpoint}")
@@ -256,22 +299,12 @@ def main():
             logger.error(f"❌ DB connect failed: {e}")
             logger.warning("⚠️ Server starting anyway — RAG features will fail")
 
-        # Say where every model role runs (no "weights missing" noise for roles that
-        # are cloud endpoints), then pre-warm docling only if a role needs its local models.
+        # Say where every model role runs, and how PDFs and images are read.
         rag_conf = getattr(config_obj, "rag", None)
-        from src.config.roles import docling_warmup_needed, startup_lines
+        from src.config.roles import startup_lines
         if rag_conf is not None:
             for line in startup_lines(rag_conf):
                 logger.info(line)
-        if docling_warmup_needed(rag_conf):
-            # Pre-warm Docling (1-2 min on first start).
-            try:
-                from src.domain.rag.docling_loader import warmup_docling
-                warmup_docling()
-            except Exception as e:
-                logger.warning(f"Docling warmup skipped: {e}")
-        else:
-            logger.info("Docling warm-up skipped: no role parses PDFs/images or audio with local models")
 
         app_instance = create_app(config_obj, transport=transport)
         uvicorn.run(
@@ -282,9 +315,9 @@ def main():
             access_log=False,  # client origin/status is already logged during token validation
         )
 
-    except FileNotFoundError as e:
+    except ConfigFileError as e:
         from loguru import logger as base_logger
-        base_logger.error(f"Configuration file not found: {e}")
+        base_logger.error(f"Configuration error: {e}")
         sys.exit(1)
     except Exception as e:
         from loguru import logger as base_logger

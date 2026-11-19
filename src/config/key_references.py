@@ -1,12 +1,12 @@
 """Which ``${VAR}`` key references a runtime settings change may use, and for which server.
 
-A model key written as ``${VAR}`` is read from the server's environment. config.yaml
+A model key written as ``${VAR}`` is read from the server's environment. config/models.yaml
 (the startup config) is the operator's statement of which variables hold model keys
 and which servers they belong to. A runtime change (the console's Settings page,
 ``PUT /api/admin/settings``, a stored override) may therefore only
 
-- reference a variable that config.yaml itself uses as some model role's ``api_key``,
-- and only while that role's server is one config.yaml pairs the variable with.
+- reference a variable that config/models.yaml itself uses as some model role's ``api_key``,
+- and only while that role's server is one config/models.yaml pairs the variable with.
 
 The server is the *origin* of the role's effective ``base_url``: scheme, host and port
 (a role without a ``base_url`` uses its provider's default endpoint, recorded as
@@ -25,7 +25,7 @@ from src.config.roles import LLM_ROLES
 
 # One generic answer for any reference that is not allowed: unknown, unset, or not paired
 # with this server. It must not reveal whether a variable exists in the environment.
-NOT_ALLOWED = ("this ${...} reference is not allowed here: use a variable that config.yaml "
+NOT_ALLOWED = ("this ${...} reference is not allowed here: use a variable that config/models.yaml "
                "uses as this server's api_key, or type the key itself")
 
 _DEFAULT_PORTS = {"http": 80, "https": 443}
@@ -97,9 +97,9 @@ def role_keys(rag) -> Dict[str, RoleKey]:
 
 
 def paired_origins(startup_rag, refs: Mapping[str, str]) -> Dict[str, Set[str]]:
-    """Variable -> the origins config.yaml sends it to.
+    """Variable -> the origins config/models.yaml sends it to.
 
-    ``refs`` maps a secret path to the variable config.yaml wrote there (Config's
+    ``refs`` maps a secret path to the variable the config files wrote there (Config's
     pre-expansion references). Only api_key references count.
     """
     pairs: Dict[str, Set[str]] = {}
@@ -113,7 +113,7 @@ def paired_origins(startup_rag, refs: Mapping[str, str]) -> Dict[str, Set[str]]:
 
 def reference_allowed(var: Optional[str], origin: Optional[str],
                       pairs: Mapping[str, Iterable[str]]) -> bool:
-    """True when ``var`` is a config.yaml key variable paired with ``origin``."""
+    """True when ``var`` is a config/models.yaml key variable paired with ``origin``."""
     return bool(var) and origin is not None and origin in set(pairs.get(var, ()))
 
 

@@ -15,6 +15,8 @@ from uuid import UUID, uuid4
 from src.log import get_adapter_logger
 from src.adapter.db_offload import run_db
 from src.adapter.model import FileConfigData, FileDownloadData
+from src.domain.rag.asr_provider import check_audio_upload
+from src.domain.rag.cloud_parser import check_image_upload
 from src.storage.file_storage import FileStorage
 logger = get_adapter_logger()
 
@@ -174,6 +176,11 @@ class FileAdapter():
                 tags = file_data.get('tags')
 
                 logger.info(f"Processing file: {file_name}, description: {description}, tags: {tags}")
+                # Audio is refused while speech-to-text cannot transcribe it: storing it
+                # would only produce a failed (or empty) index entry later.
+                check_audio_upload(file_name)
+                # Images likewise while no vision model can read them (rag.parsing.vision).
+                check_image_upload(file_name)
                 # The size the upload declared (known before any copying): refuse at once.
                 declared = file_data.get('file_size')
                 if declared is not None and declared > FileDB.MAX_FILE_SIZE:

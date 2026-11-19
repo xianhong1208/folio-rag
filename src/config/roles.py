@@ -5,11 +5,11 @@ shape (provider / base_url / model / api_key / timeout / max_retries), so a depl
 point each one at a different OpenAI-compatible endpoint:
 
     embedding       rag.embedding
-    contextual_llm  rag.contextual_llm  → inherits rag.llm   (contextual-retrieval prefixes)
-    answer_llm      rag.answer_llm      → inherits rag.llm   (CRAG answers in the console)
-    eval_llm        rag.eval_llm        → inherits rag.llm   (eval question generation / judge)
+    llm             rag.llm                                (answers, evaluation, and the default)
+    contextual_llm  rag.contextual_llm  → inherits rag.llm   (contextual-retrieval prefixes:
+                                                             one short sentence per chunk)
     rerank          rag.rerank
-    vision          rag.parsing.vision                     (cloud PDF / image parsing)
+    vision          rag.parsing.vision                     (PDF pages and images; optional)
     asr             rag.asr                                (speech-to-text)
 
 Pure config logic: nothing here imports a model library or makes a request.
@@ -19,19 +19,18 @@ from __future__ import annotations
 
 from typing import Any, Dict, List, Optional
 
-from src.config.model import LLMRoleConfig, ParsingConfig, RAGLLMConfig
+from src.config.model import LLMRoleConfig, ParsingConfig, RAGLLMConfig, VisionModelConfig
 
-LLM_ROLES = ("contextual_llm", "answer_llm", "eval_llm")
+# Optional per-role overrides of rag.llm (answer_llm / eval_llm were removed in 1.5).
+LLM_ROLES = ("contextual_llm",)
 
 # Providers that load weights into this process (everything else is an HTTP endpoint).
 IN_PROCESS_EMBEDDING = frozenset({"huggingface", "local"})
-IN_PROCESS_ASR = frozenset({"docling-whisper", "fireredasr"})
 
 ROLE_LABELS = {
     "embedding": "Embedding",
     "contextual_llm": "Contextual-prefix LLM",
-    "answer_llm": "Answer LLM",
-    "eval_llm": "Eval LLM",
+    "llm": "LLM (answers, evaluation)",
     "rerank": "Reranker",
     "vision": "Document parsing (vision)",
     "asr": "Speech-to-text",
@@ -39,11 +38,14 @@ ROLE_LABELS = {
 
 
 def resolve_llm(rag_config, role: str) -> Optional[RAGLLMConfig]:
-    """The effective LLM config for ``role``: ``rag.<role>`` fields over ``rag.llm``.
+    """The effective LLM config for ``role``: ``rag.<role>`` fields over ``rag.llm``
+    (``role="llm"``: ``rag.llm`` itself, used for answers and evaluation).
 
     Returns None when neither is configured. A role override without a base ``rag.llm``
     is still usable on its own (it is merged over the RAGLLMConfig defaults).
     """
+    if role == "llm":
+        return getattr(rag_config, "llm", None)
     if role not in LLM_ROLES:
         raise ValueError(f"Unknown LLM role: {role!r} (expected one of {LLM_ROLES})")
     base: Optional[RAGLLMConfig] = getattr(rag_config, "llm", None)
@@ -74,41 +76,44 @@ def effective_segmenter(rag_config) -> str:
     return default_segmenter(getattr(rag_config, "profile", "local"))
 
 
-def parsing_mode(rag_config, kind: str) -> str:
-    """``"local"`` or ``"cloud"`` for ``kind`` in {"pdf", "images"}; unset follows the profile."""
-    if kind not in ("pdf", "images"):
-        raise ValueError(f"Unknown parsing kind: {kind!r}")
+def vision_model(rag_config) -> Optional[VisionModelConfig]:
+    """``rag.parsing.vision`` when it is configured enough to call (model + endpoint), else None."""
     parsing: Optional[ParsingConfig] = getattr(rag_config, "parsing", None)
-    explicit = getattr(parsing, kind, None) if parsing is not None else None
-    if explicit:
-        return explicit
-    return "cloud" if getattr(rag_config, "profile", "local") == "cloud" else "local"
+    vision = getattr(parsing, "vision", None) if parsing is not None else None
+    if vision is None:
+        return None
+    configured = getattr(vision, "configured", None)
+    if callable(configured):
+        return vision if configured() else None
+    return vision if getattr(vision, "model", None) and getattr(vision, "base_url", None) else None
 
 
-def uses_cloud_parsing(rag_config) -> bool:
-    return any(parsing_mode(rag_config, k) == "cloud" for k in ("pdf", "images"))
+def pdf_parsing(rag_config) -> str:
+    """How PDFs are read now: ``"vision"`` (every page through rag.parsing.vision) or
+    ``"text"`` (the PDF's own text layer). ``rag.parsing.pdf: auto`` (the default) picks
+    vision when a vision model is configured. ``pdf: vision`` without one reports
+    ``"vision"`` too; check_profile refuses that configuration."""
+    parsing: Optional[ParsingConfig] = getattr(rag_config, "parsing", None)
+    mode = (getattr(parsing, "pdf", None) or "auto") if parsing is not None else "auto"
+    if mode == "auto":
+        return "vision" if vision_model(rag_config) is not None else "text"
+    return mode
 
 
-def needs_local_docling_models(rag_config) -> bool:
-    """Whether the in-process docling PDF/image models (layout, TableFormer, OCR) are used."""
-    return any(parsing_mode(rag_config, k) == "local" for k in ("pdf", "images"))
+def images_readable(rag_config) -> bool:
+    """Images can only be read by the vision model; without one they are refused at upload."""
+    return vision_model(rag_config) is not None
 
 
-def asr_runs_in_process(rag_config) -> bool:
-    asr = getattr(rag_config, "asr", None)
-    if asr is None:  # legacy default: local docling-whisper when weights are present
-        return getattr(rag_config, "profile", "local") != "cloud"
-    return bool(asr.enabled and asr.provider in IN_PROCESS_ASR)
-
-
-def docling_warmup_needed(rag_config) -> bool:
-    """Whether startup should pre-load docling's models: only when PDFs/images are parsed
-    locally or local docling-whisper transcribes audio. Office/Markdown/HTML need no models."""
-    if rag_config is None:
-        return True  # unknown config: keep the historical behaviour
-    asr = getattr(rag_config, "asr", None)
-    local_whisper = asr_runs_in_process(rag_config) and (asr is None or asr.provider == "docling-whisper")
-    return needs_local_docling_models(rag_config) or local_whisper
+def parsing_summary(rag_config) -> str:
+    """One line for logs and the console: what reads PDFs and images."""
+    vision = vision_model(rag_config)
+    name = (getattr(vision, "azure_deployment", None) or getattr(vision, "model", None)) if vision else None
+    if pdf_parsing(rag_config) == "vision":
+        return f"vision model {name}: every PDF page and image"
+    if vision is not None:
+        return f"PDFs: text layer only (rag.parsing.pdf: text); images: vision model {name}"
+    return "text layer only: PDFs from their text layer; images refused (no rag.parsing.vision)"
 
 
 def _endpoint(provider, model, base_url, enabled=True, in_process=False) -> Dict[str, Any]:
@@ -136,11 +141,14 @@ def role_summary(rag_config) -> List[Dict[str, Any]]:
         out.append({"role": "embedding", "secret_path": "rag.embedding.api_key", **entry})
 
     cr = getattr(rag_config, "contextual_retrieval", None)
-    role_enabled = {
-        "contextual_llm": bool(cr and cr.enabled),
-        "answer_llm": True,
-        "eval_llm": True,
-    }
+    llm = getattr(rag_config, "llm", None)
+    if llm is None:
+        entry = _endpoint(None, None, None, enabled=False)
+    else:
+        entry = _endpoint(llm.provider, llm.azure_deployment or llm.model, llm.base_url)
+    out.append({"role": "llm", "secret_path": "rag.llm.api_key", **entry})
+
+    role_enabled = {"contextual_llm": bool(cr and cr.enabled)}
     for role in LLM_ROLES:
         llm = resolve_llm(rag_config, role)
         own = getattr(rag_config, role, None) is not None
@@ -157,24 +165,21 @@ def role_summary(rag_config) -> List[Dict[str, Any]]:
                       getattr(rr, "base_url", None), enabled=bool(rr and rr.enabled))
     out.append({"role": "rerank", "secret_path": "rag.rerank.api_key", **entry})
 
-    parsing = getattr(rag_config, "parsing", None)
-    vision = getattr(parsing, "vision", None) if parsing is not None else None
-    modes = {k: parsing_mode(rag_config, k) for k in ("pdf", "images")}
-    if uses_cloud_parsing(rag_config):
-        entry = _endpoint(getattr(vision, "provider", None), getattr(vision, "model", None),
-                          getattr(vision, "base_url", None))
+    vision = vision_model(rag_config)
+    modes = {"pdf": pdf_parsing(rag_config), "images": "vision" if vision is not None else "refused"}
+    if vision is not None:
+        entry = _endpoint(vision.provider, vision.azure_deployment or vision.model, vision.base_url)
     else:
-        entry = _endpoint("docling", "layout + TableFormer + OCR", None, in_process=True)
+        # No model: PDFs come from their text layer, which needs no endpoint.
+        entry = _endpoint(None, None, None, enabled=False)
     out.append({"role": "vision", "secret_path": "rag.parsing.vision.api_key",
-                "modes": modes, **entry})
+                "modes": modes, "summary": parsing_summary(rag_config), **entry})
 
     asr = getattr(rag_config, "asr", None)
     if asr is None:
-        entry = _endpoint("docling-whisper", None, None,
-                          enabled=getattr(rag_config, "profile", "local") != "cloud", in_process=True)
+        entry = _endpoint("openai-compatible", None, None)
     else:
-        entry = _endpoint(asr.provider, asr.model, asr.base_url, enabled=asr.enabled,
-                          in_process=asr.provider in IN_PROCESS_ASR)
+        entry = _endpoint(asr.provider, asr.model, asr.base_url, enabled=asr.enabled)
     out.append({"role": "asr", "secret_path": "rag.asr.api_key", **entry})
 
     for e in out:
@@ -186,6 +191,9 @@ def startup_lines(rag_config) -> List[str]:
     """Human-readable "role → where it runs" lines for the startup log."""
     lines = [f"Deployment profile: {getattr(rag_config, 'profile', 'local')}"]
     for e in role_summary(rag_config):
+        if e["role"] == "vision" and e["runs"] == "off":
+            lines.append(f"  {e['label']:<28} {e['summary']}")
+            continue
         if e["runs"] == "off":
             lines.append(f"  {e['label']:<28} off")
             continue

@@ -2,14 +2,17 @@
 # Install profiles:
 #   uv sync                                   core only: every model is an HTTP endpoint
 #                                             (rag.profile: cloud) — no torch, no transformers
-#   uv sync --extra local --group <gpu>       + in-process models (docling layout/OCR, Whisper,
-#                                             FireRedASR, CKIP, HuggingFace embeddings)
+#   uv sync --extra local --group <gpu>       + in-process models (CKIP, HuggingFace embeddings).
+#                                             Speech-to-text (rag.asr) and PDF/image reading
+#                                             (rag.parsing.vision) are always OpenAI-compatible
+#                                             endpoints; without a vision model PDFs are read from
+#                                             their text layer (pypdfium2, core).
 # GPU builds select PyTorch via PEP 735 dependency groups: `--group {rocm-r714|cuda|cpu}`.
-# Only torch/torchvision/torchaudio differ per group; the [tool.uv] sections below map each one to its index.
+# Only torch differs per group (plus triton for cuda); the [tool.uv] sections below map it to its index.
 
 [project]
 name = "folio-rag"
-version = "1.4.2"
+version = "1.5.0"
 description = "Folio MCP Server — hierarchical chunking + auto-merging retrieval, designed for gpt-oss-120b"
 # 3.12 is the lowest Python with cp312 wheels for every PyTorch build (rocm/cuda/cpu).
 requires-python = ">=3.12,<3.13"
@@ -42,9 +45,10 @@ dependencies = [
     "tiktoken==0.12.0",
     "numpy==2.3.4",
     # Document parsing without models: docling-slim's format backends (Office, OpenDocument,
-    # Markdown, HTML, LaTeX, e-mail, PDF text layer) are torch-free. The layout/OCR/ASR model
-    # stack is the `local` extra. tree-sitter is needed to import docling-core's chunker
-    # package (its code chunkers import it at package import).
+    # Markdown, HTML, LaTeX, e-mail) are torch-free. PDFs and images never reach docling (a
+    # vision model, or the PDF text layer through pypdfium2); format-pdf stays because
+    # docling's DocumentConverter imports its PDF backend at import time. tree-sitter is
+    # needed to import docling-core's chunker package (its code chunkers import it).
     "docling-slim[format-office,format-opendocument,format-markdown,format-html,format-web,format-latex,format-email,format-pdf,convert-core]>=2.124.0",
     "tree-sitter>=0.25.0,<0.27.0",
     # Chunk token counting without transformers/torch: reads tokenizer.json, including the
@@ -53,20 +57,23 @@ dependencies = [
     # OpenDocument (odt/ods/odp) parsing
     "odfdo>=3.22.0,<4.0.0",
     # Simplified -> Traditional conversion (no torch): repairs Simplified drift in LLM-written
-    # contextual prefixes and detects the document's script (src/domain/rag/han_script.py) in
-    # every profile, and converts FireRedASR output in the local one.
+    # contextual prefixes, detects the document's script (src/domain/rag/han_script.py) and
+    # converts speech-to-text output (rag.asr.chinese_conversion) in every profile.
     "opencc>=1.1.9",
-    # Page rendering for cloud PDF parsing (and page counts for progress)
-    "pymupdf==1.26.7",
+    # PDF text layer, page rendering for the vision model and page counts. PDFium,
+    # Apache-2.0 / BSD-3-Clause; also docling's PDF backend. Not PyMuPDF: it is AGPL-3.0.
+    "pypdfium2==5.13.0",
     "pillow>=13.0.0",
     "openpyxl>=3.1.5",
     "python-docx>=1.2.0",
+    # /metrics in the Prometheus text format (docs/metrics.md). Pure Python, no dependencies.
+    "prometheus-client>=0.23.1",
     # Test
     "pytest==9.0.3",
     "pytest-asyncio>=1.3.0",
     "pytest-cov>=7.0.0",
     "pytest-mock>=3.15.0",
-    # Security pins. torch/torchvision/torchaudio come from [dependency-groups], not here.
+    # Security pins. torch comes from [dependency-groups], not here.
     "nltk>=3.9.4",
     "authlib>=1.6.9",
     "aiohttp>=3.13.4",
@@ -87,20 +94,11 @@ dependencies = [
 # Everything here pulls torch; profile: cloud never imports any of it
 # (tests/test_cloud_profile_no_local_models.py).
 local = [
-    # Docling's layout / TableFormer / RapidOCR models + local Whisper (ASR extra)
-    "docling[asr]>=2.124.0",
     # In-process embedding models (provider: huggingface)
     "llama-index-embeddings-huggingface==0.6.1",
-    # FireRedASR — vendored official inference code (see [tool.uv.sources]; vendor/fireredasr_src)
-    "fireredasr",
-    # FireRedASR AED inference deps (arch-independent).
-    "kaldiio>=2.18.0",
-    "kaldi-native-fbank>=1.15",
-    "sentencepiece>=0.2.0",
-    # OCR runs via docling's transitive rapidocr (torch backend); no onnxruntime needed.
     # 5.x: 4.x carries advisories fixed only in 5.0-5.10 (torch.load in Trainer, malicious
     # config.json, save_pretrained path traversal, ...). Output checked equal to 4.57 for CKIP
-    # segmentation, HuggingFace embeddings and docling layout/OCR.
+    # segmentation and HuggingFace embeddings.
     "transformers>=5.22.0,<6.0.0",
     # CKIP word segmentation for Chinese BM25/FTS (Academia Sinica). Segments in Python, then
     # Postgres tokenizes with `simple`; replaces the old pg_jieba/jiebacfg path.
@@ -114,12 +112,13 @@ jieba = ["jieba>=0.42.1"]
 [tool.ruff]
 line-length = 120
 target-version = "py312"
-extend-exclude = [".venv", ".claude", "vendor", "frontend", "static"]
+extend-exclude = [".venv", ".claude", "frontend", "static"]
 
 [tool.ruff.lint]
 # Correctness only (pyflakes + the E4/E7/E9 errors), the same baseline as MCP Gate,
 # Morphyard and Packwright. Style rules can be added one at a time with their fixes.
-select = ["E4", "E7", "E9", "F"]
+# W605: an invalid escape sequence is a SyntaxWarning today and an error in a later Python.
+select = ["E4", "E7", "E9", "F", "W605"]
 
 [tool.ruff.lint.per-file-ignores]
 # These set up sys.path, the working directory or allocator variables before the
@@ -204,30 +203,23 @@ exclude_lines = [
 # jit.script advisories. PyTorch publishes 2.14 for CUDA 13.0, not 12.x.
 cuda = [
     "torch>=2.14.0,<2.15",
-    "torchvision>=0.29.0,<0.30",
-    # torchaudio's newest release is 2.11; it supports torch 2.14 (the cpu group pairs them too).
-    "torchaudio>=2.11.0,<2.12",
     # triton is listed so its [tool.uv.sources] index pin applies (it is a torch transitive dep).
     "triton>=3.8.0,<3.9",
 ]
 
-# Pure CPU (CI / no GPU). Keep torch >= 2.8 — earlier versions break docling ASR.
+# Pure CPU (CI / no GPU).
 cpu = [
     "torch>=2.8.0",
-    "torchvision>=0.23.0",
-    "torchaudio>=2.8.0",
 ]
 
 # AMD ROCm 7.14 multi-arch wheels: one torch[device-all] wheel covers all AMD archs
-# (gfx1151 / gfx90a / gfx1201). [device-all] applies to torch/torchvision only, not
-# torchaudio (matches AMD's official command; AMD ships no torchaudio newer than 2.11).
+# (gfx1151 / gfx90a / gfx1201). torchvision / torchaudio left with docling's models (1.5):
+# nothing in-process uses them any more.
 # torch 2.13: AMD's 2.11 / 2.12 builds require setuptools<82, which kept the whole lock (every
 # group, CPU included) on setuptools 81 and its advisories. ROCm 7.13 was dropped for the same
 # reason: its newest torch is 2.11.
 rocm-r714 = [
     "torch[device-all]==2.13.0+rocm7.14.0",
-    "torchvision[device-all]==0.28.0+rocm7.14.0",
-    "torchaudio==2.11.0+rocm7.14.0",
 ]
 
 
@@ -285,21 +277,9 @@ url = "https://download.pytorch.org/whl/cpu"
 explicit = true
 
 
-# Map torch/torchvision/torchaudio (and triton) to the right index per group.
+# Map torch (and triton) to the right index per group.
 [tool.uv.sources]
-# Vendored FireRedASR (no PyPI release) installed as a local path dependency.
-fireredasr = { path = "vendor/fireredasr_src" }
 torch = [
-    { index = "pytorch-rocm-multiarch", group = "rocm-r714" },
-    { index = "pytorch-cu130",          group = "cuda"      },
-    { index = "pytorch-cpu",            group = "cpu"       },
-]
-torchvision = [
-    { index = "pytorch-rocm-multiarch", group = "rocm-r714" },
-    { index = "pytorch-cu130",          group = "cuda"      },
-    { index = "pytorch-cpu",            group = "cpu"       },
-]
-torchaudio = [
     { index = "pytorch-rocm-multiarch", group = "rocm-r714" },
     { index = "pytorch-cu130",          group = "cuda"      },
     { index = "pytorch-cpu",            group = "cpu"       },

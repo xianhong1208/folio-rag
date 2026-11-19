@@ -21,13 +21,13 @@ from src.config.profile import (
     literal_secret_paths,
 )
 from src.config.roles import (
-    asr_runs_in_process,
-    needs_local_docling_models,
-    parsing_mode,
+    images_readable,
+    parsing_summary,
+    pdf_parsing,
     resolve_llm,
     role_summary,
     startup_lines,
-    uses_cloud_parsing,
+    vision_model,
 )
 
 
@@ -52,28 +52,35 @@ class TestDefaults:
         rag = _rag()
         assert rag.profile == "local"
         assert rag.asr is None  # no implicit section in local
-        assert parsing_mode(rag, "pdf") == "local"
-        assert parsing_mode(rag, "images") == "local"
-        assert needs_local_docling_models(rag) and not uses_cloud_parsing(rag)
+        assert pdf_parsing(rag) == "text" and not images_readable(rag) and vision_model(rag) is None
         assert check_profile(rag, refs={}).ok
 
     def test_cloud_profile_disables_asr_when_unset(self):
         rag = _rag(profile="cloud", parsing=VISION)
         assert rag.asr.enabled is False and rag.asr.provider == "openai-compatible"
-        assert not asr_runs_in_process(rag)
 
-    def test_cloud_profile_defaults_parsing_to_cloud(self):
-        rag = _rag(profile="cloud", parsing=VISION)
-        assert parsing_mode(rag, "pdf") == "cloud" and parsing_mode(rag, "images") == "cloud"
-        assert not needs_local_docling_models(rag)
+    def test_auto_follows_the_vision_model_in_every_profile(self):
+        for profile in ("local", "hybrid", "cloud"):
+            assert pdf_parsing(_rag(profile=profile, parsing=VISION)) == "vision"
+            assert images_readable(_rag(profile=profile, parsing=VISION))
+            assert pdf_parsing(_rag(profile=profile)) == "text"  # the cloud profile needs no model either
 
-    def test_explicit_parsing_mode_wins(self):
-        rag = _rag(parsing={"pdf": "cloud", **VISION})
-        assert parsing_mode(rag, "pdf") == "cloud" and parsing_mode(rag, "images") == "local"
+    def test_half_configured_vision_is_not_configured(self):
+        for vision in ({"model": "m"}, {"base_url": "http://v/v1"}, {}):
+            rag = _rag(parsing={"vision": vision})
+            assert vision_model(rag) is None and pdf_parsing(rag) == "text"
+        openai = _rag(parsing={"vision": {"provider": "openai", "model": "gpt-4o"}})
+        assert vision_model(openai) is not None  # openai has a default endpoint
 
-    def test_parsing_mode_rejects_unknown_kind(self):
-        with pytest.raises(ValueError):
-            parsing_mode(_rag(), "audio")
+    def test_explicit_modes_win(self):
+        assert pdf_parsing(_rag(parsing={"pdf": "text", **VISION})) == "text"
+        assert images_readable(_rag(parsing={"pdf": "text", **VISION}))  # images still read
+        assert pdf_parsing(_rag(parsing={"pdf": "vision", **VISION})) == "vision"
+
+    def test_parsing_summary_names_the_mode(self):
+        assert "vision model gpt-4o-mini" in parsing_summary(_rag(parsing=VISION))
+        assert parsing_summary(_rag()).startswith("text layer only")
+        assert "text layer only (rag.parsing.pdf: text)" in parsing_summary(_rag(parsing={"pdf": "text", **VISION}))
 
     def test_role_timeouts_have_sane_defaults(self):
         rag = _rag(llm={"provider": "openai", "model": "m"}, rerank={"enabled": True},
@@ -88,21 +95,58 @@ class TestDefaults:
             AsrConfig(segment_seconds=900)  # 16k pcm16 over ~13 min exceeds a 25 MB upload
 
 
-class TestAsrInProcess:
-    def test_legacy_unset_asr_is_local_whisper(self):
-        assert asr_runs_in_process(_rag())
+class TestNoInProcessAsr:
+    """1.5: speech-to-text never runs in-process; the removed providers do not validate."""
 
-    def test_cloud_provider_is_not_in_process(self):
-        assert not asr_runs_in_process(_rag(asr={"provider": "openai-compatible"}))
+    def test_removed_providers_fail_validation_in_every_profile(self):
+        for profile in ("local", "hybrid", "cloud"):
+            for name in ("fireredasr", "docling-whisper"):
+                with pytest.raises(ValueError, match="migrate-1.5"):
+                    _rag(profile=profile, asr={"provider": name}, parsing=VISION)
 
-    def test_local_provider_disabled_is_not_in_process(self):
-        assert not asr_runs_in_process(_rag(asr={"provider": "fireredasr", "enabled": False}))
+    def test_disabled_removed_provider_still_fails(self):
+        """Even switched off, an old provider name stops the start: the file needs editing."""
+        with pytest.raises(ValueError, match="removed in Folio 1.5"):
+            _rag(asr={"provider": "fireredasr", "enabled": False})
+
+
+class TestNoInProcessParsing:
+    """1.5: PDFs and images are never parsed by in-process models; the old settings stop the start."""
+
+    @pytest.mark.parametrize("value", ["local", "cloud", "LOCAL"])
+    def test_old_pdf_modes_fail_validation(self, value):
+        with pytest.raises(ValueError, match=r"rag.parsing.pdf: (local|cloud) was removed in Folio 1.5.*migrate-1.5.md"):
+            _rag(parsing={"pdf": value, **VISION})
+
+    def test_old_images_key_fails_validation_whatever_its_value(self):
+        for value in ("local", "cloud", None):
+            with pytest.raises(ValueError, match="rag.parsing.images"):
+                _rag(parsing={"images": value, **VISION})
+
+    def test_docling_section_fails_validation_naming_its_keys(self):
+        with pytest.raises(ValueError, match=r"rag.docling \(device, ocr_enabled\).*HF_HUB_OFFLINE"):
+            _rag(docling={"device": "cuda", "ocr_enabled": True})
+        with pytest.raises(ValueError, match="rag.docling"):
+            _rag(docling={})
+        assert _rag(docling=None).parsing is None  # an explicit null is no setting at all
+
+    def test_unknown_pdf_mode(self):
+        with pytest.raises(ValueError, match="use auto, vision or text"):
+            ParsingConfig(pdf="ocr")
+
+    def test_forced_vision_without_a_model_is_an_error_in_every_profile(self):
+        for profile in ("local", "hybrid", "cloud"):
+            errs = check_profile(_rag(profile=profile, parsing={"pdf": "vision"}), refs=None).errors
+            assert any("rag.parsing.pdf is 'vision' but rag.parsing.vision is not configured" in e for e in errs)
+        assert check_profile(_rag(parsing={"pdf": "vision", **VISION}), refs=None).ok
+        assert check_profile(_rag(parsing={"pdf": "text"}), refs=None).ok
 
 
 class TestResolveLlm:
     def test_inherits_base(self):
         rag = _rag(llm={"provider": "openai", "model": "base", "api_key": "k"})
-        assert resolve_llm(rag, "answer_llm") is rag.llm
+        assert resolve_llm(rag, "contextual_llm") is rag.llm
+        assert resolve_llm(rag, "llm") is rag.llm  # answers and evaluation
 
     def test_override_fields_win_and_rest_inherit(self):
         rag = _rag(llm={"provider": "openai", "model": "base", "base_url": "https://a/v1",
@@ -114,47 +158,49 @@ class TestResolveLlm:
         assert rag.llm.model == "base"  # base untouched
 
     def test_override_without_base(self):
-        rag = _rag(eval_llm={"provider": "openai-compatible", "model": "judge",
-                             "base_url": "https://j/v1"})
-        got = resolve_llm(rag, "eval_llm")
-        assert isinstance(got, RAGLLMConfig) and got.model == "judge"
+        rag = _rag(contextual_llm={"provider": "openai-compatible", "model": "small",
+                                   "base_url": "https://j/v1"})
+        got = resolve_llm(rag, "contextual_llm")
+        assert isinstance(got, RAGLLMConfig) and got.model == "small"
 
     def test_none_when_nothing_configured(self):
-        assert resolve_llm(_rag(), "answer_llm") is None
+        assert resolve_llm(_rag(), "contextual_llm") is None
+        assert resolve_llm(_rag(), "llm") is None
 
     def test_unknown_role(self):
         with pytest.raises(ValueError):
             resolve_llm(_rag(), "summary_llm")
+
+    def test_removed_roles_are_gone(self):
+        """answer_llm / eval_llm were removed in 1.5: answers and evaluation use rag.llm"""
+        for role in ("answer_llm", "eval_llm"):
+            with pytest.raises(ValueError):
+                resolve_llm(_rag(), role)
+        rag = _rag(llm={"model": "base"}, answer_llm={"model": "big"}, eval_llm={"model": "judge"})
+        assert not hasattr(rag, "answer_llm") and not hasattr(rag, "eval_llm")
+        assert {e["role"] for e in role_summary(rag)}.isdisjoint({"answer_llm", "eval_llm"})
 
 
 class TestCheckProfile:
     def test_cloud_rejects_in_process_providers(self):
         rag = _rag(profile="cloud",
                    embedding={"provider": "huggingface", "model": "BAAI/bge-m3", "dimension": 1024},
-                   asr={"provider": "fireredasr"},
-                   parsing={"pdf": "local", **VISION})
+                   parsing=VISION)
         errs = "\n".join(check_profile(rag, refs={}).errors)
         assert "rag.embedding.provider 'huggingface'" in errs
-        assert "rag.asr.provider 'fireredasr'" in errs
-        assert "rag.parsing.pdf: local" in errs
 
-    def test_cloud_allows_disabled_local_asr(self):
-        rag = _rag(profile="cloud", asr={"provider": "fireredasr", "enabled": False}, parsing=VISION,
+    def test_cloud_allows_disabled_asr(self):
+        rag = _rag(profile="cloud", asr={"enabled": False}, parsing=VISION,
                    embedding={"provider": "openai", "model": "m", "dimension": 8,
                               "api_key": "${OPENAI_API_KEY}"})
         report = check_profile(rag, refs={"rag.embedding.api_key": "OPENAI_API_KEY",
                                           "rag.parsing.vision.api_key": "X"})
         assert report.ok, report.errors
 
-    def test_cloud_parsing_requires_vision_model(self):
+    def test_cloud_profile_needs_no_vision_model(self):
+        """No vision model in the cloud profile: PDFs come from their text layer."""
         rag = _rag(profile="cloud")
-        errs = check_profile(rag, refs=None).errors
-        assert any("rag.parsing.vision.model" in e for e in errs)
-
-    def test_explicit_cloud_parsing_needs_vision_in_any_profile(self):
-        rag = _rag(parsing={"images": "cloud"})
-        errs = check_profile(rag, refs=None).errors
-        assert errs and "images parsing is 'cloud'" in errs[0]
+        assert not [e for e in check_profile(rag, refs=None).errors if "parsing" in e]
 
     def test_cloud_rejects_literal_keys(self):
         rag = _rag(profile="cloud", parsing=VISION)
@@ -218,10 +264,10 @@ class TestSecrets:
         assert env_refs(raw) == {"rag.embedding.api_key": "OPENAI_API_KEY", "rag.llm.api_key": "X"}
 
     def test_iter_secret_fields_covers_every_role(self):
-        rag = _rag(llm={"api_key": "a"}, answer_llm={"api_key": "b"}, rerank={"api_key": "c"},
+        rag = _rag(llm={"api_key": "a"}, contextual_llm={"api_key": "b"}, rerank={"api_key": "c"},
                    asr={"api_key": "d"}, parsing=VISION)
         paths = dict(iter_secret_fields(rag))
-        assert {"rag.embedding.api_key", "rag.llm.api_key", "rag.answer_llm.api_key",
+        assert {"rag.embedding.api_key", "rag.llm.api_key", "rag.contextual_llm.api_key",
                 "rag.rerank.api_key", "rag.asr.api_key", "rag.parsing.vision.api_key"} <= set(paths)
 
     def test_literal_secret_paths(self):
@@ -242,26 +288,29 @@ class TestRoleSummary:
         assert roles["embedding"]["runs"] == "in-process"
         assert roles["contextual_llm"]["runs"] == "endpoint" and roles["contextual_llm"]["inherits"] == "llm"
         assert roles["rerank"]["runs"] == "off"
-        assert roles["vision"]["runs"] == "in-process" and roles["vision"]["provider"] == "docling"
-        assert roles["asr"]["runs"] == "in-process"
+        assert roles["vision"]["runs"] == "off" and roles["vision"]["modes"] == {"pdf": "text", "images": "refused"}
+        assert roles["vision"]["summary"].startswith("text layer only")
+        assert roles["asr"]["runs"] == "endpoint" and roles["asr"]["provider"] == "openai-compatible"
         assert all("api_key" not in str(v) or k == "secret_path" for e in roles.values() for k, v in e.items())
 
     def test_cloud_summary_and_role_secret_path(self):
         rag = _rag(profile="cloud", parsing=VISION, llm={"provider": "openai", "model": "base"},
-                   answer_llm={"model": "big", "api_key": "x"}, rerank={"enabled": True, "api": "cohere"},
+                   contextual_llm={"model": "small", "api_key": "x"}, rerank={"enabled": True, "api": "cohere"},
                    asr={"provider": "openai-compatible", "model": "whisper-1"})
         roles = {e["role"]: e for e in role_summary(rag)}
         assert roles["vision"]["runs"] == "endpoint" and roles["vision"]["model"] == "gpt-4o-mini"
-        assert roles["answer_llm"]["model"] == "big" and roles["answer_llm"]["inherits"] is None
-        assert roles["answer_llm"]["secret_path"] == "rag.answer_llm.api_key"
-        assert roles["eval_llm"]["secret_path"] == "rag.llm.api_key"
+        assert roles["vision"]["modes"] == {"pdf": "vision", "images": "vision"}
+        assert roles["contextual_llm"]["model"] == "small" and roles["contextual_llm"]["inherits"] is None
+        assert roles["contextual_llm"]["secret_path"] == "rag.contextual_llm.api_key"
+        assert roles["llm"]["secret_path"] == "rag.llm.api_key" and roles["llm"]["model"] == "base"
+        assert roles["llm"]["runs"] == "endpoint"
         assert roles["contextual_llm"]["runs"] == "off"  # contextual retrieval not enabled
         assert roles["rerank"]["provider"] == "cohere"
         assert roles["asr"]["runs"] == "endpoint"
 
     def test_no_llm_marks_llm_roles_off(self):
         roles = {e["role"]: e for e in role_summary(_rag())}
-        assert roles["answer_llm"]["runs"] == "off"
+        assert roles["llm"]["runs"] == "off"
 
     def test_cloud_unset_asr_is_off(self):
         roles = {e["role"]: e for e in role_summary(_rag(profile="cloud", parsing=VISION))}
@@ -272,7 +321,7 @@ class TestRoleSummary:
         text = "\n".join(lines)
         assert lines[0] == "Deployment profile: cloud"
         assert "Embedding" in text and "endpoint https://api.example.com/v1" in text
-        assert "pdf=cloud, images=cloud" in text
+        assert "pdf=vision, images=vision" in text
         assert "Speech-to-text" in text and "off" in text
         assert "FTS segmenter" in text and "no model — bigram" in text  # cloud default
 
@@ -284,11 +333,12 @@ class TestRoleSummary:
         rag = _rag(embedding={"provider": "openai", "model": "m", "dimension": 8})
         rag.retrieval.segmenter = "bigram"
         text = "\n".join(startup_lines(rag))
-        assert "in-process — docling" in text and "(provider default)" in text
+        assert "text layer only: PDFs from their text layer; images refused" in text
+        assert "(provider default)" in text
         assert "no model — bigram" in text
 
 
-# config.yaml integration: profile errors stop the model from loading.
+# Config files integration: profile errors stop the model from loading.
 
 _BASE_YAML = """\
 server: {host: 127.0.0.1, port: 8080, transport: http}
@@ -313,14 +363,15 @@ def _clean_config():
     yield
     Config._config = {}
     Config._config_model = None
-    Config._module_configs = {}
+    Config._config_dir = None
     Config._env_refs = {}
 
 
 def _load(tmp_path, monkeypatch, text):
+    from tests.config_helpers import write_config_dir
     monkeypatch.chdir(tmp_path)
-    (tmp_path / "c.yaml").write_text(text, encoding="utf-8")
-    Config.set_config("c.yaml")
+    write_config_dir(tmp_path / "cfg", text)
+    Config.set_config("cfg")
     return Config.get_config_model()
 
 
@@ -351,7 +402,10 @@ def test_yaml_hybrid_literal_key_warns_but_loads(tmp_path, monkeypatch, _clean_c
 
 def test_parsing_config_defaults():
     p = ParsingConfig()
-    assert p.pdf is None and p.on_page_failure == "mark" and p.max_pages_per_file == 500
+    assert p.pdf == "auto" and p.on_page_failure == "mark" and p.max_pages_per_file == 500
+    # 200 dpi: a low-resolution scan at 150 dpi lost a whole block on Qwen3-VL-8B (evals/README.md)
+    assert p.dpi == 200
+    assert p.vision is None and VisionModelConfig().ca_file is None
 
 
 def test_yaml_explicit_ckip_in_cloud_blocks_startup(tmp_path, monkeypatch, _clean_config):

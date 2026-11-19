@@ -22,13 +22,18 @@ Folio 是一套開源、給 Model Context Protocol 用的檢索增強生成(RAG)
 **1.4.1:** 資料夾屬於「人」而不是某一把 token,同一位 MCP Gate 使用者的每一把 personal access token
 與 OAuth 登入都看到同一組資料夾;登出會在伺服器端結束主控台 session;答案使用提問的語言。詳見
 [CHANGELOG](CHANGELOG.md);接下來的規劃見[路線圖](ROADMAP.zh-TW.md)(1.5:Docker 映像檔、備份,以及
-透過 OpenAI 相容 API 做 OCR 與語音轉文字)。
+透過 OpenAI 相容 API 讀取文件與語音)。
 
-> **1.5 將移除:** 內建的 OCR、內建的語音轉文字(FireRedASR、docling-whisper)以及 `/v1` 媒體端點。
-> 1.4.x 仍可照常使用,但會在日誌中提出警告,`/v1` 的回應也會帶 `Deprecation` 標頭。請改用 OpenAI
-> 相容的視覺模型讀取掃描 PDF 與圖片、OpenAI 相容的轉錄端點處理音訊,例如都由
-> [Forgeyard](https://github.com/xianhong1208/forgeyard) 提供。詳見
-> [改用什麼](docs/api.zh-TW.md#15-移除內建-ocr語音轉文字與-v1-媒體端點)。
+> **1.5 的變更(已在 `dev`,尚未發佈):** `config/config.yaml` 拆成 `config/` 底下的六個檔案,所有機密與每台機器各自的值
+> 都放在 `.env`,舊檔不再讀取;移除 `rag.answer_llm` 與 `rag.eval_llm`(回答與評估都用 `rag.llm`)。
+> `scripts/split_config.py` 可轉換 1.4 的設定,詳見[從 1.4 升級](docs/configuration.zh-TW.md#從-14-升級)。
+
+> **1.5 已移除(已在 `dev`):** 所有在程序內執行的 OCR、版面與語音模型,以及 `/v1` 媒體端點(現在回 410 Gone)。
+> 設定了 OpenAI 相容的**視覺模型**時(`rag.parsing.vision`,例如 [Forgeyard](https://github.com/xianhong1208/forgeyard)
+> 上的 Qwen3-VL),PDF 與圖片由它讀取;沒有設定時,PDF 從文字層讀取(掃描頁會變成一個標記),圖片則拒絕上傳。
+> 音訊送到 OpenAI 相容的轉錄端點(`rag.asr`,例如 whisper-large-v3-turbo)。設定若仍有 `rag.docling`、
+> `rag.parsing.images`、`rag.parsing.pdf: local`/`cloud` 或舊的語音 provider,啟動會被拒絕。詳見
+> [升級到 1.5](docs/migrate-1.5.zh-TW.md)。
 
 ## 主要功能
 
@@ -42,17 +47,35 @@ Folio 是一套開源、給 Model Context Protocol 用的檢索增強生成(RAG)
   chunk。以舊版切塊流程或其他 embedding 模型索引的檔案,會標示需要重新索引。
 - **每人各自的資料夾。** 你只看得到自己 MCP Gate 帳號的資料夾,MCP、REST 與主控台都一樣。
 - **多種格式。** PDF、Office(含舊版與 RTF)、OpenDocument、HTML 與 MHTML、Markdown、EPUB、電子郵件、
-  圖片(OCR)與音訊。
+  掃描的 PDF 與圖片(由 Qwen3-VL 等視覺模型讀取,表格保持表格;沒有視覺模型時 PDF 從文字層讀取)與音訊
+  (由 OpenAI 相容端點轉錄,簡體中文會轉成繁體)。
 - **用數字說話。** 公開的 205 題黃金測試集與評測工具;主控台可以用 Recall@k、MRR、nDCG@k 為你自己的
   資料夾評分。
 - **主控台**在 `/admin`:資料夾與檔案、顯示逐訊號軌跡的 Search Playground、索引任務、查詢分析與知識缺口、
   評測、即時設定、健康狀態與稽核紀錄。
+- **一個指令備份與還原。** `main.py backup` 把資料庫、每個資料夾的向量與儲存的檔案一起封存,附上一份
+  `main.py restore` 會檢查的 manifest;伺服器也能依排程自動備份。`main.py export-folder` /
+  `import-folder` 可以把單一資料夾連同檔案與索引搬到另一個 Folio,或留一份副本;console 的 Folders 頁面也能做。
+- **Prometheus 監控指標**在 [`/metrics`](docs/metrics.zh-TW.md):請求、搜尋各階段延遲、MCP 工具呼叫、
+  索引工作與模型端點呼叫,任何標籤都不含資料夾或使用者名稱。
 - **本機 GPU、CPU 或雲端。** 行程內模型可跑在 AMD ROCm、NVIDIA CUDA 或 CPU 上,也可以讓所有模型都走
   OpenAI 相容 API,完全不需要 torch。
 
 ## 安裝
 
-需要:
+**用 Docker**（輕量的雲端 profile 映像檔 `tonyhuang1101/folio`，加上 PostgreSQL 與 pgvector；所有模型都是
+OpenAI 相容端點，例如 Forgeyard 或 vLLM）：
+
+```bash
+git clone https://github.com/xianhong1208/folio-rag.git && cd folio-rag
+cp .env.example .env      # POSTGRES_PASSWORD、模型端點與名稱、MCP Gate：見「Docker」一節
+docker compose up -d      # 在 .env 加上 COMPOSE_PROFILES=mcp-gate，就會在同一個 stack 跑 MCP Gate
+```
+
+[部署指南](docs/deploy.zh-TW.md)說明映像檔、模型端點、issuer 與 audience 如何和 MCP Gate 對齊、反向代理與
+HTTPS、備份和升級。
+
+**從原始碼安裝**（`local` 與 `hybrid` profile 的程序內模型需要這種方式）。你需要：
 
 - Python 3.12 與 [uv](https://docs.astral.sh/uv/);
 - 裝了 **[pgvector](https://github.com/pgvector/pgvector)** 擴充的 **PostgreSQL**;
@@ -69,9 +92,9 @@ cd folio-rag
 # 全雲端:直接 `uv sync`。
 uv sync --extra local --group cuda
 
-cp .env.example .env         # 設定 DATABASE_URL(PostgreSQL + pgvector)
-# 編輯 config/config.yaml:rag.embedding / rag.llm / rag.rerank 端點、
-#                         auth.issuer / auth.audience、server.port
+cp .env.example .env         # DATABASE_URL(PostgreSQL + pgvector)、模型端點與金鑰、
+                             # MCP_GATE_URL / FOLIO_AUDIENCE:所有機密與每台機器各自的值
+# 模型、檢索調校、port:config/models.yaml、retrieval.yaml、system.yaml(裡面沒有機密)
 
 uv run python main.py        # 啟動時會建立 schema 並執行 migration
 ```
@@ -88,13 +111,11 @@ MCP Gate 只會為它認得的 audience 簽發 token。
 **1. 在 MCP Gate 註冊伺服器。** *Services → Register Service*,填入這台伺服器的 host、port 與路徑
 (`/mcp`)。audience 預設就是 MCP 網址,例如 `http://127.0.0.1:5039/mcp`。
 
-**2. 讓 Folio 指向 MCP Gate**,在 `config/config.yaml`:
+**2. 讓 Folio 指向 MCP Gate**,寫在 `.env`(由 `config/auth.yaml` 讀取):
 
-```yaml
-auth:
-  enabled: true
-  issuer:   "http://localhost:4568"          # MCP Gate 網址(RS256 JWKS issuer)
-  audience: "http://127.0.0.1:5039/mcp"      # 必須和在 MCP Gate 註冊的 audience 一字不差
+```bash
+MCP_GATE_URL=http://localhost:4568          # MCP Gate 網址(RS256 JWKS issuer)
+FOLIO_AUDIENCE=http://127.0.0.1:5039/mcp    # 必須和在 MCP Gate 註冊的 audience 一字不差
 ```
 
 **3. 建立資料夾並加入文件**,可以在主控台(*Library → New Folder → Upload Files*,用 MCP Gate 發的
@@ -127,24 +148,29 @@ Folio_product-docs  mode="search"  query="how do I rotate the signing key?"
 
 | Profile | 模型 | 安裝 |
 |---|---|---|
-| `local`(預設) | 什麼都可以。內附的設定呼叫自架的 embedding、LLM 與 reranker 端點,並在行程內執行 CKIP 斷詞、含 OCR 的 Docling 解析與 FireRedASR 語音轉文字 | `uv sync --extra local --group rocm-r714 \| cuda \| cpu` |
-| `hybrid` | 同上,用於自架與雲端端點混用;直接寫在 `config.yaml` 裡的 API 金鑰會被警告 | 同 `local` |
+| `local`(預設) | 什麼都可以。內附的設定呼叫自架的 embedding、LLM 與 reranker 端點,並在行程內執行 CKIP 斷詞;視覺模型與語音轉文字一律走端點 | `uv sync --extra local --group rocm-r714 \| cuda \| cpu` |
+| `hybrid` | 同上,用於自架與雲端端點混用;直接寫在設定檔裡的 API 金鑰會被警告 | 同 `local` |
 | `cloud` | 每個角色都是 HTTP 端點,金鑰必須是 `${ENV}` 參照;不需要 torch,也不下載模型 | `uv sync` |
 
-用 `rag.profile` 設定,詳見[雲端 profile](docs/configuration.zh-TW.md#雲端-profile)。主控台與不需驗證的
-`/v1` 媒體端點請只開放在可信任的網路,或放在有 HTTPS 的反向代理後面;`/mcp` 與 `/api/rag/*` 需要有效的
-token。Docker 映像檔與 compose 檔預計在 1.5 推出。
+用 `rag.profile` 設定,詳見[雲端 profile](docs/configuration.zh-TW.md#雲端-profile)。主控台請只開放在可信任的網路,或放在有 HTTPS 的反向代理後面;`/mcp` 與 `/api/rag/*` 需要有效的
+token。**Docker 映像檔**就是 `cloud` profile,附 PostgreSQL + pgvector 與選用 MCP Gate 的 compose 檔;
+程序內模型則需要從原始碼安裝。[部署指南](docs/deploy.zh-TW.md)有 nginx 與 Caddy 範例、備份和升級。資料庫和 `storage/`(上傳檔)是同一套資料:
+少了其中一個,啟動時會[拒絕啟動](docs/deploy.zh-TW.md#少了其中一部分時),不會在沒有資料的情況下跑起來。
 
 ## 文件
 
 | | |
 |---|---|
 | [運作原理](docs/how-it-works.zh-TW.md) | 檢索管線、檢索細節(BM25、斷詞、重排、延遲、相關度門檻)、量測檢索品質、每項功能的細節 |
-| [設定](docs/configuration.zh-TW.md) | 常用的每個設定,以及雲端 profile |
+| [部署 Folio](docs/deploy.zh-TW.md) | Docker 映像檔與 compose 檔、模型端點(Forgeyard、vLLM)、issuer 與 audience 如何和 MCP Gate 對齊、反向代理與 HTTPS、備份、升級 |
+| [設定](docs/configuration.zh-TW.md) | 六個設定檔與 `.env`、常用的每個設定、雲端 profile、從 1.4 升級 |
+| [升級到 1.5](docs/migrate-1.5.zh-TW.md) | 讀取 PDF 與圖片的視覺模型(Forgeyard 上的 Qwen3-VL)或文字層、透過端點的語音轉文字、私有 CA、舊設定會怎樣 |
 | [驗證](docs/auth.zh-TW.md) | 依 MCP Gate 使用者的資料夾歸屬,以及 token 撤銷 feed |
 | [主控台](docs/console.zh-TW.md) | 登入、兩種權限層級、每個頁面、升級或更換 embedding 模型後重新索引 |
 | [API 參考](docs/api.zh-TW.md) | MCP、REST、主控台與健康檢查端點 |
+| [備份與還原](docs/backup.zh-TW.md) | `main.py backup` / `restore`、排程備份、搬到另一台機器、匯出與匯入單一資料夾 |
 | [PostgreSQL 維運](docs/operations-postgres.md) | 連線數預算與資料庫維護(英文) |
+| [監控指標](docs/metrics.zh-TW.md) | Prometheus `/metrics`:量測項目、保護方式、抓取設定與查詢範例 |
 | [開發](docs/development.zh-TW.md) | 架構、檢查、CI 與發布 |
 | [檢索評測](evals/README.md) | 黃金測試集、評測工具與 baseline(英文) |
 
@@ -156,4 +182,14 @@ token。Docker 映像檔與 compose 檔預計在 1.5 推出。
 
 ## 授權
 
-[MIT](LICENSE)
+[MIT](LICENSE)。PDF 頁面以 PDFium(`pypdfium2`,Apache-2.0 / BSD-3-Clause)轉成圖片,
+不使用 AGPL 授權的 PyMuPDF。
+
+### 第三方授權
+
+Folio 本身的程式碼是 MIT。部分選用元件使用其他授權;若要再散布包含它們的安裝或映像,請先確認:
+
+- `--extra local`:`ckip-transformers` 以及它下載的 CKIP 模型是 **GPL-3.0**。改用 `jieba`(MIT)或
+  `bigram` 分詞器即可避開;發布的 Docker 映像不包含它。
+- `--group cuda`:PyTorch 的 CUDA 版本會安裝 NVIDIA 的 CUDA 函式庫,依 NVIDIA 自己的授權條款。
+- Docker 映像另含 PostgreSQL 用戶端工具(PostgreSQL License)與 Debian 套件,各依其授權。

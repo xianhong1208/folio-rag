@@ -1,10 +1,15 @@
-"""Cloud PDF / image parsing: every page is transcribed to Markdown by a vision model and
-the pages are re-assembled into ONE document before chunking.
+"""Vision-model parsing of PDFs and images: every page is transcribed to Markdown by an
+OpenAI-compatible vision model (``rag.parsing.vision``, e.g. Qwen3-VL on Forgeyard) and the
+pages are re-assembled into ONE document before chunking.
+
+Used for every PDF page and every image when a vision model is configured
+(``rag.parsing.pdf: auto``, the default, or ``vision``). Without one, PDFs are read from
+their text layer (pdf_text_layer) and images are refused at upload (``check_image_upload``).
 
 Why one document: parsing each page as its own document resets the heading breadcrumb on
 every page and cuts tables that run across a page break. Here the page outputs are
 stitched into a single Markdown text, parsed once by docling's Markdown backend
-(torch-free), and handed to the same chunker as the local path
+(torch-free), and handed to the same chunker as the text-layer path
 (docling_loader.chunk_docling_document) — so headings continue across pages and
 section breadcrumbs stay intact.
 
@@ -23,12 +28,14 @@ Pipeline
    jitter (Retry-After honoured). 401 / 403 / 404 fail the file at once (every page
    would fail the same way). A page that still fails is marked in the text
    (``on_page_failure: mark``) or fails the file (``fail``); below
-   ``min_success_ratio`` the file fails regardless.
+   ``min_success_ratio`` the file fails regardless. An untrusted TLS certificate fails the
+   file at once too, naming ``rag.parsing.vision.ca_file``; an endpoint that cannot be
+   reached for every page names its URL.
 4. Stitching: continued blocks are glued onto the previous page (a repeated table header
    is dropped), and an invisible page marker is placed after them.
 5. Provenance: after the Markdown parse, marker items set the page number on every
    following item (``prov.page_no``) and are then deleted, so chunk records carry the
-   page a chunk starts on — the same field the local path fills for citations.
+   page a chunk starts on — the same field the text-layer path fills for citations.
 
 The prompt is language-neutral: transcribe in the original language and script.
 """
@@ -46,8 +53,10 @@ from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional, Tuple
 
 from src.log import get_api_logger
+from src.domain.rag import pdf_pages
 from src.domain.rag.usage_budget import BUDGET
 from src.utils.http_retry import RETRYABLE_STATUS, RetryPolicy, compute_delay
+from src.utils.tls import is_certificate_error
 
 logger = get_api_logger()
 
@@ -86,6 +95,10 @@ class CloudParseError(RuntimeError):
     """The file cannot be parsed (refused by a cap, fatal provider error, too many failed pages)."""
 
 
+class ImagesNeedVisionError(ValueError):
+    """An image upload (or an image to index) while no vision model is configured (HTTP 422)."""
+
+
 @dataclass
 class PageResult:
     page_no: int
@@ -94,6 +107,7 @@ class PageResult:
     failed: bool = False
     error: str = ""
     attempts: int = 0
+    unreachable: bool = False  # every attempt failed to connect (or timed out)
 
 
 @dataclass
@@ -121,11 +135,10 @@ class _PageSource:
     def __init__(self, path: str, kind: str, dpi: int):
         self.path, self.kind, self.dpi = path, kind, dpi
         if kind == "pdf":
-            import fitz  # PyMuPDF: page rendering only, no model
-            with fitz.open(path, filetype="pdf") as d:
-                if d.needs_pass:
-                    raise CloudParseError("PDF is password-protected — decrypt it before uploading")
-                self.count = len(d)
+            try:
+                self.count = pdf_pages.page_count(path)  # PDFium: page rendering only, no model
+            except pdf_pages.PdfPasswordError:
+                raise CloudParseError("PDF is password-protected — decrypt it before uploading") from None
         else:
             from PIL import Image
             with Image.open(path) as im:
@@ -133,9 +146,7 @@ class _PageSource:
 
     def render(self, page_no: int) -> bytes:
         if self.kind == "pdf":
-            import fitz
-            with fitz.open(self.path, filetype="pdf") as d:
-                return d[page_no - 1].get_pixmap(dpi=self.dpi).tobytes("png")
+            return pdf_pages.render_png(self.path, page_no, self.dpi)
         from PIL import Image
         with Image.open(self.path) as im:
             if self.count > 1:
@@ -339,7 +350,8 @@ class CloudDocumentParser:
     def _default_client(self):
         from src.domain.rag.llm_client import create_openai_client
         # Retries are done per page here (with the failure policy), not inside the SDK.
-        return create_openai_client(self.vision.model_copy(update={"max_retries": 0}))
+        return create_openai_client(self.vision.model_copy(update={"max_retries": 0}),
+                                    metrics_role="vision")
 
     # -- one page ------------------------------------------------------------
     def _user_text(self, page_no: int, total: int, path: List[str], prev_tail: Optional[str]) -> str:
@@ -403,7 +415,15 @@ class CloudDocumentParser:
                     raise CloudParseError(
                         f"vision model rejected the request (HTTP {status}) — check "
                         "rag.parsing.vision base_url / model / api_key") from e
-                retryable = status in RETRYABLE_STATUS or _is_transport_error(e)
+                if is_certificate_error(e):
+                    # Every page would fail the same way: say what to set, now.
+                    raise CloudParseError(
+                        f"The vision model endpoint {self.vision.base_url} has a TLS certificate this "
+                        "server does not trust: set rag.parsing.vision.ca_file (VISION_CA_FILE) to its "
+                        "CA, e.g. Forgeyard's own CA") from e
+                transport = _is_transport_error(e)
+                retryable = status in RETRYABLE_STATUS or transport
+                result.unreachable = transport and not status
                 last_error = f"HTTP {status}" if status else type(e).__name__
                 if not retryable:
                     break
@@ -508,6 +528,17 @@ class CloudDocumentParser:
 
         failed = [r.page_no for r in results if r.failed]
         ok = total - len(failed)
+        if ok == 0:
+            # Not one page: the endpoint, not the document, is the problem. Say which one.
+            first = next(r.error for r in results if r.failed)
+            name = self.vision.azure_deployment or self.vision.model
+            if all(r.unreachable for r in results):
+                raise CloudParseError(
+                    f"{file_name}: the vision model endpoint {self.vision.base_url} could not be reached "
+                    f"({first}) — check rag.parsing.vision.base_url and that the server is up")
+            raise CloudParseError(
+                f"{file_name}: no page was transcribed — the vision model {name} at {self.vision.base_url} "
+                f"failed every page ({first}); check that the model is deployed and running")
         if ok / total < self.cfg.min_success_ratio or ok == 0:
             raise CloudParseError(
                 f"{file_name}: only {ok}/{total} pages transcribed "
@@ -527,12 +558,41 @@ def _is_transport_error(exc: BaseException) -> bool:
                             httpx.TimeoutException, httpx.TransportError))
 
 
-def is_cloud_parsed(rag_config, file_name: str) -> bool:
-    """Whether ``file_name`` goes to the cloud parser under the current config."""
-    from src.config.roles import parsing_mode
+def uses_vision(rag_config, file_name: str) -> bool:
+    """Whether ``file_name`` is read by the vision model under the current config: every PDF
+    when PDFs go to the vision model (rag.parsing.pdf), every image when one is configured."""
+    from src.config.roles import images_readable, pdf_parsing, vision_model
     ext = Path(file_name).suffix.lower()
     if ext in PDF_EXTENSIONS:
-        return parsing_mode(rag_config, "pdf") == "cloud"
+        return pdf_parsing(rag_config) == "vision" and vision_model(rag_config) is not None
     if ext in IMAGE_EXTENSIONS:
-        return parsing_mode(rag_config, "images") == "cloud"
+        return images_readable(rag_config)
     return False
+
+
+def images_need_vision_message(file_name: str) -> str:
+    from src.config.model import MIGRATION_GUIDE
+    return (f"'{file_name}' is an image, and images can only be read by a vision model: set "
+            "rag.parsing.vision (model and base_url; env VISION_MODEL, VISION_BASE_URL) to an "
+            "OpenAI-compatible vision model, e.g. Qwen3-VL on Forgeyard, then upload it again "
+            f"(see {MIGRATION_GUIDE}).")
+
+
+def image_upload_refusal(file_name: str, rag_config) -> Optional[str]:
+    """Why an upload of ``file_name`` must be refused now, or None (only images are checked:
+    stored without a vision model, one could only fail at indexing)."""
+    from src.config.roles import images_readable
+    if Path(file_name).suffix.lower() not in IMAGE_EXTENSIONS:
+        return None
+    if rag_config is not None and images_readable(rag_config):
+        return None
+    return images_need_vision_message(file_name)
+
+
+def check_image_upload(file_name: str) -> None:
+    """Raise ImagesNeedVisionError for an image while no vision model is configured
+    (reads the live config: a console change applies to the next upload)."""
+    from src.config.config_manager import Config
+    reason = image_upload_refusal(file_name, getattr(Config.get_config_model(), "rag", None))
+    if reason:
+        raise ImagesNeedVisionError(reason)

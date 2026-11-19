@@ -1,0 +1,66 @@
+# Model services for the Docker image. The image copies this file over config/models.yaml;
+# the other five files are the repository's own.
+#
+# profile: cloud — every role is an OpenAI-compatible HTTP endpoint (Forgeyard, vLLM, Ollama,
+# OpenAI, ...) and no model is loaded inside the container: no torch, no GPU. Every endpoint,
+# model name and key comes from the environment (.env with docker compose; see .env.example,
+# "Docker"). Keys must stay ${VAR} references: profile cloud refuses literal keys.
+# For in-process models (profile local / hybrid), run Folio from source (README, Installation).
+rag:
+  profile: cloud
+
+  # Embedding — turns documents and queries into vectors.
+  # ⚠️ Changing the model or the dimension requires a full re-index.
+  embedding:
+    provider: "openai-compatible"
+    model: "${EMBEDDING_MODEL:-BAAI/bge-m3}"
+    dimension: "${EMBEDDING_DIMENSION:-1024}"
+    base_url: "${EMBEDDING_BASE_URL:-http://host.docker.internal:8000/v1}"
+    api_key: "${EMBEDDING_API_KEY:-not-needed}"
+    # e5 models need "query: " / "passage: "; bge-m3 and Qwen3-Embedding need none
+    query_prefix: "${EMBEDDING_QUERY_PREFIX:-}"
+    passage_prefix: "${EMBEDDING_PASSAGE_PREFIX:-}"
+    embed_batch_size: 64
+    max_input_tokens: 512
+
+  # LLM — answers, evaluation and the contextual prefixes written at index time.
+  llm:
+    provider: "openai-compatible"
+    model: "${LLM_MODEL:-Qwen/Qwen3-4B}"
+    base_url: "${LLM_BASE_URL:-http://host.docker.internal:8000/v1}"
+    api_key: "${LLM_API_KEY:-not-needed}"
+
+  # Reranker — reorders retrieval results. api: generic = POST {base_url}/rerank (vLLM,
+  # Forgeyard, Infinity); score = vLLM /v1/score; cohere / jina for those services.
+  # ⚠️ model must match the served name, or results silently keep the original order.
+  rerank:
+    enabled: "${RERANK_ENABLED:-true}"
+    api: "${RERANK_API:-generic}"
+    model: "${RERANK_MODEL:-BAAI/bge-reranker-v2-m3}"
+    base_url: "${RERANK_BASE_URL:-http://host.docker.internal:8000/v1}"
+    api_key: "${RERANK_API_KEY:-not-needed}"
+    top_n: null
+    score_threshold: 0.25
+
+  # PDFs and images: transcribed page by page by a vision model when VISION_BASE_URL and
+  # VISION_MODEL are set (e.g. Qwen3-VL on Forgeyard); otherwise PDFs are read from their
+  # text layer and image uploads are refused. Office, Markdown, HTML and text files need no model.
+  parsing:
+    pdf: auto                                   # auto | vision | text
+    vision:
+      provider: "openai-compatible"
+      model: "${VISION_MODEL:-}"
+      base_url: "${VISION_BASE_URL:-}"
+      api_key: "${VISION_API_KEY:-not-needed}"
+      ca_file: "${VISION_CA_FILE:-}"            # PEM of a private CA (Forgeyard's own); mount it read-only
+
+  # Speech-to-text for audio files: an OpenAI-compatible /audio/transcriptions endpoint.
+  # Off unless ASR_ENABLED=true.
+  asr:
+    enabled: "${ASR_ENABLED:-false}"
+    provider: "openai-compatible"
+    base_url: "${ASR_BASE_URL:-}"
+    api_key: "${ASR_API_KEY:-}"
+    model: "${ASR_MODEL:-}"
+    chinese_conversion: "s2twp"                 # s2twp = Traditional Chinese (Taiwan) | none
+    ca_file: "${ASR_CA_FILE:-}"                 # PEM of a private CA (Forgeyard's own); mount it read-only

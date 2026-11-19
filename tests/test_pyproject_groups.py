@@ -4,10 +4,11 @@
 torch picks its GPU build via a dependency group (cuda / cpu /
 rocm-r714). For a group to work correctly it must appear in all three places at
 once:
-  (1) [dependency-groups]   — declares the torch trio's versions
+  (1) [dependency-groups]   — declares the torch version
   (2) [tool.uv] conflicts   — mutual-exclusion guard (omit it → two torch sets
                               overwrite each other, and uv does not warn)
-  (3) [tool.uv.sources]     — maps torch/torchvision/torchaudio to the right index
+  (3) [tool.uv.sources]     — maps torch to the right index (torchvision / torchaudio left
+                              in 1.5 with docling's in-process models)
 
 The pyproject header states that the conflicts list is the sole guard and uv
 will not warn if a group is missing from it. This test automates that sole
@@ -21,7 +22,7 @@ from pathlib import Path
 
 import pytest
 
-_TORCH_STACK = ("torch", "torchvision", "torchaudio")
+_TORCH_STACK = ("torch",)
 
 
 def _load_pyproject() -> dict:
@@ -97,7 +98,7 @@ def test_conflicts_only_reference_real_groups(pyproject):
 
 @pytest.mark.parametrize("package", _TORCH_STACK)
 def test_every_torch_group_has_source_mapping(pyproject, package):
-    """Every torch group must have an index source mapping for each of the torch/torchvision/torchaudio trio.
+    """Every torch group must have an index source mapping for torch.
 
     A missing source mapping → the package resolves from the default PyPI, where
     ROCm's +rocmX.Y.Z local version is not found → sync fails outright (at least

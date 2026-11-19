@@ -1,10 +1,13 @@
 
-"""Score ASR evaluation: run golden transcripts through any AsrProvider and produce a CER table.
+"""Score ASR evaluation: run golden transcripts through the configured endpoint and produce a CER table.
 
 Usage:
-    uv run --no-sync python scripts/run_asr_eval.py                 # provider from config
-    uv run --no-sync python scripts/run_asr_eval.py --provider openai-compatible
+    uv run --no-sync python scripts/run_asr_eval.py                 # endpoint and model from rag.asr
+    uv run --no-sync python scripts/run_asr_eval.py --model whisper-large-v3-turbo
     uv run --no-sync python scripts/run_asr_eval.py --baseline evals/baselines/asr_xxx.json
+
+The endpoint is rag.asr's OpenAI-compatible one (ASR_BASE_URL / ASR_API_KEY / ASR_MODEL);
+there is no in-process speech-to-text since 1.5.
 
 Material (see evals/README.md):
     evals/asr/audio/<name>.{wav,mp3,m4a,aac,ogg,flac}
@@ -39,9 +42,10 @@ _AUDIO_EXTS = {".wav", ".mp3", ".m4a", ".aac", ".ogg", ".flac"}
 
 def main() -> int:
     ap = argparse.ArgumentParser()
-    ap.add_argument("--provider", help="override rag.asr.provider from config")
+    ap.add_argument("--model", help="override rag.asr.model from config")
     ap.add_argument("--baseline", help="compare against an existing baseline JSON")
-    ap.add_argument("--config", default="config/config.yaml")
+    ap.add_argument("--config-dir", default="config",
+                    help="directory with the six config files (secrets come from .env)")
     args = ap.parse_args()
 
     pairs = []
@@ -58,22 +62,24 @@ def main() -> int:
         print(f"   {GOLDEN_DIR.relative_to(REPO)}/<name>.txt (human-proofread Traditional-Chinese transcript)")
         return 2
 
+    from src.config.dotenv import load_dotenv
+    load_dotenv()
     from src.config.config_manager import Config
-    Config.set_config(args.config)
+    Config.set_config(args.config_dir)
     from src.config.model import AsrConfig
     from src.domain.rag.asr_provider import create_asr_provider
     from src.domain.rag.audio_defense import _filter_whisper_hallucinations
     from evals.metrics import cer, simplified_char_ratio
 
     asr_cfg = getattr(getattr(Config.get_config_model(), "rag", None), "asr", None)
-    if args.provider:
+    if args.model:
         base = asr_cfg.model_dump() if asr_cfg else {}
-        base["provider"] = args.provider
+        base["model"] = args.model
         asr_cfg = AsrConfig(**base)
     provider = create_asr_provider(asr_cfg)
-    provider_name = asr_cfg.provider if asr_cfg else "docling-whisper"
+    provider_name = (asr_cfg.model if asr_cfg and asr_cfg.model else "openai-compatible").replace("/", "_")
     if not provider.available():
-        print(f"provider '{provider_name}' not available (model/endpoint not ready)")
+        print("speech-to-text not available: set rag.asr.base_url (ASR_BASE_URL) and enable rag.asr")
         return 2
 
     rows = []

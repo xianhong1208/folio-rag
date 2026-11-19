@@ -39,13 +39,14 @@ phone.
 
 **1.4.2 (2026-11-13).** Known risks fixed: model key settings can no longer be used to send the server's environment variables elsewhere; a large upload is refused before it fills memory; changing the embedding model marks the files that need re-indexing; searching a folder that was never indexed returns an empty result. Dependencies updated for every open advisory (transformers 5, torch 2.14 for CUDA 13). Advance notice that 1.5 removes the built-in OCR, speech-to-text and the `/v1` media endpoints.
 
+**1.5.0 (2026-11-19).** Install in one command and never lose data: a lightweight Docker image and a compose file with PostgreSQL + pgvector (plus an optional MCP Gate profile) and a deploy guide; `main.py backup` / `restore` with scheduled backups; export and import of one folder, from the CLI and the console; Prometheus metrics at `/metrics`. The built-in OCR, layout and speech models are gone: PDFs and images are read by a vision model over an OpenAI-compatible API (for example Qwen3-VL on [Forgeyard](https://github.com/xianhong1208/forgeyard)), or PDFs from their text layer when no model is set, and audio goes to any OpenAI-compatible transcription endpoint; the `/v1` media endpoints are removed. See [Upgrading to 1.5](docs/migrate-1.5.md).
+
 Details: [CHANGELOG.md](CHANGELOG.md).
 
 ## Next
 
 | Version | What you get |
 |---|---|
-| **1.5: install in one command, never lose data** | **A lightweight Docker image** and a compose file with PostgreSQL + pgvector, plus an optional MCP Gate profile. The built-in OCR and speech models leave the image: scanned PDFs and images are read by a **vision model over an OpenAI-compatible API** (for example Qwen3-VL served by [Forgeyard](https://github.com/xianhong1208/forgeyard)), and audio goes to Forgeyard's transcription. The `/v1` OCR and speech endpoints go too; a **migration guide** shows how to point Folio at Forgeyard. **A deploy guide.** **`folio backup` / `folio restore`** and scheduled backups. **Export and import one folder.** Prometheus metrics at **`/metrics`**. |
 | **1.6: find the document** | **Metadata and tags** on documents, with filters in REST, the console and MCP. **Results by document**, not only by passage. **Search across all your folders.** A **Library** page. An MCP **`find`** mode that returns documents. |
 | **1.7: better answers** | **Query rewriting and multi-query**, with HyDE and translation as opt-ins. Each one is kept only if the golden set improves. **Figures** described by a vision model, so they can be found. **Citations open the PDF** at the highlighted passage. **Thumbs up / down** on answers. |
 | **1.8: folders that stay current** | **Sources** for a folder: a URL or sitemap, a Git repository, a directory on the server, S3 or WebDAV. They **re-sync on a schedule**, only what changed, and files removed at the source are removed from the folder. |
@@ -110,8 +111,6 @@ Kept here so they are not lost; none of them is planned.
   `auth.revocation` a revoked token keeps working until it expires; with it, until the next poll of
   MCP Gate (30 s by default). With `fail_mode: open`, revocations made while MCP Gate is unreachable
   apply once it is reachable again.
-- **The `/v1` media endpoints have no authentication,** by decision; keep them on a trusted network.
-  They are removed in 1.5.
 - **The console is English only,** by decision. (A full English + 繁體中文 version was built and then
   removed; it is in git history at `5103cbd` / `53aa71a`, reverted by `be480d6`.)
 - **The server aborts at shutdown.** On every restart the old process dies with SIGABRT from a

@@ -7,14 +7,12 @@ const LLM_PROVIDERS = ['', 'openai', 'openai-compatible', 'vllm', 'ollama', 'azu
 
 export const META = {
   'rag.embedding': { title: 'Embedding', icon: 'layers', probe: 'embedding', desc: 'Vectorization for documents and queries', warn: 'Changing any field makes existing folder vectors incompatible with the new model — those folders must be re-indexed. New uploads use the new settings immediately.' },
-  'rag.llm': { title: 'LLM', icon: 'spark', probe: 'llm', desc: 'Default model for every LLM role (contextual prefixes, answers, eval)' },
-  'rag.contextual_llm': { title: 'Contextual-Prefix LLM', icon: 'spark', probe: 'contextual_llm', desc: 'Override for contextual retrieval prefixes — usually a small, cheap model' },
-  'rag.answer_llm': { title: 'Answer LLM', icon: 'message', probe: 'answer_llm', desc: 'Override for answers in the Search Playground' },
-  'rag.eval_llm': { title: 'Eval LLM', icon: 'flask', probe: 'eval_llm', desc: 'Override for evaluation question generation and judging' },
+  'rag.llm': { title: 'LLM', icon: 'spark', probe: 'llm', desc: 'Answers, evaluation, and contextual prefixes unless overridden below' },
+  'rag.contextual_llm': { title: 'Contextual-Prefix LLM', icon: 'spark', probe: 'contextual_llm', desc: 'Optional. Writes only one short sentence of context per chunk, so a small, fast model is enough — and it runs once per chunk, which saves a lot of indexing time and cost' },
   'rag.contextual_retrieval': { title: 'Contextual Retrieval', icon: 'list', desc: 'LLM-generated context prefix per chunk at index time' },
   'rag.rerank': { title: 'Reranker', icon: 'sort', probe: 'rerank', desc: 'Cross-encoder re-scoring of retrieval results' },
-  'rag.parsing': { title: 'Document Parsing', icon: 'scan', probe: 'vision', desc: 'Where PDFs and images are parsed: local docling models or a cloud vision model' },
-  'rag.asr': { title: 'Speech-to-Text', icon: 'mic', probe: 'asr', desc: 'Transcription source for audio indexing and /v1/transcriptions' },
+  'rag.parsing': { title: 'Document Parsing', icon: 'scan', probe: 'vision', desc: 'How PDFs and images are read. With a vision model (an OpenAI-compatible chat model that accepts images, e.g. Qwen3-VL on Forgeyard) every PDF page and image is transcribed by it. Without one, PDFs are read from their text layer and image uploads are refused.' },
+  'rag.asr': { title: 'Speech-to-Text', icon: 'mic', probe: 'asr', desc: 'An OpenAI-compatible /audio/transcriptions endpoint (e.g. Forgeyard, speaches, OpenAI) that transcribes uploaded audio. Without an endpoint, audio uploads are refused.' },
   'rag.retrieval': { title: 'Retrieval', icon: 'sliders', desc: 'Hybrid search and auto-merging behavior' },
 }
 
@@ -43,8 +41,6 @@ export const FIELDS = {
   'rag.llm.timeout': { label: 'Timeout (s)', type: 'number' },
   'rag.llm.max_retries': { label: 'Retries', type: 'number', hint: 'On 429 / 5xx / timeouts, honoring Retry-After' },
   ...roleLlm('contextual_llm'),
-  ...roleLlm('answer_llm'),
-  ...roleLlm('eval_llm'),
   'rag.contextual_retrieval.enabled': { label: 'Enabled', type: 'bool', hint: 'Disabling speeds up indexing significantly at the cost of retrieval quality' },
   'rag.contextual_retrieval.max_context_length': { label: 'Max Prefix Length (chars)', type: 'number' },
   'rag.contextual_retrieval.max_concurrent': { label: 'Concurrent LLM Requests', type: 'number' },
@@ -67,22 +63,21 @@ export const FIELDS = {
   'rag.rerank.document_template': { label: 'Document Template', type: 'textarea' },
   'rag.rerank.gap_threshold': { label: 'Knowledge Gap Threshold', type: 'number', step: 0.05, range: [0, 1], hint: 'Analytics lists a question as a knowledge gap when its latest search returned nothing or its best rerank score is below this.' },
   'rag.rerank.auto_template': { label: 'Auto Chat Template', type: 'bool', hint: 'Apply the official Qwen chat prompt for mxbai-rerank-v2 when the templates above are default. Turn off if the rerank server already applies a chat template.' },
-  'rag.parsing.pdf': { label: 'PDF Parsing', type: 'select', options: ['', 'local', 'cloud'], nullable: true, hint: 'Empty = follow the profile (cloud profile → cloud)' },
-  'rag.parsing.images': { label: 'Image Parsing', type: 'select', options: ['', 'local', 'cloud'], nullable: true, hint: 'Empty = follow the profile' },
+  'rag.parsing.pdf': { label: 'PDF Parsing', type: 'select', options: ['auto', 'vision', 'text'], hint: 'auto = the vision model when one is set, else the text layer · text = never send PDFs to the model' },
   'rag.parsing.vision.provider': { label: 'Vision Provider', type: 'select', options: ['openai-compatible', 'openai', 'vllm', 'ollama', 'azure'] },
-  'rag.parsing.vision.model': { label: 'Vision Model', type: 'text', hint: 'A chat model that accepts images, e.g. gpt-4o-mini / Qwen2.5-VL' },
-  'rag.parsing.vision.base_url': { label: 'Vision Endpoint', type: 'text' },
+  'rag.parsing.vision.model': { label: 'Vision Model', type: 'text', hint: 'A chat model that accepts images, e.g. qwen3-vl-8b (Forgeyard) / gpt-4o-mini. Empty = text layer only' },
+  'rag.parsing.vision.base_url': { label: 'Vision Endpoint', type: 'text', hint: 'OpenAI-compatible base URL (usually ends in /v1). A private CA goes in rag.parsing.vision.ca_file (VISION_CA_FILE)' },
   'rag.parsing.vision.api_key': { label: 'API Key', type: 'secret' },
   'rag.parsing.max_concurrency': { label: 'Pages in Flight', type: 'number', hint: 'Process-wide; pages of one file run in this many ordered blocks' },
   'rag.parsing.max_pages_per_file': { label: 'Max Pages per File', type: 'number', hint: '0 = unlimited; larger files are refused before any call' },
   'rag.parsing.max_pages_per_day': { label: 'Max Pages per Day', type: 'number', hint: '0 = unlimited; process-wide, resets at UTC midnight' },
   'rag.parsing.on_page_failure': { label: 'On Page Failure', type: 'select', options: ['mark', 'fail'], hint: 'mark = keep the file and mark the page; fail = fail the whole file' },
-  'rag.asr.enabled': { label: 'Enable Audio Transcription', type: 'bool' },
-  'rag.asr.provider': { label: 'Provider', type: 'select', options: ['fireredasr', 'docling-whisper', 'openai-compatible'], hint: 'fireredasr = local Traditional Chinese (requires weights); openai-compatible = cloud / self-hosted' },
-  'rag.asr.base_url': { label: 'Cloud Endpoint', type: 'text', hint: 'openai-compatible only' },
+  'rag.asr.enabled': { label: 'Enable Audio Transcription', type: 'bool', hint: 'Off = audio uploads are refused' },
+  'rag.asr.base_url': { label: 'Endpoint', type: 'text', hint: 'OpenAI-compatible base URL (usually ends in /v1), e.g. https://forgeyard.example:7860/v1' },
   'rag.asr.api_key': { label: 'API Key', type: 'secret' },
-  'rag.asr.model': { label: 'Cloud Model', type: 'text', hint: 'openai-compatible only, e.g. whisper-1' },
+  'rag.asr.model': { label: 'Model', type: 'text', hint: 'e.g. whisper-large-v3-turbo' },
   'rag.asr.language': { label: 'Language Hint', type: 'text', nullable: true, hint: 'ISO-639-1, e.g. zh; empty = auto-detect' },
+  'rag.asr.chinese_conversion': { label: 'Chinese Script', type: 'select', options: ['s2twp', 'none'], hint: 's2twp = convert to Traditional Chinese with Taiwan phrasing (whisper writes Simplified); none = keep what the endpoint returns. English is never changed.' },
   'rag.asr.segment_seconds': { label: 'Segment Length (s)', type: 'number', hint: 'Long audio is uploaded in pieces cut at silences (max 780 s ≈ 25 MB)' },
   'rag.asr.timeout': { label: 'Timeout per Segment (s)', type: 'number' },
   'rag.asr.max_retries': { label: 'Retries', type: 'number', hint: 'Also re-asks on empty or runaway transcripts' },
@@ -128,11 +123,20 @@ export function keyIndicator(entry) {
   return { cls: 'warn', text: 'Set · literal value' }
 }
 
-// Where a role runs, for the roles overview.
+// Where a role runs, for the roles overview. Without a vision model PDFs still work: they are
+// read from their text layer, so that role says so instead of "Off".
 export function runsLabel(role) {
+  if (role && role.role === 'vision' && role.runs === 'off') return { cls: 'mute', text: 'Text layer only' }
   if (!role || role.runs === 'off') return { cls: 'mute', text: 'Off' }
   if (role.runs === 'in-process') return { cls: 'run', text: 'In-process' }
   return { cls: 'ok', text: 'Endpoint' }
+}
+
+// How PDFs and images are read, for the Overview (GET /api/admin/overview → models.parsing).
+export function parsingLabel(parsing) {
+  if (!parsing || !parsing.model) return { text: 'Text layer only', state: 'unset', title: 'PDFs are read from their text layer; image uploads are refused (no rag.parsing.vision)' }
+  const pdf = parsing.pdf === 'vision' ? 'PDFs + images' : 'images (PDFs: text layer)'
+  return { text: `${parsing.model} · ${pdf}`, state: 'ready', title: parsing.summary || '' }
 }
 
 // Render a probe result ({status, detail, latency_ms}) as a status line.

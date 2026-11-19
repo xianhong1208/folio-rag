@@ -5,8 +5,25 @@ All Pydantic config models are collected here for reuse across the project.
 """
 
 import logging as _logging
-from typing import List, Literal, Optional, Union
-from pydantic import BaseModel, ConfigDict, Field, PrivateAttr, field_validator, model_validator
+from typing import Annotated, Any, List, Literal, Optional, Union
+from pydantic import (BaseModel, BeforeValidator, ConfigDict, Field, PrivateAttr, field_validator,
+                      model_validator)
+
+# Module wiring lives in code; re-exported here for existing imports.
+from src.config.modules import MODULES, McpToolsConfig, ModuleConfig, RouterConfig
+
+
+def _blank_to_none(value: Any) -> Any:
+    """An empty value means "not set". config/*.yaml reads endpoints and keys from
+    ``${VAR:-}`` references, which expand to "" when the variable is unset."""
+    if isinstance(value, str) and not value.strip():
+        return None
+    return value
+
+
+# Optional values that an unset ${VAR:-} reference leaves empty.
+OptStr = Annotated[Optional[str], BeforeValidator(_blank_to_none)]
+OptInt = Annotated[Optional[int], BeforeValidator(_blank_to_none)]
 
 # Secrets are excluded from repr()/str() (repr=False), so logging a whole config
 # object, or an exception message that embeds one, can never print them.
@@ -32,6 +49,25 @@ class RetentionConfig(BaseModel):
     interval_hours: float = Field(24, gt=0, le=24 * 7)
 
 
+class BackupConfig(BaseModel):
+    """Backups made by ``main.py backup`` and by the server's backup schedule.
+
+    ``dir`` is where archives are written (relative = next to config/ and storage/).
+    ``enabled`` turns the server's own schedule on: one archive every
+    ``interval_hours``, keeping the newest ``keep`` scheduled archives. ``pg_bin_dir`` is
+    where ``pg_dump`` / ``pg_restore`` live when they are not on PATH (empty = PATH).
+    ``folder_import_max_mb`` caps a folder archive uploaded in the console.
+    """
+    dir: str = "backups"
+    enabled: bool = False
+    interval_hours: float = Field(24, ge=1, le=24 * 31)
+    keep: int = Field(7, ge=1, le=1000)
+    pg_bin_dir: OptStr = None
+    # Largest folder archive the console accepts for an import (the upload is streamed
+    # to a temporary file and refused as soon as it passes this).
+    folder_import_max_mb: int = Field(2048, ge=1, le=1024 * 1024)
+
+
 class DatabaseConfig(BaseModel):
     """Database configuration."""
     url: str = Field(repr=False)  # usually embeds the password
@@ -41,7 +77,7 @@ class DatabaseConfig(BaseModel):
     pool_timeout: int
     pool_recycle: int
     host: Optional[str] = None
-    port: Optional[int] = None
+    port: OptInt = None  # ${DATABASE_PORT:-} — empty = the URL's own port
     database: Optional[str] = None
     user: Optional[str] = None
     password: Optional[str] = Field(None, repr=False)
@@ -53,6 +89,7 @@ class DatabaseConfig(BaseModel):
     # Max PGVectorStore objects kept in the LRU cache (least recently used evicted).
     vector_store_cache_size: int = Field(64, ge=1, le=10000)
     retention: RetentionConfig = Field(default_factory=RetentionConfig)
+    backup: BackupConfig = Field(default_factory=BackupConfig)
 
 
 class DynamicToolsConfig(BaseModel):
@@ -94,7 +131,7 @@ class RevocationConfig(BaseModel):
     """
     enabled: bool = False
     client_id: Optional[str] = None
-    # Must be an ${ENV_VAR} reference; a literal secret in config.yaml is refused at startup.
+    # Must be an ${ENV_VAR} reference; a literal secret in config/auth.yaml is refused at startup.
     client_secret: Optional[str] = Field(None, repr=False)
     poll_interval_sec: float = Field(30, ge=5, le=3600)
     # "open": keep accepting tokens when the feed is unreachable (logged loudly);
@@ -116,6 +153,10 @@ class AuthConfig(BaseModel):
 
     # -- MCP Gate (OAuth 2.1 authorization server) --
     issuer: Optional[str] = None  # MCP Gate base URL (RS256 JWKS issuer); required when enabled
+    # Where this server reaches MCP Gate when that differs from `issuer` (Docker Compose: the
+    # service name, http://mcp-gate:4568). The JWKS, the revocation feed and the discovery
+    # documents are fetched from it; tokens must still carry iss == issuer. Empty = issuer.
+    internal_url: OptStr = None
     audience: Optional[str] = None  # Resource id; empty -> defaults to <server base>/mcp
     required_scopes: List[str] = []  # Scopes every token must carry (empty = none required)
 
@@ -142,6 +183,17 @@ class LoggingConfig(BaseModel):
     file: Optional[str]
     max_size: str
     backup_count: int
+
+
+class MetricsConfig(BaseModel):
+    """``GET /metrics`` in the Prometheus text format (docs/metrics.md).
+
+    On by default. ``token`` (``METRICS_TOKEN`` in .env) makes the endpoint require
+    ``Authorization: Bearer <token>`` from every client; without one only a direct
+    loopback client (same host, no proxy forwarding headers) may scrape.
+    """
+    enabled: bool = True
+    token: OptStr = Field(None, repr=False)
 
 
 # Folio defaults for the app fields whose pre-rename defaults are upgraded on load.
@@ -186,7 +238,7 @@ class AppConfig(BaseModel):
     def _upgrade_pre_rename_defaults(cls, data, handler):
         """Treat the values shipped before the rename to Folio as "not set".
 
-        A config.yaml copied from the old template still says ``tool_prefix:
+        A config copied from the old template still says ``tool_prefix:
         "Agentic"`` and ``name: "Agentic RAG"``. Those were defaults, not a
         choice, so they load as the Folio defaults; any other value is kept.
         """
@@ -208,31 +260,19 @@ class AppConfig(BaseModel):
         return list(self._renamed_defaults)
 
 
-class RouterConfig(BaseModel):
-    """API router configuration."""
-    module: str
-    router_name: str
-    prefix: str
-
-
-class McpToolsConfig(BaseModel):
-    """MCP tools configuration."""
-    module: str
-    function_name: str
-
-
-class ModuleConfig(BaseModel):
-    """Module configuration."""
-    api_router: Optional[RouterConfig]
-    mcp_tools: Optional[McpToolsConfig]
-    description: str
-
-
 class ModulesConfig(BaseModel):
-    """Top-level modules configuration."""
-    model_config = ConfigDict(extra="allow")
+    """``modules`` in config/mcp.yaml: only the list of enabled modules."""
+    model_config = ConfigDict(extra="forbid")
 
     enabled: List[str]
+
+    @field_validator("enabled")
+    @classmethod
+    def _known_modules(cls, v: List[str]) -> List[str]:
+        unknown = [m for m in v if m not in MODULES]
+        if unknown:
+            raise ValueError(f"unknown module(s) {unknown}; known modules: {sorted(MODULES)}")
+        return v
 
 
 class RAGEmbeddingConfig(BaseModel):
@@ -241,11 +281,11 @@ class RAGEmbeddingConfig(BaseModel):
     provider: str
     model: str
     dimension: int
-    api_key: Optional[str] = Field(None, repr=False)  # Prefer "${ENV_VAR}"; literal keys are rejected in profile: cloud
+    api_key: OptStr = Field(None, repr=False)  # Prefer "${ENV_VAR}"; literal keys are rejected in profile: cloud
     api_key_env: Optional[str] = None  # Environment variable name for API key
     # OpenAI-compatible endpoint (honoured by every HTTP provider, including `openai`);
     # also used as azure_endpoint for the Azure provider.
-    base_url: Optional[str] = None
+    base_url: OptStr = None
     api_version: Optional[str] = None  # Azure API version (e.g., "2024-02-01")
     azure_deployment: Optional[str] = None  # Azure deployment name
     # e5-family needs "query: "/"passage: " prefixes; empty (default) for bge-family.
@@ -305,7 +345,8 @@ class RAGRetrievalConfig(BaseModel):
     # bigram (no dependency). Unset = the profile's default: ckip, or bigram under
     # profile: cloud (which loads no in-process model; explicit ckip is rejected there).
     # Changing it flags existing folders for Rebuild FTS (no re-embedding needed).
-    segmenter: Optional[Literal["ckip", "jieba", "bigram"]] = None
+    # An empty value (FOLIO_SEGMENTER unset in config/retrieval.yaml) means unset.
+    segmenter: Annotated[Optional[Literal["ckip", "jieba", "bigram"]], BeforeValidator(_blank_to_none)] = None
     # Device for the CKIP segmenter: cpu | cuda | cuda:N | auto (cuda:0 when available).
     ckip_device: str = "cpu"
     # "rrf" = Reciprocal Rank Fusion (BM25 affects ordering); "concat" = llama_index native
@@ -345,16 +386,14 @@ class RAGVectorStoreConfig(BaseModel):
 
 
 class RAGLLMConfig(BaseModel):
-    """Default LLM for every LLM role (contextual prefixes, answers, eval question generation).
-
-    Each role can override any field through ``rag.contextual_llm`` / ``rag.answer_llm`` /
-    ``rag.eval_llm`` (see LLMRoleConfig); unset fields inherit from here.
+    """The LLM: answers, evaluation, and contextual prefixes unless ``rag.contextual_llm``
+    overrides it (see LLMRoleConfig; unset fields there inherit from here).
     """
     # openai | openai-compatible | vllm | ollama (all OpenAI-compatible; base_url honoured) | azure
     provider: str = "azure"
     model: str = "gpt-4o-mini"
-    api_key: Optional[str] = Field(None, repr=False)
-    base_url: Optional[str] = None  # OpenAI-compatible endpoint (Azure: the resource endpoint)
+    api_key: OptStr = Field(None, repr=False)
+    base_url: OptStr = None  # OpenAI-compatible endpoint (Azure: the resource endpoint)
     api_version: Optional[str] = "2024-12-01-preview"
     azure_deployment: Optional[str] = None
     timeout: float = Field(120.0, gt=0)  # per-request timeout (seconds)
@@ -362,11 +401,12 @@ class RAGLLMConfig(BaseModel):
 
 
 class LLMRoleConfig(BaseModel):
-    """Per-role LLM override. Every field is optional; unset fields inherit from ``rag.llm``."""
-    provider: Optional[str] = None
-    model: Optional[str] = None
-    api_key: Optional[str] = Field(None, repr=False)
-    base_url: Optional[str] = None
+    """Per-role LLM override (``rag.contextual_llm``). Every field is optional; unset
+    fields inherit from ``rag.llm``."""
+    provider: OptStr = None
+    model: OptStr = None
+    api_key: OptStr = Field(None, repr=False)
+    base_url: OptStr = None
     api_version: Optional[str] = None
     azure_deployment: Optional[str] = None
     timeout: Optional[float] = Field(None, gt=0)
@@ -397,7 +437,7 @@ class RerankConfig(BaseModel):
     enabled: bool = False
     model: str = "BAAI/bge-reranker-v2-m3"
     base_url: str = "http://localhost:8787"
-    api_key: Optional[str] = Field(None, repr=False)
+    api_key: OptStr = Field(None, repr=False)
     # HTTP API style:
     #   score   — vLLM POST /v1/score {text_1, text_2}            (default; previous behaviour)
     #   cohere  — Cohere POST /v1/rerank {query, documents}        → results[{index, relevance_score}]
@@ -426,69 +466,119 @@ class RerankConfig(BaseModel):
     gap_threshold: float = 0.5
 
 
-class DoclingConfig(BaseModel):
-    """Docling document-parsing configuration."""
-    device: str = "cpu"  # "cpu", "cuda", "cuda:0", "cuda:4", etc.
-    ocr_enabled: bool = True  # whether to enable OCR (needed for scanned PDFs)
-    # OCR model tier (PP-OCRv6): tiny / small / medium (medium most accurate, slower).
-    # Weights at assets/docling_models/RapidOcr/torch/PP-OCRv6/{det,rec}/...; missing files fail at load.
-    ocr_model_scale: str = "small"
-    hf_offline: bool = False  # offline-deployment switch: True -> set HF_HUB_OFFLINE=1, and fail startup if a local model/tokenizer isn't found under assets/
-    compile_models: bool = False  # torch.compile model optimization (faster inference but ~120s slower startup; suits rarely-restarted environments)
+# Folio 1.5 runs no speech-to-text, OCR or layout model itself; the guide says how to point it
+# at OpenAI-compatible endpoints (e.g. Forgeyard) instead.
+MIGRATION_GUIDE = "docs/migrate-1.5.md"
+ASR_MIGRATION_GUIDE = MIGRATION_GUIDE
+REMOVED_ASR_PROVIDERS = ("docling-whisper", "fireredasr")
+
+
+def removed_asr_provider_message(provider: str) -> str:
+    return (f"rag.asr.provider {provider!r} was removed in Folio 1.5: speech-to-text no longer runs "
+            "inside Folio. Set rag.asr.provider to openai-compatible with base_url (env "
+            "ASR_BASE_URL), api_key and model pointing at an OpenAI-compatible transcription "
+            f"endpoint such as Forgeyard's. See {ASR_MIGRATION_GUIDE}.")
 
 
 class AsrConfig(BaseModel):
-    """Audio-transcription (ASR) source selection.
+    """Speech-to-text: an OpenAI-compatible ``POST {base_url}/audio/transcriptions`` endpoint.
 
-    Only the minimal field set is exposed (every config field is a permanent maintenance surface);
-    trimming/hallucination filtering stays always-on in code (audio_defense). provider maps to the
-    factory in src/domain/rag/asr_provider.py.
+    Folio 1.5 runs no speech-to-text model itself (docs/migrate-1.5.md). Without a base_url the
+    service starts and audio uploads are refused with a message saying what to set.
+    Trimming/hallucination filtering stays always-on in code (audio_defense).
     """
-    enabled: bool = True                    # False = don't transcribe audio (even if the model is present)
-    # docling-whisper (local) | openai-compatible (cloud/self-hosted HTTP;
-    # compatible with OpenAI / Groq / vLLM whisper / faster-whisper-server) |
-    # fireredasr (local FireRedASR-AED-L, Traditional-Chinese output; weights see fireredasr_provider.py)
-    provider: str = "docling-whisper"
-    # ---- Cloud (openai-compatible) only: POST {base_url}/audio/transcriptions ----
-    base_url: Optional[str] = None          # e.g. http://host:8000/v1
-    api_key: Optional[str] = Field(None, repr=False)
-    model: Optional[str] = None             # cloud model name, e.g. whisper-1
+    enabled: bool = True                    # False = don't transcribe audio (audio uploads are refused)
+    # The only provider. The in-process ones (docling-whisper, fireredasr) were removed in 1.5
+    # and are refused here, so an old configuration stops the start instead of losing audio.
+    provider: str = "openai-compatible"
+    base_url: OptStr = None                 # e.g. https://forgeyard.example:7860/v1
+    api_key: OptStr = Field(None, repr=False)
+    model: OptStr = None                    # e.g. whisper-large-v3-turbo
     language: Optional[str] = None          # ISO-639-1 hint (e.g. "zh"); empty = auto-detect
+    # Chinese script of the transcript: s2twp = Simplified -> Traditional with Taiwan phrasing
+    # (whisper writes Simplified Chinese); none = keep what the endpoint returns.
+    chinese_conversion: str = "s2twp"
+    # Extra CA certificate (PEM) trusted for base_url, for a server with its own CA such as
+    # Forgeyard's. Added to the default trust store; SSL_CERT_FILE replaces it instead.
+    ca_file: OptStr = None
     # Long audio is resampled to 16 kHz mono and uploaded in segments cut at silences, so
     # no single request hits the provider's upload limit (OpenAI: 25 MB ≈ 13 min of 16k pcm).
     segment_seconds: float = Field(600.0, ge=30.0, le=780.0)
     timeout: float = Field(300.0, gt=0)     # per-segment request timeout (seconds)
     max_retries: int = Field(3, ge=0, le=10)  # 429 / 5xx / timeout / empty-or-runaway retries
 
+    @field_validator("provider", mode="before")
+    @classmethod
+    def _only_openai_compatible(cls, v):
+        name = (str(v).strip().lower() if v is not None else "openai-compatible") or "openai-compatible"
+        if name in REMOVED_ASR_PROVIDERS:
+            raise ValueError(removed_asr_provider_message(name))
+        if name != "openai-compatible":
+            raise ValueError(f"Unknown rag.asr.provider {v!r}: the only provider is openai-compatible")
+        return name
+
+    @field_validator("chinese_conversion", mode="before")
+    @classmethod
+    def _known_conversion(cls, v):
+        name = (str(v).strip().lower() if v is not None else "none") or "none"
+        if name not in ("s2twp", "none"):
+            raise ValueError(f"rag.asr.chinese_conversion {v!r}: use s2twp or none")
+        return name
+
 
 class VisionModelConfig(BaseModel):
-    """Vision-capable chat model used to transcribe PDF pages / images (cloud parsing).
+    """Vision-capable chat model that reads PDF pages and images (rag.parsing).
 
     Called through the OpenAI-compatible ``POST {base_url}/chat/completions`` with an
     ``image_url`` data-URI part; ``azure`` uses the Azure OpenAI client instead.
     """
     provider: str = "openai-compatible"  # openai | openai-compatible | vllm | ollama | azure
-    model: Optional[str] = None
-    base_url: Optional[str] = None
-    api_key: Optional[str] = Field(None, repr=False)
+    model: OptStr = None
+    base_url: OptStr = None
+    api_key: OptStr = Field(None, repr=False)
     api_version: Optional[str] = None
     azure_deployment: Optional[str] = None
+    # Extra CA certificate (PEM) trusted for base_url, for a server with its own CA such as
+    # Forgeyard's. Added to the default trust store; SSL_CERT_FILE replaces it instead.
+    ca_file: OptStr = None
     timeout: float = Field(120.0, gt=0)
     max_retries: int = Field(3, ge=0, le=10)
     max_tokens: int = Field(4096, ge=256)
 
+    def configured(self) -> bool:
+        """A model name and somewhere to send it: base_url, or the provider's own default
+        endpoint (openai)."""
+        if not (self.model or self.azure_deployment):
+            return False
+        return bool(self.base_url) or (self.provider or "").strip().lower() == "openai"
+
+
+# rag.parsing.pdf values: auto = the vision model when rag.parsing.vision is configured,
+# else the text layer; vision = always the vision model (refused without one); text = always
+# the text layer, even with a vision model configured.
+PDF_PARSING_MODES = ("auto", "vision", "text")
+# Values and keys removed in 1.5 (the in-process docling layout / TableFormer / OCR models).
+REMOVED_PDF_MODES = ("local", "cloud")
+
+
+def removed_parsing_message(what: str) -> str:
+    return (f"{what} was removed in Folio 1.5: PDFs and images are no longer parsed by in-process "
+            "docling models (layout, TableFormer, OCR). Use rag.parsing.pdf: auto | vision | text — "
+            "auto reads every page with rag.parsing.vision (an OpenAI-compatible vision model such "
+            "as Qwen3-VL on Forgeyard) when it is configured, and the PDF's text layer otherwise; "
+            f"images need rag.parsing.vision. See {MIGRATION_GUIDE}.")
+
 
 class ParsingConfig(BaseModel):
-    """Where PDFs and images are parsed.
+    """How PDFs and images are read.
 
-    ``local`` = in-process docling (layout / TableFormer / OCR models); ``cloud`` = every
-    page is rendered and transcribed to Markdown by ``vision``. Unset follows the profile
-    (``cloud`` profile → cloud, otherwise local).
+    With ``vision`` configured, every PDF page and every image is transcribed to Markdown by
+    that model. Without it, PDFs are read from their text layer (a page with no text layer
+    becomes a visible marker) and images are refused at upload. ``pdf`` can force either way.
     """
-    pdf: Optional[Literal["local", "cloud"]] = None
-    images: Optional[Literal["local", "cloud"]] = None
+    pdf: Literal["auto", "vision", "text"] = "auto"
     vision: Optional[VisionModelConfig] = None
-    dpi: int = Field(150, ge=72, le=300)  # page render resolution sent to the vision model
+    dpi: int = Field(200, ge=72, le=300)  # page render resolution sent to the vision model (A4 at 200 ≈ 3.9 MP)
     max_concurrency: int = Field(4, ge=1, le=32)  # pages in flight per file
     # Trailing characters of the previous page passed with each page, so headings, lists
     # and tables that continue across a page break are recognised as continuations.
@@ -500,6 +590,23 @@ class ParsingConfig(BaseModel):
     on_page_failure: Literal["mark", "fail"] = "mark"
     min_success_ratio: float = Field(0.5, ge=0.0, le=1.0)
     prompt: Optional[str] = None  # override the built-in language-neutral transcription prompt
+
+    @model_validator(mode="before")
+    @classmethod
+    def _refuse_removed_keys(cls, data):
+        if isinstance(data, dict) and "images" in data:
+            raise ValueError(removed_parsing_message(f"rag.parsing.images ({data['images']!r})"))
+        return data
+
+    @field_validator("pdf", mode="before")
+    @classmethod
+    def _known_pdf_mode(cls, v):
+        name = (str(v).strip().lower() if v is not None else "auto") or "auto"
+        if name in REMOVED_PDF_MODES:
+            raise ValueError(removed_parsing_message(f"rag.parsing.pdf: {name}"))
+        if name not in PDF_PARSING_MODES:
+            raise ValueError(f"rag.parsing.pdf {v!r}: use auto, vision or text")
+        return name
 
 
 # Upper bound for rag.indexing.max_concurrent_jobs (and FOLIO_INDEXING_CONCURRENCY).
@@ -557,22 +664,32 @@ class RAGConfig(BaseModel):
     retrieval: RAGRetrievalConfig
     vector_store: RAGVectorStoreConfig
     llm: Optional[RAGLLMConfig] = None
-    # Per-role LLM overrides (unset fields inherit from `llm`)
+    # Optional override for contextual prefixes only (unset fields inherit from `llm`).
+    # It writes one short sentence of context per chunk, so a small, fast model is enough.
     contextual_llm: Optional[LLMRoleConfig] = None
-    answer_llm: Optional[LLMRoleConfig] = None
-    eval_llm: Optional[LLMRoleConfig] = None
     contextual_retrieval: Optional[ContextualRetrievalConfig] = None
     rerank: Optional[RerankConfig] = None
-    docling: Optional[DoclingConfig] = None
     parsing: Optional[ParsingConfig] = None
     asr: Optional[AsrConfig] = None
     indexing: Optional[IndexingConfig] = None
 
+    @model_validator(mode="before")
+    @classmethod
+    def _refuse_docling_section(cls, data):
+        """rag.docling configured the in-process PDF/image models removed in 1.5. An old
+        section stops the start rather than being ignored: its owner expects OCR."""
+        if isinstance(data, dict) and data.get("docling") is not None:
+            keys = ", ".join(sorted(data["docling"])) if isinstance(data["docling"], dict) else ""
+            raise ValueError(removed_parsing_message(
+                f"rag.docling{f' ({keys})' if keys else ''}") + " Delete the rag.docling section "
+                "(for hf_offline, set HF_HUB_OFFLINE=1 in the environment instead).")
+        return data
+
     @model_validator(mode="after")
     def _apply_profile_defaults(self) -> "RAGConfig":
         """Profile defaults that need no validation: a cloud deployment without an `asr`
-        section must not fall back to local Whisper, so speech-to-text is off until an
-        OpenAI-compatible endpoint is configured."""
+        section has speech-to-text off until an OpenAI-compatible endpoint is configured
+        (other profiles leave it unconfigured: audio uploads are refused either way)."""
         if self.profile == "cloud" and self.asr is None:
             self.asr = AsrConfig(enabled=False, provider="openai-compatible")
         return self
@@ -586,16 +703,19 @@ class ConfigModel(BaseModel):
     logging: LoggingConfig
     app: AppConfig
     modules: ModulesConfig
+    metrics: MetricsConfig = Field(default_factory=MetricsConfig)
     rag: Optional[RAGConfig] = None
 
 
 __all__ = [
     "ServerConfig",
+    "BackupConfig",
     "DatabaseConfig",
     "DynamicToolsConfig",
     "ConsoleAuthConfig",
     "AuthConfig",
     "LoggingConfig",
+    "MetricsConfig",
     "AppConfig",
     "RouterConfig",
     "McpToolsConfig",
@@ -610,8 +730,8 @@ __all__ = [
     "LLMRoleConfig",
     "ContextualRetrievalConfig",
     "RerankConfig",
-    "DoclingConfig",
     "VisionModelConfig",
+    "PDF_PARSING_MODES",
     "ParsingConfig",
     "AsrConfig",
     "IndexingConfig",

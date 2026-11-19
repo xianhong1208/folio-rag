@@ -1,21 +1,21 @@
 
-"""ASR Provider — abstraction over audio-transcription sources.
+"""ASR Provider — audio transcription through an OpenAI-compatible endpoint.
 
-Audio transcription moves from a hardcoded docling whisper to a swappable provider (selected via
-config `rag.asr`), using an injection pattern: DocumentLoader receives an injected provider rather
-than picking an implementation itself.
+Folio 1.5 has no in-process speech-to-text: audio goes to ``POST {base_url}/audio/transcriptions``
+(multipart), which OpenAI, Forgeyard, speaches, vLLM and faster-whisper-server all serve. The
+provider is injected into DocumentLoader (``create_asr_provider`` builds it from ``rag.asr``).
 
-Implementations:
-- DoclingWhisperAsrProvider: wraps docling_convert_once (local whisper turbo, default; no behavior
-  change). Returns chunks pre-split by the docling chunker.
-- OpenAICompatibleAsrProvider: POST {base_url}/audio/transcriptions (multipart) — OpenAI / Groq /
-  self-hosted vLLM whisper / faster-whisper-server all conform to this interface. Long audio is
-  resampled to 16 kHz mono and uploaded in silence-aligned segments (one POST of a long
-  recording exceeds the 25 MB upload limit), each with HTTP retries plus a content guard that
-  retries empty-despite-speech and runaway (looping) transcripts. No pre-split chunks
-  (falls back to leaf_splitter's plain-text path).
-- FireRedAsrProvider (fireredasr_provider.py): local FireRedASR-AED-L (silencedetect segmentation
-  ≤55s / 16k resampling / OpenCC s2twp Simplified→Traditional).
+- OpenAICompatibleAsrProvider: long audio is resampled to 16 kHz mono and uploaded in
+  silence-aligned segments (one POST of a long recording exceeds the 25 MB upload limit), each
+  with HTTP retries plus a content guard that retries empty-despite-speech and runaway (looping)
+  transcripts. The transcript's Chinese script is converted per ``rag.asr.chinese_conversion``
+  (whisper writes Simplified Chinese; the default ``s2twp`` gives Traditional with Taiwan phrasing).
+- UnconfiguredAsrProvider: ``rag.asr`` has no base_url. Audio uploads are refused up front
+  (``asr_upload_refusal``) and indexing an audio file already stored fails with the same message.
+- DisabledAsrProvider: ``rag.asr.enabled: false``.
+
+The providers removed in 1.5 (``docling-whisper``, ``fireredasr``) are refused when the
+configuration is loaded (``AsrConfig``), with a pointer to docs/migrate-1.5.md.
 
 Model-agnostic pre/post-processing (leading-silence trimming, hallucination filtering) does not live
 inside a provider — it stays in document_loader's audio dispatch layer (audio_defense).
@@ -32,43 +32,21 @@ from typing import Callable, List, Optional, Tuple, TYPE_CHECKING
 
 import httpx
 
+from src.config.model import ASR_MIGRATION_GUIDE, REMOVED_ASR_PROVIDERS, removed_asr_provider_message
 from src.log import get_api_logger
 from src.domain.rag.asr_base import AsrProvider, AsrResult  # noqa: F401  (re-export)
-from src.domain.rag.docling_loader import docling_convert_once
 from src.utils.http_retry import RetryPolicy, join_endpoint, request_with_retry
+from src.utils.metered_http import metered_client
 
 if TYPE_CHECKING:
-    from src.config.model import AsrConfig
+    from src.config.model import AsrConfig  # noqa: F401
 
 logger = get_api_logger()
 
-
-class DoclingWhisperAsrProvider(AsrProvider):
-    """Local docling whisper (default) — wraps docling_convert_once, no behavior change."""
-
-    def available(self) -> bool:
-        # Keeps the legacy auto-discover semantics: serviceable only if assets/whisper_models/*.pt exists
-        from src.domain.rag.docling_loader import _resolve_whisper_path
-        return _resolve_whisper_path() is not None
-
-    def transcribe(
-        self, *, audio_path: str, file_name: str,
-        max_tokens: Optional[int] = None, tokenizer: Optional[str] = None,
-        progress_cb: Optional[Callable] = None,
-    ) -> AsrResult:
-        from src.utils.deprecation import warn_once
-        warn_once("asr")  # the built-in speech-to-text goes in 1.5 (logged once per process)
-        # Passing max_tokens=None through would override convert_once's default of 512 and cause a
-        # None//2 TypeError inside refine; the production path always supplies a value.
-        full_text, chunk_records = docling_convert_once(
-            file_path=audio_path, file_name=file_name,
-            max_tokens=max_tokens if max_tokens is not None else 512,
-            tokenizer=tokenizer,
-            progress_cb=progress_cb,
-        )
-        # convert_once returns chunk records; audio has no heading/page number, so take plain text
-        chunks = [r["text"] if isinstance(r, dict) else r for r in chunk_records]
-        return AsrResult(text=full_text, chunks=chunks)
+MIGRATION_GUIDE = ASR_MIGRATION_GUIDE
+NOT_CONFIGURED = (
+    "Speech-to-text is not configured: set rag.asr.base_url (env ASR_BASE_URL) to an "
+    "OpenAI-compatible transcription endpoint, e.g. Forgeyard's /v1 (see " + MIGRATION_GUIDE + ")")
 
 
 # Runaway-generation guard. Fast speech is ~15 chars/s in CJK and ~20 in Latin
@@ -82,6 +60,14 @@ MIN_SPEECH_RATIO_FOR_TEXT = 0.2
 SEGMENT_CONCURRENCY = 2
 # Upload the original file untouched when ffmpeg is unavailable and it is small enough.
 MAX_SINGLE_UPLOAD_BYTES = 24 * 1024 * 1024
+
+
+def tls_verify(ca_file: Optional[str]):
+    """httpx ``verify`` for the endpoint: the default bundle (httpx honours SSL_CERT_FILE),
+    plus ``rag.asr.ca_file`` when set, for a server with its own CA such as Forgeyard's
+    (src/utils/tls.py; a missing or unreadable file is an error)."""
+    from src.utils.tls import tls_verify as _verify
+    return _verify(ca_file, "rag.asr.ca_file")
 
 
 class TranscriptRejected(RuntimeError):
@@ -115,6 +101,8 @@ class OpenAICompatibleAsrProvider(AsrProvider):
         model: Optional[str] = None, request_timeout: float = 300.0,
         max_retries: int = 3, segment_seconds: float = 600.0,
         language: Optional[str] = None,
+        chinese_conversion: Optional[str] = "s2twp",
+        ca_file: Optional[str] = None,
         sleep: Optional[Callable[[float], object]] = None,
     ):
         self._base_url = base_url.rstrip("/")
@@ -124,11 +112,16 @@ class OpenAICompatibleAsrProvider(AsrProvider):
         self._max_retries = max_retries
         self._segment_seconds = segment_seconds
         self._language = language
+        self._chinese_conversion = chinese_conversion
+        self._ca_file = ca_file
         self._policy = RetryPolicy(max_retries=max_retries, backoff_base=1.0, backoff_max=30.0)
         self._sleep = sleep or time.sleep
 
     def available(self) -> bool:
         return bool(self._base_url)
+
+    def _verify(self):
+        return tls_verify(self._ca_file)
 
     @property
     def url(self) -> str:
@@ -176,6 +169,10 @@ class OpenAICompatibleAsrProvider(AsrProvider):
                 client, "POST", self.url, policy=self._policy, sleep=self._sleep,
                 data=data, files={"file": (upload_name, payload)},
             )
+            if resp.status_code in (401, 403):
+                raise RuntimeError(
+                    f"The speech-to-text endpoint refused the request (HTTP {resp.status_code}): "
+                    "check rag.asr.api_key (ASR_API_KEY) and that the key may use rag.asr.model")
             resp.raise_for_status()
             text = (resp.json().get("text") or "").strip()
             problem = transcript_problem(text, seconds, speech)
@@ -201,63 +198,129 @@ class OpenAICompatibleAsrProvider(AsrProvider):
             logger.info(f"[ASR] cloud transcribe: {file_name} → {self.url} ({total} segment(s))")
             done = 0
 
-            with httpx.Client(headers=headers, timeout=self._timeout) as client:
+            with metered_client("asr", headers=headers, timeout=self._timeout,
+                                verify=self._verify()) as client:
                 def run(i_seg):
                     i, (path, start, end, speech) = i_seg
                     name = file_name if total == 1 else f"{Path(file_name).stem}_{i:04d}.wav"
                     return self._transcribe_segment(client, path, start, end, speech, name)
 
                 texts: List[str] = []
-                with ThreadPoolExecutor(max_workers=min(SEGMENT_CONCURRENCY, total)) as pool:
-                    for text in pool.map(run, enumerate(segments)):  # input order preserved
-                        texts.append(text)
-                        done += 1
-                        if progress_cb is not None:
-                            try:
-                                progress_cb("loading", done, total)
-                            except Exception:
-                                pass
+                try:
+                    with ThreadPoolExecutor(max_workers=min(SEGMENT_CONCURRENCY, total)) as pool:
+                        for text in pool.map(run, enumerate(segments)):  # input order preserved
+                            texts.append(text)
+                            done += 1
+                            if progress_cb is not None:
+                                try:
+                                    progress_cb("loading", done, total)
+                                except Exception:
+                                    pass
+                except httpx.TransportError as e:
+                    # After the retries: say which endpoint, not just "ConnectError".
+                    if "CERTIFICATE_VERIFY_FAILED" in str(e):
+                        raise RuntimeError(
+                            f"The speech-to-text endpoint {self.url} has a TLS certificate this server "
+                            "does not trust: set rag.asr.ca_file (ASR_CA_FILE) to its CA, e.g. "
+                            "Forgeyard's own CA") from e
+                    raise RuntimeError(
+                        f"The speech-to-text endpoint {self.url} could not be reached "
+                        f"({type(e).__name__}): check rag.asr.base_url and that the server is up") from e
         from src.domain.rag.audio_segments import time_block_records
+        from src.domain.rag.han_script import convert_chinese
 
+        texts = [convert_chinese(t, self._chinese_conversion) for t in texts]
         records = time_block_records(
             [(start, end, text) for (_, start, end, _), text in zip(segments, texts)])
         return AsrResult(text="\n".join(t for t in texts if t), chunks=records)
 
 
-def create_asr_provider(asr_cfg: "Optional[AsrConfig]") -> AsrProvider:
-    """Factory: build a provider based on config `rag.asr.provider`.
+class DisabledAsrProvider(AsrProvider):
+    """``rag.asr.enabled: false``: nothing is transcribed, so an incomplete endpoint is not an error."""
 
-    - None (config unset) → default docling-whisper (backward compatible)
-    - openai-compatible missing base_url → immediate ValueError (fails at startup rather than
-      surfacing only on the first transcription)
-    - unknown provider → ValueError listing the available values
+    def available(self) -> bool:
+        return False
+
+    def transcribe(self, *, audio_path: str, file_name: str, max_tokens: Optional[int] = None,
+                   tokenizer: Optional[str] = None, progress_cb: Optional[Callable] = None) -> AsrResult:
+        raise RuntimeError(f"Speech-to-text is disabled (rag.asr.enabled=false): '{file_name}' was not transcribed")
+
+
+class UnconfiguredAsrProvider(AsrProvider):
+    """``rag.asr`` is enabled but has no base_url: the service starts, audio is refused."""
+
+    def available(self) -> bool:
+        return False
+
+    def transcribe(self, *, audio_path: str, file_name: str, max_tokens: Optional[int] = None,
+                   tokenizer: Optional[str] = None, progress_cb: Optional[Callable] = None) -> AsrResult:
+        raise RuntimeError(f"{NOT_CONFIGURED}: '{file_name}' was not transcribed")
+
+
+def create_asr_provider(asr_cfg: "Optional[AsrConfig]") -> AsrProvider:
+    """Factory: build a provider from config ``rag.asr``.
+
+    - enabled: false → DisabledAsrProvider, whatever the rest says
+    - no base_url (or no ``rag.asr`` section) → UnconfiguredAsrProvider: startup succeeds,
+      audio uploads are refused with a message saying what to set
+    - a provider removed in 1.5 → ValueError naming the migration guide (the config model
+      refuses it first; this guards objects built around it)
+    - unknown provider → ValueError
     """
     if asr_cfg is None:
-        return DoclingWhisperAsrProvider()
+        return UnconfiguredAsrProvider()
+    if not getattr(asr_cfg, "enabled", True):
+        return DisabledAsrProvider()
 
     provider = asr_cfg.provider
-    if provider == "docling-whisper":
-        return DoclingWhisperAsrProvider()
-    if provider == "openai-compatible":
-        if not asr_cfg.base_url:
-            raise ValueError(
-                "rag.asr.provider=openai-compatible requires base_url"
-                " (e.g. http://host:8000/v1)"
-            )
-        return OpenAICompatibleAsrProvider(
-            base_url=asr_cfg.base_url,
-            api_key=asr_cfg.api_key,
-            model=asr_cfg.model,
-            request_timeout=float(getattr(asr_cfg, "timeout", 300.0)),
-            max_retries=int(getattr(asr_cfg, "max_retries", 3)),
-            segment_seconds=float(getattr(asr_cfg, "segment_seconds", 600.0)),
-            language=getattr(asr_cfg, "language", None),
-        )
-    if provider == "fireredasr":
-        # lazy import: the FireRedASR chain (torch/kaldi) is loaded only when selected
-        from src.domain.rag.fireredasr_provider import FireRedAsrProvider
-        return FireRedAsrProvider()
-    raise ValueError(
-        f"Unknown rag.asr.provider: {provider!r} — "
-        "available: docling-whisper / openai-compatible / fireredasr"
+    if provider in REMOVED_ASR_PROVIDERS:
+        raise ValueError(removed_asr_provider_message(provider))
+    if provider != "openai-compatible":
+        raise ValueError(f"Unknown rag.asr.provider: {provider!r} — the only provider is openai-compatible")
+    if not asr_cfg.base_url:
+        return UnconfiguredAsrProvider()
+    return OpenAICompatibleAsrProvider(
+        base_url=asr_cfg.base_url,
+        api_key=asr_cfg.api_key,
+        model=asr_cfg.model,
+        request_timeout=float(getattr(asr_cfg, "timeout", 300.0)),
+        max_retries=int(getattr(asr_cfg, "max_retries", 3)),
+        segment_seconds=float(getattr(asr_cfg, "segment_seconds", 600.0)),
+        language=getattr(asr_cfg, "language", None),
+        chinese_conversion=getattr(asr_cfg, "chinese_conversion", "s2twp"),
+        ca_file=getattr(asr_cfg, "ca_file", None),
     )
+
+
+class SpeechToTextUnavailableError(ValueError):
+    """An audio upload while speech-to-text is off or not configured (HTTP 422)."""
+
+
+def current_asr_config():
+    """The live ``rag.asr`` (console changes are applied to the config model in place)."""
+    from src.config.config_manager import Config
+    return getattr(getattr(Config.get_config_model(), "rag", None), "asr", None)
+
+
+def check_audio_upload(file_name: str) -> None:
+    """Raise SpeechToTextUnavailableError when ``file_name`` is audio that could not be transcribed."""
+    reason = asr_upload_refusal(file_name, current_asr_config())
+    if reason:
+        raise SpeechToTextUnavailableError(reason)
+
+
+def asr_upload_refusal(file_name: str, asr_cfg: "Optional[AsrConfig]") -> Optional[str]:
+    """Why an upload of ``file_name`` must be refused now, or None.
+
+    Only audio is checked: an audio file stored while speech-to-text is off or not configured
+    could only fail later (or be indexed empty), so it is refused up front.
+    """
+    from src.domain.rag.audio_defense import _AUDIO_TRIM_EXTENSIONS
+    if Path(file_name).suffix.lower() not in _AUDIO_TRIM_EXTENSIONS:
+        return None
+    if asr_cfg is not None and not getattr(asr_cfg, "enabled", True):
+        return (f"'{file_name}' is audio, and speech-to-text is disabled (rag.asr.enabled=false). "
+                "Enable rag.asr with an OpenAI-compatible endpoint to index audio.")
+    if asr_cfg is None or not asr_cfg.base_url:
+        return f"'{file_name}' is audio, and {NOT_CONFIGURED[0].lower()}{NOT_CONFIGURED[1:]}."
+    return None

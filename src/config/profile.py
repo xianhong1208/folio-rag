@@ -1,20 +1,20 @@
 """Deployment-profile validation (``rag.profile: local | hybrid | cloud``).
 
-The profile sets defaults (see RAGConfig._apply_profile_defaults and roles.parsing_mode)
+The profile sets defaults (see RAGConfig._apply_profile_defaults and roles.default_segmenter)
 and validates the per-role choices against them:
 
 * ``local``  — everything is allowed (the pre-profile behaviour; existing configs are
   implicitly ``local`` and validate exactly as before).
-* ``hybrid`` — everything is allowed; API keys written literally in config.yaml are
+* ``hybrid`` — everything is allowed; API keys written literally in config/models.yaml are
   reported as warnings, because a hybrid deployment usually holds at least one billable
   cloud key.
 * ``cloud``  — every role must be an HTTP endpoint. In-process providers (HuggingFace
-  embedding, docling-whisper / FireRedASR, local docling PDF/image parsing, the CKIP
-  segmenter) are errors, and so is any API key that is not an ``${ENV_VAR}`` reference.
+  embedding, the CKIP segmenter) are errors, and so is any API key that is not an
+  ``${ENV_VAR}`` reference.
   The FTS segmenter defaults to the model-free ``bigram`` there.
 
 Why reject (not warn) literal keys in ``cloud``: a cloud key is a billable credential
-and config.yaml is the file people copy, paste into issues and commit. ``local`` keeps
+and config/models.yaml is the file people copy, paste into issues and commit. ``local`` keeps
 accepting literal values because self-hosted vLLM/Ollama endpoints take placeholder keys
 (such as "not-needed") that are not secrets. Errors fail startup (main.py exits) and
 reject the offending console change (HTTP 422); they never degrade silently.
@@ -27,10 +27,10 @@ from dataclasses import dataclass, field
 from typing import Any, Dict, Iterator, List, Mapping, Optional, Tuple
 
 from src.config.roles import (
-    IN_PROCESS_ASR,
     IN_PROCESS_EMBEDDING,
     LLM_ROLES,
-    parsing_mode,
+    pdf_parsing,
+    vision_model,
 )
 
 # ${VAR} or ${VAR:-default} anywhere in a string (same syntax as config_manager).
@@ -52,7 +52,7 @@ class ProfileReport:
 def env_refs(raw: Any, prefix: str = "") -> Dict[str, str]:
     """Map dotted path → first referenced env-var name, for every raw (pre-expansion) string
     value that contains ``${VAR}``. Lets the server tell a key that came from the environment
-    from one written into config.yaml after expansion has erased the difference."""
+    from one written into the config files after expansion has erased the difference."""
     out: Dict[str, str] = {}
     if isinstance(raw, dict):
         for k, v in raw.items():
@@ -88,7 +88,7 @@ def check_profile(rag_config, refs: Optional[Mapping[str, str]] = None) -> Profi
     Args:
         rag_config: a RAGConfig (or a deep copy with pending runtime changes applied).
         refs: secret path → env-var name for keys that came from ``${ENV}`` references
-            (from config.yaml or a console-stored reference). None = treat as unknown, so
+            (from config/models.yaml or a console-stored reference). None = treat as unknown, so
             the literal-key rule is skipped (used where the source cannot be known).
     """
     report = ProfileReport()
@@ -96,17 +96,13 @@ def check_profile(rag_config, refs: Optional[Mapping[str, str]] = None) -> Profi
         return report
     profile = getattr(rag_config, "profile", "local")
 
-    # Cloud parsing needs a vision model in every profile (it was asked for explicitly or
-    # by the cloud profile's default).
-    parsing = getattr(rag_config, "parsing", None)
-    vision = getattr(parsing, "vision", None) if parsing is not None else None
-    cloud_kinds = [k for k in ("pdf", "images") if parsing_mode(rag_config, k) == "cloud"]
-    if cloud_kinds and not (vision and vision.model):
+    # PDFs and images need no model in any profile (the text layer, or a refusal for images).
+    # Forcing the vision model without one cannot work, so it is refused.
+    if pdf_parsing(rag_config) == "vision" and vision_model(rag_config) is None:
         report.errors.append(
-            f"rag.parsing: {'/'.join(cloud_kinds)} parsing is 'cloud' but rag.parsing.vision.model "
-            "is not set — configure an OpenAI-compatible vision model (provider, base_url, model, "
-            "api_key), or set rag.parsing.pdf/images: local"
-            + (" (not allowed in profile: cloud)" if profile == "cloud" else ""))
+            "rag.parsing.pdf is 'vision' but rag.parsing.vision is not configured — set its "
+            "model and base_url (env VISION_MODEL, VISION_BASE_URL) to an OpenAI-compatible vision "
+            "model, or set rag.parsing.pdf to auto (text layer until a vision model is set)")
 
     if profile == "cloud":
         emb = getattr(rag_config, "embedding", None)
@@ -114,16 +110,6 @@ def check_profile(rag_config, refs: Optional[Mapping[str, str]] = None) -> Profi
             report.errors.append(
                 f"rag.embedding.provider '{emb.provider}' loads the model in-process, which "
                 "profile: cloud forbids — use openai / openai-compatible / azure / vllm / ollama")
-        asr = getattr(rag_config, "asr", None)
-        if asr is not None and asr.enabled and asr.provider in IN_PROCESS_ASR:
-            report.errors.append(
-                f"rag.asr.provider '{asr.provider}' runs locally, which profile: cloud forbids — "
-                "use openai-compatible, or set rag.asr.enabled: false")
-        for kind in ("pdf", "images"):
-            if parsing_mode(rag_config, kind) == "local":
-                report.errors.append(
-                    f"rag.parsing.{kind}: local uses in-process docling models, which "
-                    "profile: cloud forbids — remove it (cloud is the default) or set it to cloud")
         retrieval = getattr(rag_config, "retrieval", None)
         seg = getattr(retrieval, "segmenter", None) if retrieval is not None else None
         if seg == "ckip":

@@ -72,9 +72,9 @@ class FileDB(BaseDB):
         'md', 'markdown', 'html', 'htm', 'xhtml', 'adoc', 'asciidoc', 'asc',
         # MIME web archives (docling's HTML backend; local / remote references are never fetched)
         'mht', 'mhtml',
-        # Images (Docling + RapidOcr)
+        # Images (the rag.parsing.vision model; refused at upload when none is configured)
         'png', 'jpg', 'jpeg', 'tiff', 'tif', 'bmp', 'webp', 'gif',
-        # Audio (AsrProvider: local docling whisper or cloud; aligned with docling's official 6 formats)
+        # Audio (rag.asr OpenAI-compatible endpoint; refused at upload when it is not configured)
         'wav', 'mp3', 'm4a', 'aac', 'ogg', 'flac',
     }
 
