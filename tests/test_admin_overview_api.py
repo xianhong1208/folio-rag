@@ -51,7 +51,7 @@ class TestOverviewApi:
                "rag.embedding.base_url": "http://e", "rag.llm.model": "l",
                "rag.llm.base_url": "http://l", "rag.rerank.enabled": True,
                "rag.rerank.model": "r", "rag.rerank.base_url": "http://r",
-               "rag.asr.enabled": True, "rag.asr.provider": "openai-compatible",
+               "rag.asr.enabled": True,
                "rag.asr.model": "whisper-large-v3-turbo", "rag.asr.base_url": "https://stt/v1"}
         with patch(f"{_STATS}.overview", return_value=dict(base)), \
              patch("src.config.runtime_overrides.get_effective", return_value=eff), \
