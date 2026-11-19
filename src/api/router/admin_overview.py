@@ -216,7 +216,8 @@ async def get_overview(ident: ConsoleIdentity = Depends(require_console_session)
                    "model": eff.get("rag.rerank.model"),
                    "base_url": eff.get("rag.rerank.base_url")},
         "asr": {"enabled": eff.get("rag.asr.enabled"),
-                "provider": eff.get("rag.asr.provider"),
+                # the only provider since 1.5, and not a setting any more, so not in the effective map
+                "provider": "openai-compatible",
                 "model": eff.get("rag.asr.model"),
                 "base_url": eff.get("rag.asr.base_url"),
                 "available": _asr_available(cfg)},
