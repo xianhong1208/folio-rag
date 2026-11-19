@@ -1328,7 +1328,7 @@ cuda = [
     { name = "torch", specifier = ">=2.14.0,<2.15", index = "https://download.pytorch.org/whl/cu130", conflict = { package = "folio-rag", group = "cuda" } },
     { name = "triton", specifier = ">=3.8.0,<3.9", index = "https://download.pytorch.org/whl/cu130", conflict = { package = "folio-rag", group = "cuda" } },
 ]
-rocm-r714 = [{ name = "torch", extras = ["device-all"], specifier = "==2.13.0+rocm7.14.0" }]
+rocm-r714 = [{ name = "torch", extras = ["device-all"], specifier = "==2.13.0+rocm7.14.0", index = "https://repo.amd.com/rocm/whl-multi-arch/", conflict = { package = "folio-rag", group = "rocm-r714" } }]
 
 [[package]]
 name = "frozenlist"

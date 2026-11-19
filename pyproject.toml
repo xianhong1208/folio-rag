@@ -288,7 +288,8 @@ explicit = true
 # Map torch (and triton) to the right index per group.
 [tool.uv.sources]
 torch = [
-    { index = "pytorch-cu130",        group = "cuda" },
+    { index = "pytorch-rocm-multiarch", group = "rocm-r714" },
+    { index = "pytorch-cu130",          group = "cuda"      },
     { index = "pytorch-cpu",            group = "cpu"       },
 ]
 # Pin triton to the CUDA index; otherwise the AMD index's +rocm local version outranks the
