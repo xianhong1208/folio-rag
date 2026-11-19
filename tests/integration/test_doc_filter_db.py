@@ -147,8 +147,8 @@ def test_listing_helpers(lib):
         assert total == 5 and items[0]["name"] == "acme-2024.pdf"          # size = name length, 13
         assert {i["name"]: i["tags"] for i in items}["legacy.txt"] == []
         tags = {t["tag"]: t["count"] for t in DF.tag_counts(c, owner=A)}
-        assert tags["Invoice"] == 2 or tags.get("invoice") == 2           # one group, 2 documents
-        assert sum(1 for t in tags if t.lower() == "invoice") == 1 and tags["Signed"] == 1
+        # one group of 2 documents; the 1:1 tie between spellings goes to byte order
+        assert tags == {"Invoice": 2, "Signed": 1, "draft": 1, "HR": 1}
         keys = {k["key"]: k for k in DF.metadata_keys(c, owner=A)}
         assert keys["year"]["types"] == {"number": 2, "string": 1}
         assert keys["due"]["types"] == {"date": 2} and keys["paid"]["types"] == {"boolean": 1}

@@ -427,12 +427,13 @@ def search_documents(conn, flt: Optional[DocumentFilter], *, owner: Owner, sort:
 
 def tag_counts(conn, *, owner: Owner) -> List[Dict[str, Any]]:
     """The caller's tags with document counts, grouped case-insensitively; each group
-    is shown in its most common spelling. Most used first."""
+    is shown in its most common spelling (a tie goes to the first in byte order, the
+    same on every database collation). Most used first."""
     from sqlalchemy import text
 
     where, params = build_where(None, owner=owner)
     rows = conn.execute(text(
-        f"SELECT mode() WITHIN GROUP (ORDER BY t.v) AS tag, count(DISTINCT f.id) AS n "
+        f"SELECT mode() WITHIN GROUP (ORDER BY t.v COLLATE \"C\") AS tag, count(DISTINCT f.id) AS n "
         f'FROM "Files" f, {_TAGS} AS t(v) WHERE {where} '
         "GROUP BY lower(t.v) ORDER BY n DESC, lower(t.v)"), params).fetchall()
     return [{"tag": r[0], "count": int(r[1])} for r in rows]
