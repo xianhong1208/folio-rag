@@ -27,6 +27,7 @@ from db.filedb import FileDB
 from db.fileindexdb import FileIndexDB
 from src.domain.rag.auto_merging import AutoMergingRetriever, MergedResult
 from src.domain.rag.chunk_lookup import ChunkLookup
+from src.domain.rag.doc_meta import stored_metadata, stored_tags
 from src.log import get_mcptools_logger, log_err, log_op_debug, log_warn
 
 logger = get_mcptools_logger()
@@ -427,6 +428,9 @@ def handle_list(*, folder) -> dict:
             "indexed_status": status,
             "chunk_count": chunk_count,
             "estimated_tokens": estimated_tokens,
+            "description": getattr(f, "description", None) or None,
+            "tags": stored_tags(getattr(f, "tags", None)),
+            "metadata": stored_metadata(getattr(f, "doc_metadata", None)),
         })
 
     response = {

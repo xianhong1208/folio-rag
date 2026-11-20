@@ -56,6 +56,15 @@ _QUERY_REQUEST_EXAMPLES = {
             "sparse_top_k": 30,
         },
     },
+    "filtered": {
+        "summary": "Only documents with given tags / metadata",
+        "description": "filters limits the search to this folder's documents that match (see docs/api.md#document-filters).",
+        "value": {
+            "query": "payment terms",
+            "folder_name": "contracts",
+            "filters": {"tags_any": ["signed"], "metadata": {"year": {"gte": 2024}}},
+        },
+    },
     "no_auto_merge": {
         "summary": "Leaf chunks only (no auto-merge)",
         "description": "auto_merge=false returns the matched chunks as they are; null / omitted follows `config.rag.retrieval.auto_merging.enabled`.",
@@ -183,6 +192,7 @@ async def query_rag(
             sparse_top_k=sparse_top_k,
             hybrid_alpha=hybrid_alpha,
             auto_merge=query_request.auto_merge,
+            filters=query_request.filters,
         )
         _elapsed_ms = (_time.perf_counter() - _t0) * 1000
         _latency_ms = int(_elapsed_ms)

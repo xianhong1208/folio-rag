@@ -6,6 +6,19 @@ to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Added
+- **Tags and metadata on documents, and filters by them (#12, first part of 1.6).** A file now carries flat key/value **metadata** next to its **tags**: keys `[a-z0-9_]{1,40}` (at most 32), values a string (≤ 500 characters), a number, a boolean or a `YYYY-MM-DD` date; nested values are refused with 422. Tags are trimmed, at most 64 characters and 32 per file, de-duplicated and matched case-insensitively, one namespace per person across all folders. Set them on upload (`tags` comma-separated, `metadata` a JSON object, REST and console) or with `PATCH /api/folders/{id}/files/{file_id}` (now also `metadata`; console: `PATCH /api/admin/manage/folders/{id}/files/{file_id}`); an edit drops the folder's cached search results. Migration `20261119f0b001` adds `Files.metadata` (`'{}'` for existing rows) and GIN indexes on `Files.tags` and `Files.metadata`; existing tag values are not rewritten.
+- **A document filter** — one flat AND object: `tags_any`, `tags_all`, `folders`, `file_type`, `uploaded_after`, `uploaded_before`, `name_contains`, and `metadata` conditions (a value, `in`, `gte`, `lte`, `exists`). Unknown fields and operators are a 422 that names them. Folio builds the SQL itself with bound parameters (never llama-index `MetadataFilters`, which pastes values into SQL) and always adds the caller's owner scope. See [Document filters](docs/api.md#document-filters).
+- **Filtered search in one folder:** `POST /api/rag/query` and the console's playground API (`POST /api/admin/manage/folders/{id}/query`, its trace and `/query/stream`) take `filters` (the Search page has no filter controls yet: that comes with the Library page). The matching files restrict both the dense and the BM25 query; a filtered dense query turns on pgvector's iterative HNSW scan (`hnsw.iterative_scan = relaxed_order`), so a selective filter still returns `top_k` hits. No matching document returns an empty result. The result cache key includes the filter.
+- **`POST /api/documents/search`**: your documents across all your folders, filtered, sorted (`name`, `uploaded`, `size`) and paginated (`limit` ≤ 200, `offset`), each with its folder, index status, tags, metadata and description. **`GET /api/tags`** (tags with document counts) and **`GET /api/metadata/keys`** (keys, value types and counts). Bearer token or console session.
+- The console's file table shows each file's tags and how many metadata keys it has, a tag button edits a file's tags and metadata, and an upload asks for tags.
+
+### Changed
+- MCP: a folder tool's `list` mode returns each file's `description`, `tags` and `metadata`.
+- Folder export / import (`main.py export-folder`, the console) carries each file's `metadata`; values the rules refuse are left out of an import with a warning.
+- An upload without tags stores `[]`, not JSON `null` (files uploaded before 1.6 have `null`, read as no tags). REST file responses return `tags: []` and `metadata: {}` for them.
+- On a phone, a file row's action buttons wrap instead of being cut off at the table's edge.
+
 ## [1.5.1] — 2026-11-19
 
 ### Changed

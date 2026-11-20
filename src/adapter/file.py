@@ -17,6 +17,7 @@ from src.adapter.db_offload import run_db
 from src.adapter.model import FileConfigData, FileDownloadData
 from src.domain.rag.asr_provider import check_audio_upload
 from src.domain.rag.cloud_parser import check_image_upload
+from src.domain.rag.doc_meta import normalize_metadata, normalize_tags, stored_metadata, stored_tags
 from src.storage.file_storage import FileStorage
 logger = get_adapter_logger()
 
@@ -54,7 +55,8 @@ class FileAdapter():
 
     @staticmethod
     def _store_file(folder, file_content, file_name: str,
-                    description: Optional[str], tags: Optional[List[str]]):
+                    description: Optional[str], tags: Optional[List[str]],
+                    metadata: Optional[Dict[str, Any]] = None):
         """Validate, save and record one uploaded file (blocking). Returns (validation, record).
 
         ``file_content`` is either bytes or a binary file object (an upload's spooled
@@ -92,7 +94,9 @@ class FileAdapter():
                 file_size=validation_result['file_size'],
                 mime_type=validation_result['mime_type'],
                 description=description,
-                tags=tags,
+                # Never JSON null: uploads without tags used to store null (read as none).
+                tags=normalize_tags(tags),
+                doc_metadata=normalize_metadata(metadata),
                 content_hash=validation_result.get('content_hash'),
             )
         except Exception:
@@ -174,6 +178,7 @@ class FileAdapter():
                 file_name = file_data['file_name']
                 description = file_data.get('description')
                 tags = file_data.get('tags')
+                metadata = file_data.get('metadata')
 
                 logger.info(f"Processing file: {file_name}, description: {description}, tags: {tags}")
                 # Audio is refused while speech-to-text cannot transcribe it: storing it
@@ -189,7 +194,8 @@ class FileAdapter():
                 # Validation (hashing), the disk write and the INSERT all block: one
                 # worker-thread hop per file.
                 validation_result, file_record = await run_db(
-                    FileAdapter._store_file, folder, file_content, file_name, description, tags)
+                    FileAdapter._store_file, folder, file_content, file_name, description, tags,
+                    metadata)
 
                 total_size_added += validation_result['file_size']
 
@@ -201,7 +207,8 @@ class FileAdapter():
                     "file_size": file_record.file_size,
                     "mime_type": file_record.mime_type,
                     "description": file_record.description,
-                    "tags": file_record.tags,
+                    "tags": stored_tags(file_record.tags),
+                    "metadata": stored_metadata(getattr(file_record, "doc_metadata", None)),
                     "upload_time": file_record.upload_time.isoformat() if is_batch else file_record.upload_time,
                     "updated_time": file_record.updated_time
                 }
@@ -251,7 +258,8 @@ class FileAdapter():
             file_size=file.file_size,
             mime_type=file.mime_type,
             description=file.description,
-            tags=file.tags,
+            tags=stored_tags(file.tags),
+            metadata=stored_metadata(getattr(file, "doc_metadata", None)),
             upload_time=file.upload_time,
             updated_time=file.updated_time
         ) for file in file_dict]
@@ -306,6 +314,7 @@ class FileAdapter():
         user_token: str,
         description: Optional[str] = None,
         tags: Optional[List[str]] = None,
+        metadata: Optional[Dict[str, Any]] = None,
     ) -> list[FileConfigData]:
         """Update file metadata.
 
@@ -314,7 +323,8 @@ class FileAdapter():
             file_id: File ID
             user_token: User token
             description: New file description
-            tags: New list of file tags
+            tags: New list of file tags (replaces the stored list; normalised)
+            metadata: New metadata object (replaces the stored one; validated)
 
         Returns:
             List of updated file configuration data.
@@ -329,9 +339,15 @@ class FileAdapter():
         if description is not None:
             update_data['description'] = description
         if tags is not None:
-            update_data['tags'] = tags
+            update_data['tags'] = normalize_tags(tags)
+        if metadata is not None:
+            update_data['doc_metadata'] = normalize_metadata(metadata)
         updated_file = await run_db(FileDB.update, file_id, **update_data)
         logger.info(f"Successfully updated file metadata: file_id={updated_file.id}")
+        if 'tags' in update_data or 'doc_metadata' in update_data:
+            # Cached filtered query results of this folder may no longer hold.
+            from src.infrastructure.cache.cache_service import CacheService
+            CacheService.get_instance().clear_pattern(f"query:{folder.id}:*")
         return [FileConfigData(
             id=updated_file.id,
             folder_id=updated_file.folder_id,
@@ -340,7 +356,8 @@ class FileAdapter():
             file_size=updated_file.file_size,
             mime_type=updated_file.mime_type,
             description=updated_file.description,
-            tags=updated_file.tags,
+            tags=stored_tags(updated_file.tags),
+            metadata=stored_metadata(getattr(updated_file, "doc_metadata", None)),
             upload_time=updated_file.upload_time,
             updated_time=updated_file.updated_time
         )]

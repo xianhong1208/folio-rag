@@ -17,6 +17,7 @@ from src.domain.exceptions import (
     QueryExecutionError,
 )
 from src.domain.rag.auto_merging import AutoMergingRetriever
+from src.domain.rag.doc_filter import DocumentFilter, resolve_file_ids
 from src.domain.rag.hybrid_search import SearchSettings, cache_fingerprint
 from src.domain.rag.merge_plan import MERGE_DISABLED
 from src.domain.rag.query_engine import QueryEngine
@@ -119,6 +120,7 @@ class RAGQueryService:
         sparse_top_k: Optional[int] = None,
         hybrid_alpha: Optional[float] = None,
         auto_merge: Optional[bool] = None,
+        filters: Optional[DocumentFilter] = None,
     ) -> RAGQueryResult:
         """Hybrid retrieval (vector + BM25) with optional rerank and result cache.
 
@@ -137,6 +139,8 @@ class RAGQueryService:
                 API compatibility.
             auto_merge: Merge hit leaves into their section for this request;
                 None = follow ``rag.retrieval.auto_merging.enabled``.
+            filters: A document filter (tags, metadata, type, dates…): only chunks
+                of this folder's matching files are searched. No match = no results.
 
         Returns:
             RAGQueryResult (query / results / total_results / retrieval_time_ms).
@@ -145,8 +149,15 @@ class RAGQueryService:
 
         try:
             folder = ctx.indexing_service.get_folder(folder_id, token)
+            # The folder is the caller's (get_folder checked it), and the filter is
+            # scoped to it and to the caller: it can only narrow the search.
+            file_ids = await asyncio.to_thread(
+                resolve_file_ids, filters, owner=token, folder_id=folder_id)
+            if file_ids is not None and not file_ids:
+                return RAGQueryResult(query=query, results=[], total_results=0)
             settings = SearchSettings.from_config(
-                top_k=top_k, similarity_cutoff=similarity_cutoff, sparse_top_k=sparse_top_k)
+                top_k=top_k, similarity_cutoff=similarity_cutoff, sparse_top_k=sparse_top_k,
+                file_ids=file_ids)
             merge_threshold = _merge_threshold(ctx, auto_merge)
 
             cache_key = None
@@ -154,7 +165,8 @@ class RAGQueryService:
 
             if use_cache:
                 query_fingerprint = cache_fingerprint(
-                    query, settings, reranker=ctx.reranker, merge_threshold=merge_threshold)
+                    query, settings, reranker=ctx.reranker, merge_threshold=merge_threshold,
+                    filter_key=filters.fingerprint() if file_ids is not None else None)
                 cache_key = CacheKeys.rag_query(folder_id, query_fingerprint)
                 cached_result = cache.get(cache_key)
 
@@ -215,6 +227,7 @@ class RAGQueryService:
         similarity_cutoff: float = 0.7,
         sparse_top_k: Optional[int] = None,
         hybrid_alpha: Optional[float] = None,
+        filters: Optional[DocumentFilter] = None,
     ) -> dict:
         """Retrieval trace (diagnostic) — bypasses the cache and breaks down the
         vector / BM25 / hybrid / rerank rankings.
@@ -225,9 +238,12 @@ class RAGQueryService:
         """
         ctx = self._ctx
         folder = ctx.indexing_service.get_folder(folder_id, token)
+        file_ids = await asyncio.to_thread(
+            resolve_file_ids, filters, owner=token, folder_id=folder_id)
         vector_store = ctx.get_vector_store(folder_id, token)
         settings = SearchSettings.from_config(
-            top_k=top_k, similarity_cutoff=similarity_cutoff, sparse_top_k=sparse_top_k)
+            top_k=top_k, similarity_cutoff=similarity_cutoff, sparse_top_k=sparse_top_k,
+            file_ids=file_ids)
         engine = self._engine_for(folder_id, vector_store)
         async with _get_query_semaphore():
             trace = await engine.atrace(query, settings)

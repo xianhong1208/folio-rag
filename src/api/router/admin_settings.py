@@ -38,10 +38,12 @@ from src.api.router.admin_overview import router as _overview_router  # noqa: E4
 from src.api.router.admin_manage import router as _manage_router  # noqa: E402
 from src.api.router.console_session import router as _session_router  # noqa: E402
 from src.api.router.admin_folder_archive import router as _archive_router  # noqa: E402
+from src.api.router.documents_api import router as _documents_router  # noqa: E402
 router.include_router(_overview_router)
 router.include_router(_manage_router)
 router.include_router(_session_router)
 router.include_router(_archive_router)
+router.include_router(_documents_router)
 
 
 @router.get("/api/admin/settings", dependencies=[Depends(require_console_session)])

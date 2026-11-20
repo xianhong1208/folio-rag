@@ -112,6 +112,21 @@ class TestHandleList:
         assert by_id["f3"]["estimated_tokens"] is None         # not indexed
         assert "next_offset" in out["_hint"]
 
+    def test_files_carry_description_tags_and_metadata(self):
+        files = [SimpleNamespace(id="f1", file_name="a.pdf", file_size=1, upload_time=None,
+                                 description="Q3 contract", tags=["Signed", "acme"],
+                                 doc_metadata={"year": 2024}),
+                 SimpleNamespace(id="f2", file_name="b.pdf", file_size=1, upload_time=None,
+                                 description=None, tags=None, doc_metadata=None)]
+        with patch.object(ah.FileDB, "get", return_value=files), \
+             patch.object(ah.FileIndexDB, "get_by_folder", return_value=[]), \
+             patch.object(ChunkLookup, "file_token_estimates", return_value={}):
+            out = ah.handle_list(folder=FOLDER)
+        a, b = out["files"]
+        assert (a["description"], a["tags"], a["metadata"]) == ("Q3 contract", ["Signed", "acme"],
+                                                                 {"year": 2024})
+        assert (b["description"], b["tags"], b["metadata"]) == (None, [], {})   # JSON null tags
+
 
 class TestHandleRead:
     async def _read(self, full, offset=None, record_folder=3):

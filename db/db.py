@@ -52,7 +52,12 @@ class File(Base):
     file_size = Column(BigInteger, nullable=False)
     mime_type = Column(String(100))
     description = Column(Text)
+    # Display spellings, normalised on write (src/domain/rag/doc_meta.py) and matched
+    # case-insensitively. Rows uploaded before 1.6 may hold JSON null: read as no tags.
     tags = Column(JSONB, nullable=False, default=list, server_default='[]')
+    # Flat {key: string | number | boolean | "YYYY-MM-DD"} (doc_meta.normalize_metadata).
+    # The attribute cannot be called ``metadata`` (SQLAlchemy's declarative base uses it).
+    doc_metadata = Column("metadata", JSONB, nullable=False, default=dict, server_default='{}')
     # sha256 computed at upload; compared against FileIndex.content_hash at index time to skip re-embedding when unchanged
     content_hash = Column(String(64), nullable=True)
     upload_time = Column(DateTime, default=func.now())
@@ -63,6 +68,10 @@ class File(Base):
         Index('idx_files_folder_id', 'folder_id'),
         Index('idx_files_upload_time', 'upload_time', postgresql_using='btree', postgresql_ops={'upload_time': 'DESC'}),
         Index('idx_files_folder_name', 'folder_id', 'file_name'),
+        Index('idx_files_tags_gin', 'tags', postgresql_using='gin',
+              postgresql_ops={'tags': 'jsonb_path_ops'}),
+        Index('idx_files_metadata_gin', 'metadata', postgresql_using='gin',
+              postgresql_ops={'metadata': 'jsonb_path_ops'}),
     )
 
     def __repr__(self):

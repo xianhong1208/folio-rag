@@ -54,6 +54,9 @@ read through OpenAI-compatible APIs).
   chunking pipeline or another embedding model are marked for re-indexing.
 - **Per-person folders.** You only see the folders of your MCP Gate account, over MCP, REST and the
   console alike.
+- **Tags and metadata on documents.** Label files with tags and flat key/value metadata (client,
+  year, a due date…), then filter a search or list documents across all your folders by them
+  ([document filters](docs/api.md#document-filters)).
 - **Many formats.** PDF, Office (including legacy and RTF), OpenDocument, HTML and MHTML, Markdown,
   EPUB, email, scanned PDFs and images (read by a vision model such as Qwen3-VL, tables kept as
   tables; without one, PDFs are read from their text layer), and audio (transcribed by an
