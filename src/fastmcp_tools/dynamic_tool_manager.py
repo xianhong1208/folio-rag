@@ -7,7 +7,7 @@ The tool carries a mode parameter (search/list/read) plus expand_context.
 import hashlib
 import re
 import unicodedata
-from typing import Annotated, Callable, Dict, Literal, Optional
+from typing import Annotated, Any, Callable, Dict, List, Literal, Optional
 
 from fastmcp import FastMCP
 from pydantic import Field
@@ -59,8 +59,20 @@ def _make_tool_func(folder_name: str, query_function: Callable):
         offset: Annotated[Optional[int], Field(
             description="mode=read: chunk index to start from; pass the previous "
                         "page's next_offset")] = None,
+        file_ids: Annotated[Optional[List[str]], Field(
+            description="mode=search: search only these documents (file_id values from "
+                        "folio_find or mode=list)")] = None,
+        filters: Annotated[Optional[Dict[str, Any]], Field(
+            description="mode=search: search only documents matching this filter "
+                        "(same object as folio_find's filters)")] = None,
         similarity_cutoff: Optional[float] = None,
     ) -> list:
+        extra = {}
+        # Passed only when given, so a backend written before 1.6 keeps working.
+        if file_ids is not None:
+            extra["file_ids"] = file_ids
+        if filters is not None:
+            extra["filters"] = filters
         return await query_function(
             folder_name=folder_name,
             mode=mode,
@@ -70,6 +82,7 @@ def _make_tool_func(folder_name: str, query_function: Callable):
             similarity_cutoff=similarity_cutoff,
             expand_context=expand_context,
             offset=offset,
+            **extra,
         )
 
     return folder_tool
@@ -279,6 +292,13 @@ class DynamicToolManager:
             f"- `top_k` (int, 1-{MAX_TOP_K}): mode=search, number of results; default: server setting",
             "- `expand_context` (bool): mode=search, add neighbouring chunks; default: server setting",
             "- `offset` (int): mode=read, chunk index to start from (next_offset of the previous page)",
+            "- `file_ids` (list): mode=search, search only these documents of this folder (the",
+            "  file_id values folio_find or mode=list returned; ids of other folders are ignored)",
+            "- `filters` (object): mode=search, only documents matching this filter (tags,",
+            "  metadata, file type, upload dates; the same object as folio_find's `filters`)",
+            "",
+            "To find documents across ALL folders first (by topic, tags or metadata), use",
+            "folio_find, then search inside the ones it returns here with file_ids.",
             "",
             "Response: JSON with mode, results, score_type (what score means: rerank =",
             "relevance 0-1, rrf = rank fusion — compare scores only within one response),",

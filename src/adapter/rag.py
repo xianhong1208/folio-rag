@@ -171,6 +171,8 @@ class RAGAdapter:
         expand_context: bool,
         token: str,
         offset: Optional[int] = None,
+        file_ids: Optional[List[str]] = None,
+        filters: Optional[dict] = None,
     ) -> Dict[str, Any]:
         """Delegates to RAGQueryService — MCP agentic three-mode (search / list / read)."""
         return await self._query_svc.query_agentic(
@@ -183,6 +185,8 @@ class RAGAdapter:
             expand_context=expand_context,
             token=token,
             offset=offset,
+            file_ids=file_ids,
+            filters=filters,
         )
 
     async def delete_document_index(self, file_id: int, token: str) -> bool:

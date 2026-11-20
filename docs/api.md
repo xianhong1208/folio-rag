@@ -4,7 +4,7 @@
 
 | Group | Endpoints |
 |-------|-----------|
-| **MCP** | `POST /mcp` — per-folder `Folio_<folder>` tools (`search` / `list` / `read`); `GET /.well-known/oauth-protected-resource/mcp` |
+| **MCP** | `POST /mcp` — [`folio_find`](#mcp-tools) (documents across all your folders) and per-folder `Folio_<folder>` tools (`search` / `list` / `read`, `file_ids`); `GET /.well-known/oauth-protected-resource/mcp` |
 | **Folders & files** | `/api/folders*` · `/api/folders/{id}/files*` (create, upload, list, download, delete — token-scoped) |
 | **Documents** | `POST /api/documents/search` · `GET /api/tags` · `GET /api/metadata/keys` — your documents across folders, with [filters](#document-filters) |
 | **Search** | `POST /api/search` — one search over all your folders (or some), as passages or as documents ([below](#search-across-folders)) |
@@ -78,8 +78,8 @@ Where filters apply:
   and the value types seen (`string`, `number`, `boolean`, `date`).
 
 These three take a Bearer token (a personal access token) or the console session, like the
-console's API; a cookie-authenticated `POST` needs the console's CSRF header. In MCP, a folder tool's
-`list` mode returns each file's `tags`, `metadata` and `description`.
+console's API; a cookie-authenticated `POST` needs the console's CSRF header. In MCP,
+[`folio_find`](#mcp-tools) takes the same filter.
 
 ## Search across folders
 
@@ -130,6 +130,57 @@ the filter is simply not searched.
 Results are cached for five minutes; any index, tag or metadata change in one of the searched
 folders drops the entry. Auth is the console's, as for `/api/documents/search`: a Bearer token, or
 the console session with its CSRF header. Only your own folders are ever searched.
+
+## MCP tools
+
+Every caller sees **`folio_find`**; each folder adds its own **`Folio_<folder>`** tool (only the
+caller's folders are listed).
+
+**`folio_find(query?, filters?, folders?, limit?, offset?)`** finds documents across all of the
+caller's folders, so an agent can find *which* documents first and then search *inside* them
+(the split RAGFlow makes between `search_metadata` and `search_chunks`):
+
+- with `query`: the [search across folders](#search-across-folders) with `group_by: document` —
+  documents ranked by their best passage, each with up to 2 snippets (cut to about 220 tokens each),
+  `hits` and `score`; `skipped_folders` lists `{folder, reason}`;
+- without `query`: the documents matching `filters`, newest upload first, with `total` and
+  `next_offset` (pass it as `offset`). Called with no argument at all, it also returns `vocabulary`:
+  your most used tags (with counts) and metadata keys (with their value types).
+
+| Argument | Default | Meaning |
+|---|---|---|
+| `query` | none | 2–2000 characters; none = a listing |
+| `filters` | none | a [document filter](#document-filters); an unknown field or operator is refused with its name |
+| `folders` | all yours | folder names or ids; one that is not yours is `folder_not_found`, like one that does not exist |
+| `limit` | 10 | 1–50 documents |
+| `offset` | 0 | listing only |
+
+Each document has `file_id`, `name`, `folder`, **`tool`** (the folder tool to search it with),
+`tags`, `metadata`, and with a query `score`, `hits` and `snippets` (`text`, `page`, `score`), or in a
+listing `mime`, `uploaded_at`, `status` and a short `description`. The answer is cut to
+`rag.retrieval.mcp_response_token_budget` like the folder tools': lower-ranked documents are left
+out first (`omitted_results`). `_hint` suggests the next step.
+
+The scope is always the person the token belongs to (its `sub`), never an argument: a token without
+a `sub` gets `{"error": "unauthorized"}`, and a token whose `sub` owns no folder (the MCP Gate
+scanner, a `client_credentials` client) gets an empty answer. With `auth.enabled: false` it covers
+every folder, like the REST endpoints. Refusals come back as `{"error": code, "detail": ...}`
+(`invalid_filter`, `invalid_request`, `folder_not_found`, `unauthorized`). In tools/list, the tool's
+description carries the caller's own top tags and metadata keys, so the agent writes filters with
+real values (refreshed at most once a minute per token).
+
+**`Folio_<folder>`** has three modes: `search` (the default), `list` and `read`. In `search` mode two
+optional arguments limit the search to some documents of that folder:
+
+- `file_ids`: the `file_id` values `folio_find` (or `list`) returned. Ids that are not documents of
+  this folder are ignored and listed in `scope.ignored_file_ids`; when none is left the call is
+  refused (`error_code: invalid_request`) rather than silently searching nothing.
+- `filters`: the same document filter, applied inside this folder. With `file_ids` too, a document
+  must satisfy both. When nothing matches, nothing is searched and `_hint` says so.
+
+The ids restrict both the dense and the keyword query (as `filters` does on `POST /api/rag/query`).
+The response then carries `scope: {file_ids: <count>, ignored_file_ids?}`. `list` mode returns each
+file's `tags`, `metadata` and `description`.
 
 ## Removed in 1.5: the /v1 media endpoints
 

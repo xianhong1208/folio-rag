@@ -46,7 +46,7 @@ HTTP_METHODS = frozenset({"GET", "HEAD", "POST", "PUT", "PATCH", "DELETE", "OPTI
 # The per-request stages recorded by hybrid_search.record_stage and auto_merging._timing.
 RETRIEVAL_STAGES = frozenset({"embed", "dense", "segment", "bm25", "fuse", "rerank",
                               "prefetch", "merge", "expand"})
-MCP_MODES = frozenset({"search", "list", "read"})
+MCP_MODES = frozenset({"search", "list", "read", "find", "find_list"})
 MCP_OUTCOMES = frozenset({"ok", "invalid_request", "unauthorized", "forbidden", "error"})
 MODEL_ROLES = frozenset({"embedding", "llm", "contextual_llm", "rerank", "asr", "vision"})
 MODEL_OUTCOMES = frozenset({"ok", "client_error", "server_error", "error"})
@@ -91,10 +91,10 @@ RETRIEVAL_SEARCH = Histogram(
     buckets=_FAST_BUCKETS, registry=REGISTRY)
 
 MCP_TOOL_CALLS = Counter(
-    "folio_mcp_tool_calls_total", "Per-folder MCP tool calls by mode and outcome.",
+    "folio_mcp_tool_calls_total", "MCP tool calls by mode and outcome.",
     ["mode", "outcome"], registry=REGISTRY)
 MCP_TOOL_DURATION = Histogram(
-    "folio_mcp_tool_call_duration_seconds", "Per-folder MCP tool call duration by mode.",
+    "folio_mcp_tool_call_duration_seconds", "MCP tool call duration by mode.",
     ["mode"], buckets=_FAST_BUCKETS, registry=REGISTRY)
 
 INDEX_JOBS_SUBMITTED = Counter(
