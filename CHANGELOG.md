@@ -6,6 +6,8 @@ to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [1.6.0] — 2026-11-20
+
 ### Added
 - **Tags and metadata on documents, and filters by them (#12, first part of 1.6).** A file now carries flat key/value **metadata** next to its **tags**: keys `[a-z0-9_]{1,40}` (at most 32), values a string (≤ 500 characters), a number, a boolean or a `YYYY-MM-DD` date; nested values are refused with 422. Tags are trimmed, at most 64 characters and 32 per file, de-duplicated and matched case-insensitively, one namespace per person across all folders. Set them on upload (`tags` comma-separated, `metadata` a JSON object, REST and console) or with `PATCH /api/folders/{id}/files/{file_id}` (now also `metadata`; console: `PATCH /api/admin/manage/folders/{id}/files/{file_id}`); an edit drops the folder's cached search results. Migration `20261119f0b001` adds `Files.metadata` (`'{}'` for existing rows) and GIN indexes on `Files.tags` and `Files.metadata`; existing tag values are not rewritten.
 - **A document filter** — one flat AND object: `tags_any`, `tags_all`, `folders`, `file_type`, `uploaded_after`, `uploaded_before`, `name_contains`, and `metadata` conditions (a value, `in`, `gte`, `lte`, `exists`). Unknown fields and operators are a 422 that names them. Folio builds the SQL itself with bound parameters (never llama-index `MetadataFilters`, which pastes values into SQL) and always adds the caller's owner scope. See [Document filters](docs/api.md#document-filters).

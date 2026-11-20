@@ -43,13 +43,14 @@ phone.
 
 **1.5.1 (2026-11-19).** One CPU install: the GPU dependency groups are gone, since the only models Folio still runs itself (CKIP segmentation, optional HuggingFace embeddings) run on the CPU; an install is about 4–5 GB smaller than a CUDA one. The Docker image is published for `linux/amd64` and `linux/arm64` again (1.5.0's arm64 build failed). See [Upgrading to 1.5.1](docs/migrate-1.5.md#upgrading-to-151).
 
+**1.6.0 (2026-11-20).** Find the document: tags and metadata on documents (set on upload, edited one by one or in bulk), with filters in REST, the console and MCP; results by document, ranked by their best passage; one search across all your folders, reranked together; a **Library** page listing every document with a filter rail, content search, bulk edits and a document panel; the MCP tool `folio_find`, and `file_ids` / `filters` on the folder tools to search inside the documents it found.
+
 Details: [CHANGELOG.md](CHANGELOG.md).
 
 ## Next
 
 | Version | What you get |
 |---|---|
-| **1.6: find the document** | **Metadata and tags** on documents, with filters in REST, the console and MCP. **Results by document**, not only by passage. **Search across all your folders.** A **Library** page. An MCP **`find`** mode that returns documents. |
 | **1.7: better answers** | **Query rewriting and multi-query**, with HyDE and translation as opt-ins. Each one is kept only if the golden set improves. **Figures** described by a vision model, so they can be found. **Citations open the PDF** at the highlighted passage. **Thumbs up / down** on answers. |
 | **1.8: folders that stay current** | **Sources** for a folder: a URL or sitemap, a Git repository, a directory on the server, S3 or WebDAV. They **re-sync on a schedule**, only what changed, and files removed at the source are removed from the folder. |
 | **1.9: conversations** | **Chat history**, **follow-up questions** that keep the context, and **export** of a conversation. |
