@@ -27,6 +27,7 @@ from db.filedb import FileDB
 from db.fileindexdb import FileIndexDB
 from src.domain.rag.auto_merging import AutoMergingRetriever, MergedResult
 from src.domain.rag.chunk_lookup import ChunkLookup
+from src.domain.rag.doc_meta import stored_metadata, stored_tags
 from src.log import get_mcptools_logger, log_err, log_op_debug, log_warn
 
 logger = get_mcptools_logger()
@@ -55,6 +56,13 @@ _HINT_LOW_RELEVANCE = (
 _HINT_SOME_LOW = (
     " {n} result(s) marked low_relevance scored below min_relevance {cut:.2f}; treat "
     "them as weak matches.")
+_HINT_SCOPE_EMPTY = (
+    "No document of this folder matches the filters, so nothing was searched. Loosen the "
+    "filters, or call folio_find without a query to see which documents carry which tags "
+    "and metadata.")
+_HINT_SCOPE_IGNORED = (
+    " {n} file_id(s) were ignored: they are not documents of this folder (see "
+    "scope.ignored_file_ids; each folio_find result names the tool to use).")
 _HINT_OMITTED = (
     " {omitted} lower-ranked result(s) were left out to keep this response under "
     "~{budget} tokens; ask a narrower query to surface them.")
@@ -217,8 +225,13 @@ async def handle_search(
     similarity_cutoff: Optional[float] = None,
     expand_context: bool,
     token_budget: Optional[int] = None,
+    scope: Optional[dict] = None,
 ) -> dict:
     """mode='search' — primary hybrid + auto-merge (async: retrieval runs off the event loop).
+
+    ``scope`` (from doc_find.search_scope) limits the search to some documents of the
+    folder: ``{"file_ids": (...), "ignored_file_ids": [...]}``; the ids go into the
+    dense and BM25 SQL (SearchSettings.file_ids). An empty ``file_ids`` searches nothing.
 
     ``similarity_cutoff`` is accepted for backward compatibility and ignored: the
     ranking is rank fusion (+ rerank), whose scores a similarity threshold does
@@ -263,9 +276,28 @@ async def handle_search(
             "results": [],
         }
 
+    scope_info = None
+    settings = None
+    if scope is not None:
+        ids = tuple(scope.get("file_ids") or ())
+        scope_info = {"file_ids": len(ids)}
+        if scope.get("ignored_file_ids"):
+            scope_info["ignored_file_ids"] = list(scope["ignored_file_ids"])
+        if not ids:
+            response = {"mode": "search", "query": query, "folder": folder.name, "top_k": top_k,
+                        "score_type": "none", "total_results": 0, "results": [],
+                        "scope": scope_info, "low_relevance": True,
+                        "_hint": _HINT_SCOPE_EMPTY}
+            log_op_debug(logger, "SEARCH_DONE", folder_id=folder.id,
+                         msg="results=0 hint=scope_empty (no document matches the filters)")
+            return response
+        from src.domain.rag.hybrid_search import SearchSettings
+        settings = SearchSettings.from_config(file_ids=ids)
+
     try:
         results: List[MergedResult] = await retriever.aquery(
             query_text=query,
+            settings=settings,
             top_k=top_k,
             expand_context=expand_context,
         )
@@ -304,6 +336,8 @@ async def handle_search(
         "total_results": len(results),
         "results": [result_dict(r) for r in results],
     }
+    if scope_info is not None:
+        response["scope"] = scope_info
     outcome = getattr(retriever, "last_outcome", None)
     min_relevance = configured_min_relevance()
     apply_relevance(response, reranked=score_type == "rerank",
@@ -331,6 +365,9 @@ async def handle_search(
         if weak:
             response["_hint"] += _HINT_SOME_LOW.format(n=weak, cut=min_relevance)
             hint_reason += "+weak"
+    if scope_info and scope_info.get("ignored_file_ids"):
+        response["_hint"] += _HINT_SCOPE_IGNORED.format(n=len(scope_info["ignored_file_ids"]))
+        hint_reason += "+ignored_ids"
 
     budget = configured_response_budget() if token_budget is None else int(token_budget)
     fit_to_budget(response, budget)
@@ -427,6 +464,9 @@ def handle_list(*, folder) -> dict:
             "indexed_status": status,
             "chunk_count": chunk_count,
             "estimated_tokens": estimated_tokens,
+            "description": getattr(f, "description", None) or None,
+            "tags": stored_tags(getattr(f, "tags", None)),
+            "metadata": stored_metadata(getattr(f, "doc_metadata", None)),
         })
 
     response = {

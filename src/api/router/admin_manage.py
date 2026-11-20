@@ -17,8 +17,9 @@ from fastapi import APIRouter, Body, Depends, File, Form, HTTPException, UploadF
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 from src.api.router.admin_scope import owned_folder
-from src.api.router.response import CreateFolderRequest, UpdateFolderRequest
+from src.api.router.response import CreateFolderRequest, UpdateFileRequest, UpdateFolderRequest
 from src.auth.console_session import ConsoleIdentity, require_console_session
+from src.domain.rag.doc_filter import DocumentFilter
 from src.domain.rag.query_limits import MAX_QUERY_CHARS, MIN_QUERY_CHARS
 from src.log import get_api_logger
 
@@ -47,6 +48,8 @@ class PlaygroundQuery(BaseModel):
     auto_merge: Optional[bool] = None
     trace: bool = False
     answer: bool = False
+    # Search only the folder's documents matching this filter (tags, metadata, …).
+    filters: Optional[DocumentFilter] = None
 
     @field_validator("query")
     @classmethod
@@ -114,16 +117,30 @@ async def admin_upload_file(
     folder_id: int,
     file: UploadFile = File(...),
     description: Optional[str] = Form(None),
+    tags: Optional[str] = Form(None),
+    metadata: Optional[str] = Form(None),
     auto_index: bool = Form(True),
     ident: ConsoleIdentity = _Session,
 ):
-    """Upload a file to the folder (auto_index=True runs the existing background indexing flow)."""
+    """Upload a file to the folder (auto_index=True runs the existing background indexing flow).
+
+    ``tags``: comma-separated; ``metadata``: a JSON object. Both follow the same rules
+    as the REST upload (422 when a value breaks them)."""
     _, token = _owner(folder_id, ident)
     from src.api.router.file_api import upload_file
     return await upload_file(
-        folder_id, file=file, description=description, tags=None,
+        folder_id, file=file, description=description, tags=tags, metadata=metadata,
         auto_index=auto_index, user_token=token,
     )
+
+
+@router.patch("/api/admin/manage/folders/{folder_id}/files/{file_id}")
+async def admin_update_file(folder_id: int, file_id: UUID, body: UpdateFileRequest = Body(...),
+                            ident: ConsoleIdentity = _Session):
+    """Set a file's description, tags and/or metadata (fields left out stay as they are)."""
+    _, token = _owner(folder_id, ident)
+    from src.api.router.file_api import update_file
+    return await update_file(folder_id, file_id, body, user_token=token)
 
 
 @router.get("/api/admin/manage/folders/{folder_id}/files/{file_id}/download")
@@ -359,7 +376,8 @@ async def admin_query_folder(folder_id: int,
                 top_k=body.top_k or d["top_k"],
                 similarity_cutoff=(body.similarity_cutoff if body.similarity_cutoff is not None
                                    else d["similarity_cutoff"]),
-                sparse_top_k=d["sparse_top_k"], hybrid_alpha=d["hybrid_alpha"])
+                sparse_top_k=d["sparse_top_k"], hybrid_alpha=d["hybrid_alpha"],
+                filters=body.filters)
         except HTTPException:
             raise
         except Exception as e:
@@ -375,7 +393,7 @@ async def admin_query_folder(folder_id: int,
         req = QueryRequest(
             query=q, folder_name=folder.name,
             top_k=body.top_k, similarity_cutoff=body.similarity_cutoff,
-            auto_merge=body.auto_merge,
+            auto_merge=body.auto_merge, filters=body.filters,
         )
         scope = {"type": "http", "headers": [], "method": "POST", "path": "/", "query_string": b""}
         resp = await query_rag(_Req(scope), req, token=token)
@@ -569,7 +587,7 @@ async def admin_query_folder_stream(folder_id: int,
     req = QueryRequest(
         query=q, folder_name=folder.name,
         top_k=body.top_k, similarity_cutoff=body.similarity_cutoff,
-        auto_merge=body.auto_merge)
+        auto_merge=body.auto_merge, filters=body.filters)
     scope = {"type": "http", "headers": [], "method": "POST", "path": "/", "query_string": b""}
     resp = await query_rag(_Req(scope), req, token=token)
     results = resp["data"].get("results", [])

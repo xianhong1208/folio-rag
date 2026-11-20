@@ -393,3 +393,56 @@ class TestHarnessRelevance:
         qs = harness.load_out_of_scope()
         assert len(qs) == 20 and len({q["id"] for q in qs}) == 20
         assert {q["lang"] for q in qs} == {"en", "zh"}
+
+
+class TestDocumentLevel:
+    def test_document_metrics(self):
+        m = rm.document_metrics(["b.md", "a.md", "a.md", "c.md"], ["a.md", "c.md"], ks=(1, 3))
+        assert m == {"doc_recall@1": 0.0, "doc_recall@3": 1.0, "doc_mrr@10": 0.5}
+        assert rm.document_metrics([], ["a.md"])["doc_mrr@10"] == 0.0
+        assert rm.document_metrics(["a.md"], [])["doc_recall@1"] == 0.0
+
+    def test_score_documents_and_summary(self, harness):
+        q = {"evidence": [{"file": "a.md", "spans": ["x"]}, {"file": "a.md", "spans": ["y"]}]}
+        data = {"documents": [{"name": "b.md", "score": 0.9}, {"name": "a.md", "score": 0.8}]}
+        s = harness.score_documents(data, q, 12.34)
+        assert s["doc_recall@1"] == 0.0 and s["doc_recall@3"] == 1.0 and s["doc_mrr@10"] == 0.5
+        assert s["ms"] == 12.3 and s["top_score"] == 0.9 and s["n_documents"] == 2
+        assert "doc_recall@1" not in harness.score_documents({"documents": []}, {"evidence": []}, 1)
+        rows = [{"answerable": True, "type": "zh_factual", "lang": "zh", "documents": s},
+                {"answerable": False, "type": "unanswerable", "lang": "en",
+                 "documents": {"ms": 5.0, "n_documents": 0}}]
+        out = harness.summarise_documents(rows)
+        assert out["overall"]["doc_mrr@10"] == 0.5 and out["documents_mean"] == 1.0
+        assert harness.summarise_documents([]) == {}
+        md = "\n".join(harness.documents_markdown(out))
+        assert "doc R@1" in md and "zh_factual" in md
+
+    def test_split_corpus_and_search_results(self, harness):
+        parts = harness.split_corpus(3)
+        assert len(parts) == 3 and all(k.endswith("of3") for k in parts)
+        files = [p for fs in parts.values() for p in fs]
+        assert sorted(files) == harness.corpus_files()
+        data = {"results": [{"text": "leaf", "score": 0.5, "folder": {"name": "p1"},
+                             "metadata": {"file_name": "a.md"}}]}
+        r = harness.search_results(data, {("a.md", "leaf"): 4})[0]
+        assert r["chunk_range"] == (4, 4) and r["folder"] == "p1"
+
+    def test_split_summary_and_report(self, harness):
+        srch = {"first_rank": 1, "top_score": 0.9, "recall@5": 1.0, "recall@10": 1.0,
+                "recall@20": 1.0, "mrr@10": 1.0, "ndcg@10": 1.0, "file_recall@5": 1.0,
+                "ms": 300.0, "n_results": 20, "folders_hit": ["p1", "p2"], "skipped": 0}
+        docs = {"ms": 200.0, "n_documents": 4, "top_score": 0.9, "files": [],
+                "doc_recall@1": 1.0, "doc_recall@3": 1.0, "doc_recall@5": 1.0,
+                "doc_recall@10": 1.0, "doc_mrr@10": 1.0}
+        rows = [{"id": "q1", "type": "keyword", "lang": "en", "answerable": True,
+                 "search": srch, "documents": docs}]
+        s = harness.summarise_split(rows)
+        assert s["search"]["overall"]["recall@20"] == 1.0
+        assert s["search"]["folders_in_top20"] == {"2": 1}
+        rep = {"date": "2026-11-20", "label": "x", "server": "s", "code_ref": "c", "runs": 1,
+               "harness": harness.HARNESS_VERSION, "split": 2, "models": {"embedding": "m"},
+               "folders": [{"name": "p1", "files": ["a"]}, {"name": "p2", "files": ["b"]}],
+               "summary": s}
+        md = harness.split_markdown(rep)
+        assert "split over 2 folders" in md and "Documents across folders" in md

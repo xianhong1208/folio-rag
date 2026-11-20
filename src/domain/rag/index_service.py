@@ -73,7 +73,8 @@ class IndexingService:
 
     @staticmethod
     def _to_file_request(file_index: FileIndex) -> FileRequest:
-        excluded_fields = {"upload_at", "updated_at"}
+        # "metadata": the File column; getattr(row, "metadata") is the declarative MetaData.
+        excluded_fields = {"upload_at", "updated_at", "metadata"}
         payload = {
             column.name: getattr(file_index, column.name)
             for column in file_index.__table__.columns

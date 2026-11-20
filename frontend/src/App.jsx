@@ -2,6 +2,7 @@ import { Routes, Route, Navigate } from 'react-router-dom'
 import Layout from './components/Layout'
 import OverviewPage from './pages/OverviewPage'
 import FoldersPage from './pages/FoldersPage'
+import LibraryPage from './pages/LibraryPage'
 import JobsPage from './pages/JobsPage'
 import SearchPage from './pages/SearchPage'
 import AnalyticsPage from './pages/AnalyticsPage'
@@ -22,6 +23,7 @@ export default function App() {
     <Routes>
       <Route path="/" element={<Layout />}>
         <Route index element={<OverviewPage />} />
+        <Route path="library" element={<LibraryPage />} />
         <Route path="folders" element={<FoldersPage />} />
         <Route path="jobs" element={<JobsPage />} />
         <Route path="search" element={<SearchPage />} />

@@ -3,8 +3,9 @@ import { NAV, navEntryFor, activeTab, crumbs } from './nav'
 
 describe('navEntryFor', () => {
   it('maps every sub-page route to its sidebar entry', () => {
-    expect(navEntryFor('/folders').key).toBe('library')
-    expect(navEntryFor('/jobs').key).toBe('library')
+    expect(navEntryFor('/folders').key).toBe('folders')
+    expect(navEntryFor('/jobs').key).toBe('folders')
+    expect(navEntryFor('/library').key).toBe('library')
     expect(navEntryFor('/analytics').key).toBe('insights')
     expect(navEntryFor('/eval').key).toBe('insights')
     expect(navEntryFor('/health').key).toBe('system')
@@ -27,17 +28,20 @@ describe('navEntryFor', () => {
 
 describe('activeTab and crumbs', () => {
   it('finds the active tab', () => {
-    const lib = NAV.find((e) => e.key === 'library')
-    expect(activeTab(lib, '/jobs').label).toBe('Index Jobs')
+    const fol = NAV.find((e) => e.key === 'folders')
+    expect(activeTab(fol, '/jobs').label).toBe('Index Jobs')
+    expect(activeTab(NAV.find((e) => e.key === 'library'), '/library')).toBeNull()
     expect(activeTab(NAV[0], '/')).toBeNull()
   })
   it('builds the top-bar path', () => {
-    expect(crumbs('/jobs')).toEqual(['folio', 'library', 'index jobs'])
+    expect(crumbs('/jobs')).toEqual(['folio', 'folders', 'index jobs'])
+    expect(crumbs('/folders')).toEqual(['folio', 'folders'])
+    expect(crumbs('/library')).toEqual(['folio', 'library'])
     expect(crumbs('/search')).toEqual(['folio', 'search'])
     expect(crumbs('/')).toEqual(['folio', 'overview'])
   })
   it('the sidebar stays short and every entry has a caption', () => {
-    expect(NAV.length).toBeLessThanOrEqual(6)
+    expect(NAV.length).toBeLessThanOrEqual(7)
     for (const e of NAV) expect(e.query).toBeTruthy()
   })
 })

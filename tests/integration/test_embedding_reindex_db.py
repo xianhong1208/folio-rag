@@ -71,7 +71,8 @@ def test_migration_adds_and_backfills_the_dimension(itest_db, folder):
     from db.filedb import FileDB
     eng = get_engine()
     m, mod = _migration()
-    assert m._get_current_revision() == REV
+    head = m._get_head_revision()
+    assert m._get_current_revision() == head
 
     suffix = uuid.uuid4().hex[:8]
     with_prefix, bare = f"data_{folder.id}_{suffix}", f"{folder.id}_{suffix}x"
@@ -85,14 +86,15 @@ def test_migration_adds_and_backfills_the_dimension(itest_db, folder):
         _index(f, folder, dim=None, table=table)
         rows[name] = f.id
     try:
-        # One step down removes the column; the upgrade adds it back and backfills.
-        assert m.downgrade("-1")
+        # Down to the revision before this one removes the column; the upgrade adds it
+        # back and backfills.
+        assert m.downgrade(mod.down_revision)
         with eng.connect() as c:
             assert c.execute(text(
                 "SELECT count(*) FROM information_schema.columns WHERE table_name = 'FileIndices' "
                 "AND column_name = 'embedding_dimension'")).scalar() == 0
         assert m.upgrade("head")
-        assert m._get_current_revision() == REV
+        assert m._get_current_revision() == head
         assert _dim(eng, rows["a"]) == 8
         assert _dim(eng, rows["b"]) == 12
         assert _dim(eng, rows["gone"]) is None and _dim(eng, rows["blank"]) is None

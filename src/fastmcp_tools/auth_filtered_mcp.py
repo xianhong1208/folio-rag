@@ -65,6 +65,12 @@ class AuthFilteredFastMCP(FastMCP):
         Returns:
             True = dynamic tool (should go through the ACL filter); False = global tool.
         """
+        from src.fastmcp_tools.find_tool import FIND_TOOL_NAME
+
+        # Static person-wide tools are never per-folder, whatever the configured prefix
+        # (a prefix "folio" would otherwise make folio_find look like a folder tool).
+        if tool_name == FIND_TOOL_NAME:
+            return False
         try:
             manager = DynamicToolManager.get_instance()
             if tool_name in manager.get_registered_tools():
@@ -178,8 +184,12 @@ class AuthFilteredFastMCP(FastMCP):
                 allowed = set()
 
             # Filter and inject the per-token folder description
+            from src.fastmcp_tools.find_tool import FIND_TOOL_NAME
             filtered: list = []
             for tool in all_tools:
+                if tool.name == FIND_TOOL_NAME:
+                    filtered.append(await self._find_tool_for(tool, owner_key))
+                    continue
                 if not self._is_dynamic_folder_tool(tool.name):
                     filtered.append(tool)
                     continue
@@ -207,3 +217,19 @@ class AuthFilteredFastMCP(FastMCP):
             traceback.print_exc()
             # Fail-safe: on any exception, hide all dynamic tools
             return [t for t in all_tools if not self._is_dynamic_folder_tool(t.name)]
+
+    @staticmethod
+    async def _find_tool_for(tool, owner_key: str):
+        """folio_find with the caller's own tags and metadata keys in its description,
+        so an agent writes filters with real values (RAGFlow's "match the metadata
+        values exactly" rule). Read once per token per cache period; on any error the
+        plain tool is returned."""
+        import asyncio
+
+        try:
+            from src.fastmcp_tools.find_tool import find_description_for
+            desc = await asyncio.to_thread(find_description_for, owner_key)
+        except Exception as e:  # noqa: BLE001
+            api_logger.warning(f"folio_find vocabulary not added: {type(e).__name__}: {e}")
+            return tool
+        return tool.model_copy(update={"description": desc}) if desc else tool

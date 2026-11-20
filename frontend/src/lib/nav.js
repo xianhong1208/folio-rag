@@ -1,10 +1,11 @@
-// Console navigation model: six sidebar entries, some with sub-pages shown as tabs under the
+// Console navigation model: seven sidebar entries, some with sub-pages shown as tabs under the
 // page caption. Routes are unchanged (/folders, /jobs, …) so bookmarks and links keep working;
 // only the grouping moved out of the sidebar.
 
 export const NAV = [
   { key: 'overview', label: 'Overview', to: '/', end: true, query: 'hierarchical · auto-merge · hybrid retrieval' },
-  { key: 'library', label: 'Library', to: '/folders', query: 'folders · files · index jobs',
+  { key: 'library', label: 'Library', to: '/library', query: 'every document · tags · metadata · filters' },
+  { key: 'folders', label: 'Folders', to: '/folders', query: 'folders · files · index jobs',
     tabs: [{ to: '/folders', label: 'Folders' }, { to: '/jobs', label: 'Index Jobs' }] },
   { key: 'search', label: 'Search', to: '/search', query: 'ask a folder · inspect every hit' },
   { key: 'insights', label: 'Insights', to: '/analytics', query: 'what people ask · how well it answers',
@@ -31,7 +32,7 @@ export function activeTab(entry, pathname) {
   return (entry.tabs || []).find((t) => under(pathname.replace(/\/+$/, ''), t.to)) || null
 }
 
-// "folio / library / index jobs" — the path shown in the top bar.
+// "folio / folders / index jobs" — the path shown in the top bar.
 export function crumbs(pathname) {
   const e = navEntryFor(pathname)
   const t = activeTab(e, pathname)

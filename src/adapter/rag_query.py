@@ -17,6 +17,7 @@ from src.domain.exceptions import (
     QueryExecutionError,
 )
 from src.domain.rag.auto_merging import AutoMergingRetriever
+from src.domain.rag.doc_filter import DocumentFilter, resolve_file_ids
 from src.domain.rag.hybrid_search import SearchSettings, cache_fingerprint
 from src.domain.rag.merge_plan import MERGE_DISABLED
 from src.domain.rag.query_engine import QueryEngine
@@ -119,6 +120,7 @@ class RAGQueryService:
         sparse_top_k: Optional[int] = None,
         hybrid_alpha: Optional[float] = None,
         auto_merge: Optional[bool] = None,
+        filters: Optional[DocumentFilter] = None,
     ) -> RAGQueryResult:
         """Hybrid retrieval (vector + BM25) with optional rerank and result cache.
 
@@ -137,6 +139,8 @@ class RAGQueryService:
                 API compatibility.
             auto_merge: Merge hit leaves into their section for this request;
                 None = follow ``rag.retrieval.auto_merging.enabled``.
+            filters: A document filter (tags, metadata, type, dates…): only chunks
+                of this folder's matching files are searched. No match = no results.
 
         Returns:
             RAGQueryResult (query / results / total_results / retrieval_time_ms).
@@ -145,8 +149,15 @@ class RAGQueryService:
 
         try:
             folder = ctx.indexing_service.get_folder(folder_id, token)
+            # The folder is the caller's (get_folder checked it), and the filter is
+            # scoped to it and to the caller: it can only narrow the search.
+            file_ids = await asyncio.to_thread(
+                resolve_file_ids, filters, owner=token, folder_id=folder_id)
+            if file_ids is not None and not file_ids:
+                return RAGQueryResult(query=query, results=[], total_results=0)
             settings = SearchSettings.from_config(
-                top_k=top_k, similarity_cutoff=similarity_cutoff, sparse_top_k=sparse_top_k)
+                top_k=top_k, similarity_cutoff=similarity_cutoff, sparse_top_k=sparse_top_k,
+                file_ids=file_ids)
             merge_threshold = _merge_threshold(ctx, auto_merge)
 
             cache_key = None
@@ -154,7 +165,8 @@ class RAGQueryService:
 
             if use_cache:
                 query_fingerprint = cache_fingerprint(
-                    query, settings, reranker=ctx.reranker, merge_threshold=merge_threshold)
+                    query, settings, reranker=ctx.reranker, merge_threshold=merge_threshold,
+                    filter_key=filters.fingerprint() if file_ids is not None else None)
                 cache_key = CacheKeys.rag_query(folder_id, query_fingerprint)
                 cached_result = cache.get(cache_key)
 
@@ -206,6 +218,45 @@ class RAGQueryService:
                 query=query, reason=str(e), folder_id=folder_id
             )
 
+    async def search_across(self, req, *, owner) -> Dict[str, Any]:
+        """Search several of the caller's folders at once, as passages or documents
+        (src/domain/rag/doc_search.py; POST /api/search). ``owner`` is the caller's
+        owner key, or doc_filter.ALL_FOLDERS in open mode. Only wiring lives here."""
+        from src.domain.rag import doc_search as DS
+        from src.domain.rag.chunk_identity import configured_embedding
+
+        ctx = self._ctx
+        passages = req.group_by != DS.GROUP_DOCUMENT
+        settings = SearchSettings.from_config(top_k=req.top_k if passages else None)
+        try:
+            max_folders = int(Config.get_config_model().rag.retrieval.max_search_folders)
+        except Exception:  # noqa: BLE001
+            max_folders = DS.DEFAULT_MAX_FOLDERS
+
+        def _searcher(folder):
+            store = ctx.vector_store_manager.get_or_create(
+                folder_id=folder.id, vector_table_uuid=folder.vector_table_uuid)
+            return self._engine_for(folder.id, store).searcher
+
+        async def _one(folder, top_k):
+            return await self.query_rag(
+                query=req.query, folder_id=folder.id, token=folder.owner, top_k=top_k,
+                similarity_cutoff=settings.similarity_cutoff,
+                sparse_top_k=settings.sparse_top_k, auto_merge=req.auto_merge,
+                filters=req.filters)
+
+        def _connect():
+            from db.db import get_engine
+            return get_engine().connect()
+
+        deps = DS.SearchDeps(
+            connect=_connect, searcher_for=_searcher, query_one=_one, settings=settings,
+            reranker=ctx.reranker, gate=_get_query_semaphore(),
+            cache=DS.CrossFolderCache(CacheService.get_instance(), CacheTTL.QUERY_RESULT),
+            merge_threshold=_merge_threshold(ctx, req.auto_merge), max_folders=max_folders,
+            current_embedding=configured_embedding())
+        return await DS.search_across(req, owner=owner, deps=deps)
+
     async def query_trace(
         self,
         query: str,
@@ -215,6 +266,7 @@ class RAGQueryService:
         similarity_cutoff: float = 0.7,
         sparse_top_k: Optional[int] = None,
         hybrid_alpha: Optional[float] = None,
+        filters: Optional[DocumentFilter] = None,
     ) -> dict:
         """Retrieval trace (diagnostic) — bypasses the cache and breaks down the
         vector / BM25 / hybrid / rerank rankings.
@@ -225,9 +277,12 @@ class RAGQueryService:
         """
         ctx = self._ctx
         folder = ctx.indexing_service.get_folder(folder_id, token)
+        file_ids = await asyncio.to_thread(
+            resolve_file_ids, filters, owner=token, folder_id=folder_id)
         vector_store = ctx.get_vector_store(folder_id, token)
         settings = SearchSettings.from_config(
-            top_k=top_k, similarity_cutoff=similarity_cutoff, sparse_top_k=sparse_top_k)
+            top_k=top_k, similarity_cutoff=similarity_cutoff, sparse_top_k=sparse_top_k,
+            file_ids=file_ids)
         engine = self._engine_for(folder_id, vector_store)
         async with _get_query_semaphore():
             trace = await engine.atrace(query, settings)
@@ -249,11 +304,15 @@ class RAGQueryService:
         expand_context: bool,
         token: str,
         offset: Optional[int] = None,
+        file_ids: Optional[list] = None,
+        filters: Optional[dict] = None,
     ) -> Dict[str, Any]:
         """MCP query entry point — unified interface for three modes (search / list / read).
 
         ``similarity_cutoff`` is accepted for backward compatibility and ignored
-        (see handle_search); ``offset`` pages mode='read'.
+        (see handle_search); ``offset`` pages mode='read'. ``file_ids`` / ``filters``
+        limit mode='search' to some of the folder's documents
+        (src/domain/rag/doc_find.py::search_scope); the other modes ignore them.
 
         Returns:
             JSON-serializable dict — wrapped into an MCP content block by agentic_tools.
@@ -285,6 +344,20 @@ class RAGQueryService:
                 )
 
         if mode == "search":
+            scope = None
+            if file_ids is not None or filters is not None:
+                from src.domain.rag import doc_find
+
+                def _scope():
+                    from db.db import get_engine
+                    with get_engine().connect() as conn:
+                        return doc_find.search_scope(conn, folder_id=folder.id, owner=token,
+                                                     file_ids=file_ids, filters=filters)
+                try:
+                    scope = await asyncio.to_thread(_scope)
+                except doc_find.FindError as e:
+                    return {"mode": "search", "error": e.detail, "error_code": e.code,
+                            "results": []}
             # One retriever per request (it records that request's outcome); it
             # shares the folder's searcher, so the path is the REST one.
             retriever = AutoMergingRetriever(
@@ -302,6 +375,7 @@ class RAGQueryService:
                     top_k=top_k,
                     similarity_cutoff=similarity_cutoff,
                     expand_context=expand_context,
+                    scope=scope,
                 )
             # A rejected query (too long, invalid parameters) is not a search that found
             # nothing: logging it put it in analytics as a zero-result query and a knowledge gap.

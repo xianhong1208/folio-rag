@@ -11,7 +11,16 @@ evals/rag/golden_qa.yaml through
     mcp_k20    — the same tool with top_k=20, for Recall@20;
     trace      — the console retrieval trace (top_k=20): the production fusion + rerank
                  ranking over leaf chunks, before auto-merge and expansion. Each hit
-                 carries its rank in the dense, BM25 and fused candidate lists.
+                 carries its rank in the dense, BM25 and fused candidate lists;
+    documents  — POST /api/search with group_by=document (top 10 documents): scored by
+                 the source files of each question's evidence (document recall@1/3/5/10,
+                 MRR@10).
+
+With ``--split N`` the corpus is instead spread over N folders (round-robin by file
+name) and every question is asked once across all of them through POST /api/search:
+passages (top 20, no auto-merge, comparable with the trace) and documents. That run
+checks the merge of several folders' candidates (one rerank over the pool) and is
+written as ``rag-<date>-<label>-split<N>``.
 
 and (3) scores chunk-level Recall@5/10/20, MRR@10, nDCG@10, file-level Recall@5, the
 false-accept rate on unanswerable questions, the relevance cutoff (what each
@@ -52,12 +61,14 @@ OUT_DIR = REPO / "evals" / "baselines"
 FOLDER_NAME = "folio_eval_golden_v1"
 FOLDER_DESC = ("Folio retrieval eval corpus (evals/rag/documents): Taiwanese labour and "
                "personal-data laws, U.S. government pages, fictional company documents.")
-HARNESS_VERSION = 2
+HARNESS_VERSION = 3
 THRESHOLDS = (0.25, 0.5)
 # min_relevance values the relevance-cutoff sweep evaluates (rerank probabilities).
 SWEEP = (0.0, 0.25, 0.5, 0.75, 0.8, 0.85, 0.9, 0.95, 0.98, 0.99)
 OUT_OF_SCOPE = "out_of_scope"
 METRICS = ("recall@5", "recall@10", "recall@20", "mrr@10", "ndcg@10", "file_recall@5")
+DOC_METRICS = ("doc_recall@1", "doc_recall@3", "doc_recall@5", "doc_recall@10", "doc_mrr@10")
+DOC_TOP_K = 10
 
 
 def log(msg: str) -> None:
@@ -114,6 +125,10 @@ class Folio:
         return self.post(f"/api/admin/manage/folders/{folder_id}/query",
                          json={"query": query, "top_k": top_k, "trace": True})["data"]
 
+    def search(self, body: dict) -> dict:
+        """POST /api/search (search across folders; passages or documents)."""
+        return self.post("/api/search", json=body)["data"]
+
     def settings(self) -> dict:
         return self.get("/api/admin/settings")["data"]
 
@@ -147,16 +162,25 @@ def _folder_job_running(api: Folio, folder_id: int) -> bool:
                for j in jobs)
 
 
-def ensure_indexed(api: Folio, poll_s: float = 5.0, timeout_s: float = 3600) -> dict:
-    """Create / reconcile the eval folder and wait until every file is indexed."""
-    folder = api.folder_by_name(FOLDER_NAME)
+def split_corpus(n: int) -> Dict[str, List[Path]]:
+    """{folder name: files} for --split n: the corpus round-robin over n folders."""
+    files = corpus_files()
+    return {f"{FOLDER_NAME}_part{i + 1}of{n}": files[i::n] for i in range(n)}
+
+
+def ensure_indexed(api: Folio, poll_s: float = 5.0, timeout_s: float = 3600,
+                   name: str = FOLDER_NAME, corpus: Optional[List[Path]] = None) -> dict:
+    """Create / reconcile an eval folder (by default the whole corpus in FOLDER_NAME) and
+    wait until every file is indexed."""
+    folder_name = name
+    folder = api.folder_by_name(folder_name)
     if folder is None:
         api.post("/api/admin/manage/folders",
-                 json={"name": FOLDER_NAME, "description": FOLDER_DESC})
-        folder = api.folder_by_name(FOLDER_NAME)
-        log(f"created folder {FOLDER_NAME} (id={folder['id']})")
+                 json={"name": folder_name, "description": FOLDER_DESC})
+        folder = api.folder_by_name(folder_name)
+        log(f"created folder {folder_name} (id={folder['id']})")
     fid = folder["id"]
-    local = {p.name: p for p in corpus_files()}
+    local = {p.name: p for p in (corpus if corpus is not None else corpus_files())}
     remote = {f["name"]: f for f in api.files(fid)}
     changed = False
     for name, f in remote.items():
@@ -209,7 +233,7 @@ def ensure_indexed(api: Folio, poll_s: float = 5.0, timeout_s: float = 3600) -> 
             raise SystemExit(f"indexing did not finish in {timeout_s}s: {states}")
         log(f"  waiting for indexing: {states}")
         time.sleep(poll_s)
-    return {"id": fid, "name": FOLDER_NAME, "files": {f["name"]: f for f in files},
+    return {"id": fid, "name": folder_name, "files": {f["name"]: f for f in files},
             "index_seconds": round(time.time() - t0, 1)}
 
 
@@ -314,6 +338,44 @@ def trace_results(data: dict, idx: Dict[tuple, int]) -> List[dict]:
     return out
 
 
+def gold_files(q: dict) -> List[str]:
+    out: List[str] = []
+    for e in q.get("evidence") or []:
+        if e["file"] not in out:
+            out.append(e["file"])
+    return out
+
+
+def score_documents(data: dict, q: dict, ms: float) -> dict:
+    """Document-level scores of one group_by=document answer."""
+    docs = data.get("documents") or []
+    out = {"ms": round(ms, 1), "n_documents": len(docs),
+           "top_score": docs[0]["score"] if docs else None,
+           "files": [d.get("name") for d in docs[:5]]}
+    if q.get("evidence"):
+        out.update(rm.document_metrics([d.get("name") for d in docs], gold_files(q)))
+    return out
+
+
+def ask_documents(api: Folio, query: str, folders: List[str]) -> dict:
+    t0 = time.perf_counter()
+    data = api.search({"query": query, "folders": folders, "group_by": "document",
+                       "top_k": DOC_TOP_K})
+    return {"data": data, "ms": (time.perf_counter() - t0) * 1000}
+
+
+def search_results(data: dict, idx: Dict[tuple, int]) -> List[dict]:
+    """Passages of a group_by=passage /api/search answer (leaves: auto_merge off)."""
+    out = []
+    for r in data.get("results") or []:
+        md = r.get("metadata") or {}
+        ci = idx.get((md.get("file_name"), rm.normalize(r.get("text") or "")))
+        out.append({"text": r.get("text") or "", "file_name": md.get("file_name"),
+                    "score": r.get("score"), "chunk_range": (ci, ci) if ci is not None else None,
+                    "folder": (r.get("folder") or {}).get("name")})
+    return out
+
+
 async def run_once(api: Folio, folder: dict, questions: List[dict], loc: dict,
                    run_no: int) -> List[dict]:
     idx = leaf_index_by_text(loc["leaves"])
@@ -357,10 +419,126 @@ async def run_once(api: Folio, folder: dict, questions: List[dict], loc: dict,
                         if r.get(s) is not None:
                             stage[s] = min(stage.get(s, 10**6), r[s])
             row["trace"]["stage_ranks"] = stage
+            d = await asyncio.to_thread(ask_documents, api, q["question"], [folder["name"]])
+            row["documents"] = score_documents(d["data"], q, d["ms"])
             rows.append(row)
             if n % 20 == 0 or n == len(questions):
                 log(f"  run {run_no}: {n}/{len(questions)}")
     return rows
+
+
+def run_split(api: Folio, folders: List[dict], questions: List[dict], loc: dict,
+              run_no: int) -> List[dict]:
+    """--split: every question across the split folders, as passages and documents."""
+    idx = leaf_index_by_text(loc["leaves"])
+    names = [f["name"] for f in folders]
+    rows = []
+    for n, q in enumerate(questions, 1):
+        gold = loc["gold"].get(q["id"], {})
+        row = {"id": q["id"], "type": q["type"], "lang": q["lang"],
+               "answerable": bool(q.get("evidence"))}
+        t0 = time.perf_counter()
+        data = api.search({"query": q["question"], "folders": names, "group_by": "passage",
+                           "top_k": 20, "auto_merge": False})
+        ms = (time.perf_counter() - t0) * 1000
+        res = search_results(data, idx)
+        row["search"] = score_results(res, q, gold)
+        row["search"].update({"ms": round(ms, 1), "n_results": len(res),
+                              "folders_hit": sorted({r["folder"] for r in res if r["folder"]}),
+                              "skipped": len(data.get("skipped_folders") or [])})
+        d = ask_documents(api, q["question"], names)
+        row["documents"] = score_documents(d["data"], q, d["ms"])
+        rows.append(row)
+        if n % 20 == 0 or n == len(questions):
+            log(f"  split run {run_no}: {n}/{len(questions)}")
+    return rows
+
+
+def summarise_documents(rows: List[dict]) -> dict:
+    ans = [r for r in rows if r["answerable"] and "documents" in r]
+    if not ans:
+        return {}
+    flat = [dict(r["documents"], type=r["type"], lang=r["lang"]) for r in ans]
+    ks = [m for m in DOC_METRICS if any(m in f for f in flat)]
+    allm = [r["documents"] for r in rows if "documents" in r and r["type"] != OUT_OF_SCOPE]
+    return {"overall": {m: round(rm.mean(f[m] for f in flat if m in f), 4) for m in ks},
+            "by_type": rm.group_means(flat, lambda f: f["type"], ks),
+            "by_lang": rm.group_means(flat, lambda f: f["lang"], ks),
+            "documents_mean": round(rm.mean(m["n_documents"] for m in allm), 2),
+            "latency_ms_p50": round(rm.percentile([m["ms"] for m in allm], 50), 1),
+            "latency_ms_p95": round(rm.percentile([m["ms"] for m in allm], 95), 1)}
+
+
+def summarise_split(rows: List[dict]) -> dict:
+    golden = [r for r in rows if r["type"] != OUT_OF_SCOPE]
+    ans = [r for r in rows if r["answerable"]]
+    flat = [dict(r["search"], type=r["type"], lang=r["lang"]) for r in ans]
+    ks = [m for m in METRICS if any(m in f for f in flat)]
+    hits: Dict[int, int] = {}
+    for r in golden:
+        k = len(r["search"]["folders_hit"])
+        hits[k] = hits.get(k, 0) + 1
+    return {"n": len(golden), "n_answerable": len(ans),
+            "search": {"overall": {m: round(rm.mean(f[m] for f in flat if m in f), 4) for m in ks},
+                       "by_type": rm.group_means(flat, lambda f: f["type"], ks),
+                       "by_lang": rm.group_means(flat, lambda f: f["lang"], ks),
+                       "latency_ms_p50": round(rm.percentile([r["search"]["ms"] for r in golden], 50), 1),
+                       "latency_ms_p95": round(rm.percentile([r["search"]["ms"] for r in golden], 95), 1),
+                       "folders_in_top20": {str(k): v for k, v in sorted(hits.items())}},
+            "documents": summarise_documents(rows)}
+
+
+def documents_markdown(d: dict, title: str = "## Results by document") -> List[str]:
+    """The group_by=document section (harness v3+; empty for older reports)."""
+    if not d:
+        return []
+    o = d["overall"]
+    L = [title, "",
+         f"POST /api/search with group_by=document, top {DOC_TOP_K} documents. A question's "
+         "gold documents are the source files of its evidence; doc R@k = share of them among "
+         "the top k documents, MRR@10 = 1 / rank of the first one. "
+         f"Documents per answer: {d['documents_mean']}; latency p50 {d['latency_ms_p50']} ms, "
+         f"p95 {d['latency_ms_p95']} ms.", "",
+         "| group | n | doc R@1 | doc R@3 | doc R@5 | doc R@10 | doc MRR@10 |",
+         "|---|---|---|---|---|---|---|",
+         f"| all | — | {fmt(o.get('doc_recall@1'))} | {fmt(o.get('doc_recall@3'))} | "
+         f"{fmt(o.get('doc_recall@5'))} | {fmt(o.get('doc_recall@10'))} | {fmt(o.get('doc_mrr@10'))} |"]
+    for g, v in d["by_type"].items():
+        L.append(f"| {g} | {v['n']} | {fmt(v.get('doc_recall@1'))} | {fmt(v.get('doc_recall@3'))} | "
+                 f"{fmt(v.get('doc_recall@5'))} | {fmt(v.get('doc_recall@10'))} | "
+                 f"{fmt(v.get('doc_mrr@10'))} |")
+    L.append("")
+    return L
+
+
+def split_markdown(rep: dict) -> str:
+    s = rep["summary"]
+    o = s["search"]["overall"]
+    L = [f"# Retrieval across folders — {rep['date']} — `{rep['label']}`", "",
+         f"Folio at {rep['server']} (code `{rep['code_ref']}`): the eval corpus split over "
+         f"{len(rep['folders'])} folders ("
+         + ", ".join(f"`{f['name']}` {len(f['files'])} files" for f in rep["folders"])
+         + f"), {s['n']} questions ({s['n_answerable']} answerable), {rep['runs']} run(s). "
+         "Every question is asked once across all the folders through POST /api/search; "
+         "each folder is searched with its own index, the candidates are pooled and "
+         "reranked once. Harness v" + str(rep["harness"]) + ".", "",
+         "Models: " + ", ".join(f"{k} `{v}`" for k, v in rep["models"].items()), "",
+         "## Passages across folders (top 20, no auto-merge; compare with the trace path of "
+         "a one-folder baseline)", "",
+         "| R@5 | R@10 | R@20 | MRR@10 | nDCG@10 | file R@5 | latency p50 | p95 |",
+         "|---|---|---|---|---|---|---|---|",
+         f"| {fmt(o.get('recall@5'))} | {fmt(o.get('recall@10'))} | {fmt(o.get('recall@20'))} | "
+         f"{fmt(o.get('mrr@10'))} | {fmt(o.get('ndcg@10'))} | {fmt(o.get('file_recall@5'))} | "
+         f"{s['search']['latency_ms_p50']} ms | {s['search']['latency_ms_p95']} ms |", "",
+         "Folders represented in a question's top 20: "
+         + ", ".join(f"{k} folder(s): {v}" for k, v in s["search"]["folders_in_top20"].items()), "",
+         "| type | n | R@5 | R@10 | R@20 | MRR@10 |", "|---|---|---|---|---|---|"]
+    for g, v in s["search"]["by_type"].items():
+        L.append(f"| {g} | {v['n']} | {fmt(v.get('recall@5'))} | {fmt(v.get('recall@10'))} | "
+                 f"{fmt(v.get('recall@20'))} | {fmt(v.get('mrr@10'))} |")
+    L.append("")
+    L += documents_markdown(s["documents"], "## Documents across folders")
+    return "\n".join(L)
 
 
 # -------------------------------------------------------------------- reporting
@@ -420,6 +598,7 @@ def summarise(rows: List[dict]) -> dict:
         s["thresholds"] = fa
         out[mode] = s
     out["relevance"] = summarise_relevance(rows)
+    out["documents"] = summarise_documents(rows)
     allm = [r["mcp"] for r in golden]
     out["mcp_response"] = {
         "tokens_mean": round(rm.mean(m["tokens"] for m in allm), 1),
@@ -467,6 +646,8 @@ def variance(summaries: List[dict]) -> dict:
                 d[f"{mode}.{m}"] = v
         for m in ("tokens_mean", "dup_ratio_mean", "latency_ms_p50", "latency_ms_p95"):
             d[f"mcp_response.{m}"] = s["mcp_response"][m]
+        for m, v in (s.get("documents") or {}).get("overall", {}).items():
+            d[f"documents.{m}"] = v
         return d
     fl = [flat(s) for s in summaries]
     out = {}
@@ -576,6 +757,7 @@ def markdown_report(rep: dict) -> str:
           + ", ".join(f"{t} → {fmt(s['mcp']['thresholds'][f'answerable_accept@{t}'])}" for t in THRESHOLDS)
           + " on the MCP path).", ""]
     L += relevance_markdown(s)
+    L += documents_markdown(s.get("documents") or {})
     for dim, title in (("by_type", "By question type"), ("by_lang", "By question language")):
         L += [f"## {title}", "",
               "| group | n | MCP R@5 | MCP R@10 | MCP MRR@10 | MCP nDCG@10 | file R@5 | MCP k20 R@20 "
@@ -658,6 +840,9 @@ def main() -> int:
     ap.add_argument("--no-out-of-scope", action="store_true",
                     help="skip evals/rag/out_of_scope_qa.yaml (relevance section: near misses only)")
     ap.add_argument("--report", metavar="JSON", help="only re-render the Markdown of a results JSON")
+    ap.add_argument("--split", type=int, default=0, metavar="N",
+                    help="spread the corpus over N folders and search across them "
+                         "(POST /api/search); writes rag-<date>-<label>-splitN")
     ap.add_argument("--env", action="append", default=[], metavar="KEY=VALUE",
                     help="environment facts the API cannot report (e.g. pgvector=0.8.7); "
                          "recorded in the baseline")
@@ -665,10 +850,13 @@ def main() -> int:
 
     if args.report:
         rep = json.loads(Path(args.report).read_text(encoding="utf-8"))
-        Path(args.report).with_suffix(".md").write_text(markdown_report(rep), encoding="utf-8")
+        render = split_markdown if rep.get("split") else markdown_report
+        Path(args.report).with_suffix(".md").write_text(render(rep), encoding="utf-8")
         return 0
     token = json.loads(Path(args.token_file).read_text())["token"]
     api = Folio(args.server, token)
+    if args.split and args.split > 1:
+        return main_split(api, args)
     t_index = time.time()
     folder = ensure_indexed(api)
     log(f"folder {folder['name']} id={folder['id']}: {len(folder['files'])} files indexed "
@@ -739,9 +927,68 @@ def main() -> int:
     o = summary["mcp"]["overall"]
     log(f"\nMCP R@5 {o['recall@5']:.3f} R@10 {o['recall@10']:.3f} MRR@10 {o['mrr@10']:.3f} "
         f"nDCG@10 {o['ndcg@10']:.3f} | tokens/call {summary['mcp_response']['tokens_mean']}")
+    if summary.get("documents"):
+        d = summary["documents"]["overall"]
+        log(f"documents: R@1 {d['doc_recall@1']:.3f} R@3 {d['doc_recall@3']:.3f} "
+            f"R@5 {d['doc_recall@5']:.3f} MRR@10 {d['doc_mrr@10']:.3f}")
     served = summary["relevance"]["served"]
     log(f"low_relevance at min_relevance={served['min_relevance']}: "
         + ", ".join(f"{k} {v}" for k, v in served["low_relevance_rate"].items()))
+    log(f"wrote {stem}.json and .md")
+    return 0
+
+
+def main_split(api: Folio, args) -> int:
+    folders = [ensure_indexed(api, name=name, corpus=files)
+               for name, files in split_corpus(args.split).items()]
+    for f in folders:
+        log(f"folder {f['name']} id={f['id']}: {len(f['files'])} files indexed")
+    if args.index_only:
+        return 0
+    merged = {"id": None, "name": "split", "files": {}}
+    for f in folders:
+        merged["files"].update(f["files"])
+    questions = load_questions(QA_FILE, args.limit)
+    # localise_gold reads chunks per file through its folder
+    leaves, gold, unreachable = {}, {}, []
+    for f in folders:
+        part = localise_gold(api, f, questions)
+        leaves.update(part["leaves"])
+        for qid, g in part["gold"].items():
+            gold.setdefault(qid, {}).update(g)
+    reached = {(qid, i) for qid, g in gold.items() for i in g}
+    for q in questions:
+        for i, ev in enumerate(q.get("evidence") or []):
+            if (q["id"], i) not in reached:
+                unreachable.append({"id": q["id"], "file": ev["file"], "spans": ev["spans"]})
+    loc = {"leaves": leaves, "gold": gold, "unreachable": unreachable}
+    config = settings_snapshot(api)
+    runs = [run_split(api, folders, questions, loc, i) for i in range(1, args.runs + 1)]
+    summaries = [summarise_split(r) for r in runs]
+    sha = git_short_sha()
+    label = args.label or f"dev-{sha}"
+    date = datetime.date.today().isoformat()
+    models = {k.split(".")[1]: config.get(k) for k in
+              ("rag.embedding.model", "rag.rerank.model", "rag.llm.model") if config.get(k)}
+    rep = {"date": date, "label": label, "code_ref": sha, "server": args.server,
+           "harness": HARNESS_VERSION, "runs": args.runs, "split": args.split,
+           "folders": [{"id": f["id"], "name": f["name"], "files": sorted(f["files"])} for f in folders],
+           "golden_set": {"file": str(QA_FILE.relative_to(REPO)), "n": len(questions),
+                          "sha256": sha256_file(QA_FILE)},
+           "models": models, "config": config,
+           "unreachable": unreachable, "summary": summaries[0], "summary_per_run": summaries,
+           "per_question": runs[0]}
+    out_dir = Path(args.out)
+    out_dir.mkdir(parents=True, exist_ok=True)
+    stem = out_dir / f"rag-{date}-{label}-split{args.split}"
+    stem.with_suffix(".json").write_text(json.dumps(rep, ensure_ascii=False, indent=1) + "\n",
+                                         encoding="utf-8")
+    stem.with_suffix(".md").write_text(split_markdown(rep), encoding="utf-8")
+    o = summaries[0]["search"]["overall"]
+    d = summaries[0]["documents"]["overall"]
+    log(f"\nacross {args.split} folders: R@5 {o['recall@5']:.3f} R@10 {o['recall@10']:.3f} "
+        f"R@20 {o['recall@20']:.3f} MRR@10 {o['mrr@10']:.3f} | doc R@1 {d['doc_recall@1']:.3f} "
+        f"R@5 {d['doc_recall@5']:.3f} MRR {d['doc_mrr@10']:.3f}")
     log(f"wrote {stem}.json and .md")
     return 0
 

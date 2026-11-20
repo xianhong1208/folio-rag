@@ -56,7 +56,14 @@ What the harness measures, per question type and question language:
 - **mcp** — the MCP search tool with its defaults (what an agent receives); **mcp_k20**
   — the same with `top_k=20`; **trace** — the console retrieval trace (`top_k=20`):
   fused + reranked leaves before auto-merge / expansion, with each hit's rank in the
-  dense, BM25 and fused candidate lists (reported as lower bounds on stage recall).
+  dense, BM25 and fused candidate lists (reported as lower bounds on stage recall);
+  **documents** (harness v3) — `POST /api/search` with `group_by: document`, top 10
+  documents, scored against each question's source files: document recall@1/3/5/10 and
+  MRR@10 (*Results by document* section).
+- `--split N` spreads the corpus over N folders (`folio_eval_golden_v1_partIofN`,
+  round-robin by file name) and asks every question once across them through
+  `POST /api/search`: passages (top 20, no auto-merge — compare with the trace path of a
+  one-folder run) and documents. It writes `rag-<date>-<label>-splitN.{json,md}`.
 - chunk-level Recall@5/10/20, MRR@10, nDCG@10: a result matches an evidence item when
   its text contains ≥60% of every quoted span (8-character windows after normalising
   away whitespace, punctuation and Markdown), or when it is the leaf next to the chunk

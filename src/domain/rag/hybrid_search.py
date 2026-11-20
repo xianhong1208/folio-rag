@@ -92,6 +92,27 @@ _STAGE_TIMINGS: contextvars.ContextVar[Optional[Dict[str, float]]] = contextvars
     "folio_stage_timings", default=None)
 
 
+# Per-request memo of query segmentations ({(segmenter, query): task}). A search over
+# several folders segments the query once per segmenter instead of once per folder
+# (segmentation runs on one thread, so N folders would otherwise queue N copies of
+# the same CKIP call). Unset (None) outside :func:`shared_query_work`.
+_SEGMENT_MEMO: contextvars.ContextVar[Optional[Dict[Any, "asyncio.Future"]]] = contextvars.ContextVar(
+    "folio_segment_memo", default=None)
+
+
+class shared_query_work:
+    """Context manager: inside it, searches of the same query share their query
+    segmentation (one per segmenter). Used by the search across folders."""
+
+    def __enter__(self):
+        self._token = _SEGMENT_MEMO.set({})
+        return self
+
+    def __exit__(self, *exc):
+        _SEGMENT_MEMO.reset(self._token)
+        return False
+
+
 def record_stage(stage: str, started: float) -> None:
     """Add the time since ``started`` (perf_counter) to ``stage`` of the current
     request's timings; a no-op outside a timed search."""
@@ -114,8 +135,15 @@ class SearchSettings:
     rerank_pool: str = RERANK_POOL_PER_LIST
     rerank_dense_candidates: int = DEFAULT_RERANK_DENSE_CANDIDATES
     rerank_sparse_candidates: int = DEFAULT_RERANK_SPARSE_CANDIDATES
+    # Only chunks of these files (a document filter, resolved to file ids by the
+    # caller); None = the whole folder. An empty tuple matches nothing. Part of
+    # cache_fingerprint (it hashes every field), so a filtered search never shares a
+    # cache entry with an unfiltered one or with another filter's.
+    file_ids: Optional[Tuple[str, ...]] = None
 
     def __post_init__(self):
+        if self.file_ids is not None and not isinstance(self.file_ids, tuple):
+            object.__setattr__(self, "file_ids", tuple(sorted(str(x) for x in self.file_ids)))
         if self.fusion not in FUSIONS:
             object.__setattr__(self, "fusion", FUSION_RRF)
         if self.rerank_pool not in RERANK_POOLS:
@@ -172,12 +200,15 @@ def configured_text_search_config() -> str:
 
 
 def cache_fingerprint(query_text: str, settings: SearchSettings, *, reranker=None,
-                      merge_threshold: Optional[float] = None) -> str:
+                      merge_threshold: Optional[float] = None,
+                      filter_key: Optional[str] = None) -> str:
     """Hash of everything that changes a search's results, for the result cache.
 
     Covers the query, every SearchSettings field, the segmenter (simple config
     only), the reranker's model / threshold / prompt templates and the merge
     threshold, so a changed setting can never be answered from a stale entry.
+    ``filter_key`` is the document filter's canonical form (the file ids it matched
+    are in ``settings.file_ids``).
     """
     import hashlib
 
@@ -192,6 +223,7 @@ def cache_fingerprint(query_text: str, settings: SearchSettings, *, reranker=Non
     else:
         parts.append("no_rerank")
     parts.append(f"merge:{merge_threshold}")
+    parts.append(f"filter:{filter_key or ''}")
     return hashlib.sha256("\x1f".join(parts).encode("utf-8")).hexdigest()
 
 
@@ -324,30 +356,47 @@ def to_tsquery_text(lexemes: Sequence[str], op: str) -> str:
     return f" {op} ".join(quoted)
 
 
-def _bm25_statement(table: str):
+# Restricts a chunk query to the files of a document filter (bound :file_ids).
+_FILE_FILTER_SQL = "(metadata_->>'file_id') = ANY(CAST(:file_ids AS text[]))"
+
+
+def _bm25_statement(table: str, filtered: bool = False):
     """One statement for both keyword passes: rows matching ANY term, rows that
     match ALL terms first, then by ts_rank. (It used to be an AND query plus an
-    OR query to fill up to k — two round trips whenever AND came up short.)"""
+    OR query to fill up to k — two round trips whenever AND came up short.)
+    ``filtered``: only chunks of the files bound as ``:file_ids``."""
     from sqlalchemy import text as _sql
 
     # table is server-generated (folder id + uuid), never user input.
+    file_filter = f"AND {_FILE_FILTER_SQL} " if filtered else ""
     return _sql(
         f'SELECT node_id, text, metadata_, ts_rank(text_search_tsv, q_any) AS rank '
         f'FROM "{table}", to_tsquery(CAST(:cfg AS regconfig), :q_any) AS q_any, '
         f'to_tsquery(CAST(:cfg AS regconfig), :q_all) AS q_all '
-        f'WHERE text_search_tsv @@ q_any AND {_LEAF_ONLY_SQL} '
+        f'WHERE text_search_tsv @@ q_any AND {_LEAF_ONLY_SQL} {file_filter}'
         f'ORDER BY (text_search_tsv @@ q_all) DESC, rank DESC LIMIT :k')
 
 
-def _dense_statement(table: str):
+def _dense_statement(table: str, filtered: bool = False):
     """Cosine top-k over the folder table (parents are dropped in Python, as before:
-    a WHERE filter would make the HNSW scan return fewer than k rows)."""
+    a WHERE filter would make the HNSW scan return fewer than k rows).
+
+    ``filtered``: only chunks of the files bound as ``:file_ids``. HNSW applies a
+    WHERE after its scan, so a selective filter would come back short; the caller
+    turns on pgvector's iterative scan (hnsw.iterative_scan) for these queries."""
     from sqlalchemy import text as _sql
 
+    where = f"WHERE {_FILE_FILTER_SQL} " if filtered else ""
     return _sql(
         f'SELECT node_id, text, metadata_, '
         f'1 - (embedding <=> CAST(:emb AS vector)) AS similarity '
-        f'FROM "{table}" ORDER BY embedding <=> CAST(:emb AS vector) LIMIT :k')
+        f'FROM "{table}" {where}ORDER BY embedding <=> CAST(:emb AS vector) LIMIT :k')
+
+
+# pgvector >= 0.8: keep scanning the HNSW graph until enough rows pass the WHERE
+# filter. relaxed_order may return rows slightly out of distance order, so a
+# filtered dense list is re-sorted by similarity in Python.
+ITERATIVE_SCAN_SQL = "SET LOCAL hnsw.iterative_scan = relaxed_order"
 
 
 def _vector_literal(embedding: Sequence[float]) -> str:
@@ -505,7 +554,9 @@ class HybridSearcher:
         finally:
             record_stage("embed", t0)
 
-    async def dense(self, query_text: str, k: int) -> List[Any]:
+    async def dense(self, query_text: str, k: int,
+                    file_ids: Optional[Sequence[str]] = None,
+                    query_embedding: Optional[Sequence[float]] = None) -> List[Any]:
         """Vector search, leaves only (parents carry a zero vector, but be explicit).
 
         Runs its own cosine query rather than llama-index's: llama-index never
@@ -513,19 +564,34 @@ class HybridSearcher:
         leaks to the next user of the pooled connection), and an HNSW scan returns
         at most ef_search (default 40) rows — a deeper k was silently truncated.
         Here ``SET LOCAL`` scopes the raise to this query's transaction.
+
+        ``file_ids`` (a document filter) limits the scan to those files' chunks, with
+        pgvector's iterative index scan on so a selective filter still fills k.
+        ``query_embedding``: the query's embedding when the caller already has it (a
+        search across folders embeds the query once).
         """
         from src.domain.rag.chunk_lookup import ChunkLookup
 
-        embedding = await self.embed_query(query_text)
+        if file_ids is not None and not file_ids:
+            return []
+        embedding = (list(query_embedding) if query_embedding is not None
+                     else await self.embed_query(query_text))
         table = ChunkLookup._get_table_name(self._vector_store)
         ef = max(DEFAULT_EF_SEARCH, int(k))
+        filtered = file_ids is not None
+        params = {"emb": _vector_literal(embedding), "k": int(k)}
+        if filtered:
+            params["file_ids"] = list(file_ids)
         t0 = time.perf_counter()
         async with self._dense_engine().begin() as conn:
             await conn.execute(_sql_text(f"SET LOCAL hnsw.ef_search = {ef}"))
-            rows = (await conn.execute(_dense_statement(table), {
-                "emb": _vector_literal(embedding), "k": int(k)})).fetchall()
+            if filtered:
+                await _enable_iterative_scan(conn)
+            rows = (await conn.execute(_dense_statement(table, filtered), params)).fetchall()
         record_stage("dense", t0)
         nodes = [_row_to_node(r) for r in rows]
+        if filtered:
+            nodes.sort(key=lambda n: n.score, reverse=True)
         return [n for n in nodes if is_leaf(n)]
 
     # ----------------------------------------------------------------- sparse
@@ -558,6 +624,18 @@ class HybridSearcher:
         """
         if settings.text_search_config != "simple":
             return query_text
+        memo = _SEGMENT_MEMO.get()
+        if memo is None:
+            return await self._segment(query_text, segmenter_name)
+        key = (segmenter_name, query_text)
+        task = memo.get(key)
+        if task is None:
+            task = asyncio.ensure_future(self._segment(query_text, segmenter_name))
+            memo[key] = task
+        # shield: one cancelled caller must not cancel the segmentation the others await.
+        return await asyncio.shield(task)
+
+    async def _segment(self, query_text: str, segmenter_name: Optional[str]) -> str:
         t0 = time.perf_counter()
         try:
             from src.domain.rag.text_segmenter import get_segmenter
@@ -595,14 +673,17 @@ class HybridSearcher:
             self._stamp_cache[table] = (stamp, now + SEGMENTER_STAMP_TTL_S)
         return _usable_segmenter(stamp)
 
-    async def sparse(self, query_text: str, k: int, settings: SearchSettings) -> List[Any]:
+    async def sparse(self, query_text: str, k: int, settings: SearchSettings,
+                     file_ids: Optional[Sequence[str]] = None) -> List[Any]:
         """BM25 over leaf chunks in one statement: rows matching every term first,
         then rows matching any term, each by ts_rank.
 
         Parents are excluded in SQL: their long concatenated text otherwise wins
         ``ts_rank`` and fills the LIMIT. Failure degrades to "no BM25 hits"
-        (dense results still return).
+        (dense results still return). ``file_ids``: only those files' chunks.
         """
+        if file_ids is not None and not file_ids:
+            return []
         try:
             from src.domain.rag.chunk_lookup import ChunkLookup
             from db.db import get_async_engine
@@ -614,13 +695,17 @@ class HybridSearcher:
             lexemes = query_lexemes(await self.segment_query(query_text, settings, seg_name))
             if not lexemes:
                 return []
+            params = {
+                "cfg": settings.text_search_config,
+                "q_any": to_tsquery_text(lexemes, "|"),
+                "q_all": to_tsquery_text(lexemes, "&"),
+                "k": k}
+            if file_ids is not None:
+                params["file_ids"] = list(file_ids)
             t0 = time.perf_counter()
             async with engine.connect() as conn:
-                rows = list((await conn.execute(_bm25_statement(table), {
-                    "cfg": settings.text_search_config,
-                    "q_any": to_tsquery_text(lexemes, "|"),
-                    "q_all": to_tsquery_text(lexemes, "&"),
-                    "k": k})).fetchall())
+                rows = list((await conn.execute(
+                    _bm25_statement(table, file_ids is not None), params)).fetchall())
                 record_stage("bm25", t0)
         except Exception as e:  # noqa: BLE001
             logger.warning(f"BM25 search skipped ({type(e).__name__}: {e}); dense results only")
@@ -639,14 +724,18 @@ class HybridSearcher:
             depth = max(depth, *per_list_depths(settings))
         return depth
 
-    async def _retrieve(self, query_text: str, settings: SearchSettings, k: int):
+    async def _retrieve(self, query_text: str, settings: SearchSettings, k: int,
+                        query_embedding: Optional[Sequence[float]] = None):
         """(fused, dense, sparse, dense scores, sparse scores): the per-path lists
         hold the same node objects as ``fused``; their raw cosine / ts_rank scores are
         snapshotted before RRF rewrites ``node.score``."""
         # Independent paths: run them concurrently (latency = the slower one).
+        # file_ids only when filtered: an unfiltered search calls both exactly as before.
+        only = {"file_ids": settings.file_ids} if settings.file_ids is not None else {}
+        emb = {"query_embedding": query_embedding} if query_embedding is not None else {}
         dense, sparse = await asyncio.gather(
-            self.dense(query_text, k),
-            self.sparse(query_text, max(k, int(settings.sparse_top_k or 0)), settings))
+            self.dense(query_text, k, **only, **emb),
+            self.sparse(query_text, max(k, int(settings.sparse_top_k or 0)), settings, **only))
         dense_raw, sparse_raw = _snapshot(dense), _snapshot(sparse)
         t0 = time.perf_counter()
         if settings.fusion == FUSION_CONCAT:
@@ -690,6 +779,31 @@ class HybridSearcher:
                 seen.add(nid)
                 pool.append(n)
         return pool
+
+    async def folder_pool(self, query_text: str, settings: SearchSettings, *, dense_k: int,
+                          sparse_k: int, query_embedding: Optional[Sequence[float]] = None
+                          ) -> Optional[List[Any]]:
+        """This folder's share of a search across folders: its candidates, best first,
+        not reranked (the caller reranks the pool of every folder at once).
+
+        With a reranker: the ``per_list`` pool with these depths (the dense top
+        ``dense_k`` plus the BM25 top ``sparse_k``; the whole fused list for the
+        ``fused`` pool or concat fusion), in fused order first. Without one: the fused
+        top ``max(dense_k, sparse_k)``. None when the folder has no index table yet.
+        """
+        k = max(1, int(dense_k), int(sparse_k))
+        depths = replace(settings, top_k=1, rerank_dense_candidates=int(dense_k),
+                         rerank_sparse_candidates=int(sparse_k), rerank_candidates=k)
+        try:
+            fused, dense, sparse, _, _ = await self._retrieve(
+                query_text, depths, k, query_embedding=query_embedding)
+        except Exception as e:  # noqa: BLE001 - re-raised unless it is the missing table
+            if not is_missing_table_error(e, self._table_name()):
+                raise
+            return None
+        if self._reranker:
+            return self.rerank_pool(fused, dense, sparse, depths)
+        return list(fused)[:k]
 
     # ----------------------------------------------------------------- search
     async def search(self, query_text: str, settings: SearchSettings,
@@ -822,6 +936,25 @@ def _usable_segmenter(stamp: Optional[str]) -> Optional[str]:
         if profile == "cloud":
             return None
     return stamp
+
+
+_ITERATIVE_SCAN_WARNED = False
+
+
+async def _enable_iterative_scan(conn) -> None:
+    """Turn on hnsw.iterative_scan for this transaction. pgvector before 0.8 does not
+    know the setting: the filtered query then runs without it (it may return fewer
+    than k rows), and that is logged once. A savepoint keeps the failed SET from
+    aborting the transaction."""
+    global _ITERATIVE_SCAN_WARNED
+    try:
+        async with conn.begin_nested():
+            await conn.execute(_sql_text(ITERATIVE_SCAN_SQL))
+    except Exception as e:  # noqa: BLE001
+        if not _ITERATIVE_SCAN_WARNED:
+            _ITERATIVE_SCAN_WARNED = True
+            logger.warning(f"hnsw.iterative_scan unavailable (pgvector < 0.8?): filtered "
+                           f"searches may return fewer results ({type(e).__name__}: {e})")
 
 
 def _sql_text(sql: str):

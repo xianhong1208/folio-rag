@@ -12,7 +12,7 @@
 
 [project]
 name = "folio-rag"
-version = "1.5.1"
+version = "1.6.0"
 description = "Folio MCP Server — hierarchical chunking + auto-merging retrieval, designed for gpt-oss-120b"
 requires-python = ">=3.12,<3.13"
 

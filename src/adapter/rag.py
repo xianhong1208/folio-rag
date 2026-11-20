@@ -115,6 +115,7 @@ class RAGAdapter:
         sparse_top_k: Optional[int] = None,
         hybrid_alpha: Optional[float] = None,
         auto_merge: Optional[bool] = None,
+        filters=None,
     ) -> RAGQueryResult:
         """Delegates to RAGQueryService — hybrid query (+ auto-merge) with result cache."""
         return await self._query_svc.query_rag(
@@ -127,7 +128,13 @@ class RAGAdapter:
             sparse_top_k=sparse_top_k,
             hybrid_alpha=hybrid_alpha,
             auto_merge=auto_merge,
+            filters=filters,
         )
+
+    async def search_across(self, req, *, owner) -> dict:
+        """Delegates to RAGQueryService — one search over several folders (passages or
+        documents); see src/domain/rag/doc_search.py."""
+        return await self._query_svc.search_across(req, owner=owner)
 
     async def query_trace(
         self,
@@ -138,6 +145,7 @@ class RAGAdapter:
         similarity_cutoff: float = 0.7,
         sparse_top_k: Optional[int] = None,
         hybrid_alpha: Optional[float] = None,
+        filters=None,
     ) -> dict:
         """Delegates to RAGQueryService — retrieval-trace breakdown (diagnostic, bypasses cache)."""
         return await self._query_svc.query_trace(
@@ -148,6 +156,7 @@ class RAGAdapter:
             similarity_cutoff=similarity_cutoff,
             sparse_top_k=sparse_top_k,
             hybrid_alpha=hybrid_alpha,
+            filters=filters,
         )
 
     async def query(
@@ -162,6 +171,8 @@ class RAGAdapter:
         expand_context: bool,
         token: str,
         offset: Optional[int] = None,
+        file_ids: Optional[List[str]] = None,
+        filters: Optional[dict] = None,
     ) -> Dict[str, Any]:
         """Delegates to RAGQueryService — MCP agentic three-mode (search / list / read)."""
         return await self._query_svc.query_agentic(
@@ -174,6 +185,8 @@ class RAGAdapter:
             expand_context=expand_context,
             token=token,
             offset=offset,
+            file_ids=file_ids,
+            filters=filters,
         )
 
     async def delete_document_index(self, file_id: int, token: str) -> bool:

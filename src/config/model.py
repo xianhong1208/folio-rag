@@ -378,6 +378,10 @@ class RAGRetrievalConfig(BaseModel):
     # Max concurrent queries (REST + MCP share one semaphore; excess is queued). 8 keeps every
     # connection pool (5+10 each) within headroom.
     max_concurrent_queries: int = 8
+    # Search across folders (POST /api/search): at most this many folders are searched
+    # by one query; the rest are listed as skipped (folder_limit). Each extra folder adds
+    # its own dense + BM25 queries; the pooled rerank is capped separately.
+    max_search_folders: int = Field(20, ge=1, le=200)
 
     @field_validator("ckip_device", mode="before")
     @classmethod

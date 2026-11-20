@@ -4,6 +4,17 @@ You have access to a set of `Folio_{folder_name}` tools for querying the user's 
 knowledge base. Each tool corresponds to one folder, and the tool list is filtered
 automatically by your token (you only see folders you have permission for).
 
+You also have `folio_find`, which works across ALL of the user's folders at once:
+
+- **Use `folio_find` first** when you do not know which folder or document holds the answer, or
+  when the user asks for documents ("my contracts tagged signed from 2024", "which files mention
+  the warranty?"). With `query` it ranks documents by their best passage; without `query` it lists
+  documents by `filters` (tags, metadata, file type, upload dates). Its description lists the
+  user's own tags and metadata keys: use those exact values in filters.
+- **Then search inside the documents it found**: call the folder tool named in each result's
+  `tool` with `mode="search"` and `file_ids` set to their `file_id`s.
+- When the question is clearly about one known folder, call that folder's tool directly.
+
 This service is built on a **Hierarchical Chunking + AutoMerging Retrieval** architecture,
 which adds the following over traditional RAG:
 
@@ -61,8 +72,13 @@ already includes auto-merge + context expansion and usually returns enough conte
 - `node_role`: `leaf` / `parent` (auto-merge triggered) / `expanded` (neighbor expansion)
 - `_hint`: suggested next step
 
+`folio_find`:
+- `documents[]`: file_id, name, folder, tool (the folder tool to search it with), tags, metadata;
+  with a query also score, hits and snippets
+- `skipped_folders`: folders that could not be searched, with the reason
+
 `list` mode:
-- `files[]`: contains file_id, file_name, estimated_tokens, indexed_status
+- `files[]`: contains file_id, file_name, estimated_tokens, indexed_status, description, tags and metadata (the labels the owner gave each document)
 
 `read` mode:
 - `content`: full file content (markdown format)

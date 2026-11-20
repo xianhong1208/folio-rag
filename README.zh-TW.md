@@ -12,7 +12,8 @@
 ![Search Playground:附引用的答案,以及每筆結果的向量、BM25、融合與重排分數](docs/images/console-search.png)
 
 Folio 是一套開源、給 Model Context Protocol 用的檢索增強生成(RAG)伺服器。每個資料夾會成為一個
-`Folio_<folder>` 工具,有 **search**、**list**、**read** 三種模式。它是 OAuth 2.1 的
+`Folio_<folder>` 工具,有 **search**、**list**、**read** 三種模式;另有一個 `folio_find` 工具,依主題、標籤或
+metadata 跨你所有資料夾找文件。它是 OAuth 2.1 的
 **resource server**:只在本地離線驗證 token,從不簽發,搭配 [MCP Gate](https://github.com/xianhong1208/MCP_Gate)
 當授權伺服器。Folio 在 v1.1.0 以前叫 *Agentic RAG*;資料庫名稱(`agentic_rag`)與儲存目錄結構沿用舊名,
 不需要任何遷移。
@@ -46,12 +47,17 @@ Folio 是一套開源、給 Model Context Protocol 用的檢索增強生成(RAG)
 - **Contextual retrieval。** 索引時由 LLM 為每個 chunk 寫一句脈絡說明;重新索引改過的檔案時,只重做有變動的
   chunk。以舊版切塊流程或其他 embedding 模型索引的檔案,會標示需要重新索引。
 - **每人各自的資料夾。** 你只看得到自己 MCP Gate 帳號的資料夾,MCP、REST 與主控台都一樣。
+- **文件的標籤與 metadata。** 為檔案加上標籤與扁平的 key/value metadata(客戶、年份、到期日…),再用它們
+  篩選搜尋,或列出你所有資料夾裡符合條件的文件([文件篩選](docs/api.zh-TW.md#文件篩選))。
+- **跨資料夾搜尋,以文件為單位。** 一次搜尋你所有(或部分)資料夾,所有資料夾的候選只重排一次;結果可以是段落,
+  或依最佳段落排名、附上摘錄的文件([跨資料夾搜尋](docs/api.zh-TW.md#跨資料夾搜尋))。
 - **多種格式。** PDF、Office(含舊版與 RTF)、OpenDocument、HTML 與 MHTML、Markdown、EPUB、電子郵件、
   掃描的 PDF 與圖片(由 Qwen3-VL 等視覺模型讀取,表格保持表格;沒有視覺模型時 PDF 從文字層讀取)與音訊
   (由 OpenAI 相容端點轉錄,簡體中文會轉成繁體)。
 - **用數字說話。** 公開的 205 題黃金測試集與評測工具;主控台可以用 Recall@k、MRR、nDCG@k 為你自己的
   資料夾評分。
-- **主控台**在 `/admin`:資料夾與檔案、顯示逐訊號軌跡的 Search Playground、索引任務、查詢分析與知識缺口、
+- **主控台**在 `/admin`:Library 列出每一份文件,可依標籤、metadata、資料夾、類型與日期篩選、依內容搜尋、
+  批次編輯標籤與 metadata,並有文件面板;資料夾與檔案、顯示逐訊號軌跡的 Search Playground、索引任務、查詢分析與知識缺口、
   評測、即時設定、健康狀態與稽核紀錄。
 - **一個指令備份與還原。** `main.py backup` 把資料庫、每個資料夾的向量與儲存的檔案一起封存,附上一份
   `main.py restore` 會檢查的 manifest;伺服器也能依排程自動備份。`main.py export-folder` /
@@ -118,7 +124,7 @@ MCP_GATE_URL=http://localhost:4568          # MCP Gate 網址(RS256 JWKS issuer)
 FOLIO_AUDIENCE=http://127.0.0.1:5039/mcp    # 必須和在 MCP Gate 註冊的 audience 一字不差
 ```
 
-**3. 建立資料夾並加入文件**,可以在主控台(*Library → New Folder → Upload Files*,用 MCP Gate 發的
+**3. 建立資料夾並加入文件**,可以在主控台(*Folders → New Folder → Upload Files*,用 MCP Gate 發的
 personal access token 登入),或透過 REST:
 
 ```bash
@@ -143,6 +149,16 @@ Folio_product-docs  mode="search"  query="how do I rotate the signing key?"
 ```
 
 你會拿到相符的段落,屬於同一段的會合併在一起,每筆都附相關度分數、來源檔案與標題。
+
+不確定在哪個資料夾?先找文件,再到文件裡搜尋:
+
+```
+folio_find  query="signing key rotation"  filters={"tags_any": ["runbook"]}
+Folio_product-docs  mode="search"  query="how do I rotate the signing key?"  file_ids=["<file_id>"]
+```
+
+`folio_find` 跨所有資料夾為你的文件排名(每份附它所屬的資料夾工具、標籤、metadata 與簡短片段);不給
+`query` 時,則依標籤、metadata、類型或上傳日期列出文件。見 [MCP 工具](docs/api.zh-TW.md#mcp-工具)。
 
 ## 部署方式
 

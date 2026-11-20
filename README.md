@@ -12,7 +12,8 @@
 ![The Search Playground: an answer with citations, and each result's vector, BM25, fusion and rerank scores](docs/images/console-search.png)
 
 Folio is an open-source retrieval-augmented generation (RAG) server for the Model Context Protocol.
-Each folder becomes a `Folio_<folder>` tool with three modes, **search**, **list** and **read**. It
+Each folder becomes a `Folio_<folder>` tool with three modes, **search**, **list** and **read**, and
+one `folio_find` tool finds documents across all your folders by topic, tags or metadata. It
 is an OAuth 2.1 **resource server**: it verifies tokens offline and never issues them, and pairs
 with [MCP Gate](https://github.com/xianhong1208/MCP_Gate) as the authorization server. Folio was
 called *Agentic RAG* up to v1.1.0; the database names (`agentic_rag`) and the storage layout keep
@@ -54,13 +55,20 @@ read through OpenAI-compatible APIs).
   chunking pipeline or another embedding model are marked for re-indexing.
 - **Per-person folders.** You only see the folders of your MCP Gate account, over MCP, REST and the
   console alike.
+- **Tags and metadata on documents.** Label files with tags and flat key/value metadata (client,
+  year, a due date…), then filter a search or list documents across all your folders by them
+  ([document filters](docs/api.md#document-filters)).
+- **Search across folders, by document.** One search over all your folders (or some), reranked
+  once over every folder's candidates, answered as passages or as documents ranked by their best
+  passage with snippets ([search across folders](docs/api.md#search-across-folders)).
 - **Many formats.** PDF, Office (including legacy and RTF), OpenDocument, HTML and MHTML, Markdown,
   EPUB, email, scanned PDFs and images (read by a vision model such as Qwen3-VL, tables kept as
   tables; without one, PDFs are read from their text layer), and audio (transcribed by an
   OpenAI-compatible endpoint, with Simplified Chinese turned into Traditional).
 - **Measured, not guessed.** A public 205-question golden set and an evaluation harness; the
   console scores your own folders on Recall@k, MRR and nDCG@k.
-- **A console** at `/admin`: folders and files, a Search Playground with the per-signal trace, index
+- **A console** at `/admin`: a Library of every document with tag, metadata, folder, type and date
+  filters, content search, bulk tag / metadata edits and a document panel; folders and files, a Search Playground with the per-signal trace, index
   jobs, query analytics and knowledge gaps, evaluation, live settings, health and an audit log.
 - **Backup and restore in one command.** `main.py backup` archives the database, every folder's
   vectors and the stored files together, with a manifest that `main.py restore` checks; the server
@@ -129,7 +137,7 @@ MCP_GATE_URL=http://localhost:4568          # MCP Gate base URL (RS256 JWKS issu
 FOLIO_AUDIENCE=http://127.0.0.1:5039/mcp    # must equal the audience registered in MCP Gate
 ```
 
-**3. Create a folder and add documents**, in the console (*Library → New Folder → Upload Files*,
+**3. Create a folder and add documents**, in the console (*Folders → New Folder → Upload Files*,
 signed in with a personal access token from MCP Gate) or over REST:
 
 ```bash
@@ -155,6 +163,17 @@ Folio_product-docs  mode="search"  query="how do I rotate the signing key?"
 
 You get the matching passages, merged where they belong together, each with a relevance score and
 its source file and heading.
+
+Not sure which folder holds it? Find the documents first, then search inside them:
+
+```
+folio_find  query="signing key rotation"  filters={"tags_any": ["runbook"]}
+Folio_product-docs  mode="search"  query="how do I rotate the signing key?"  file_ids=["<file_id>"]
+```
+
+`folio_find` ranks your documents across every folder (each with its folder tool, tags, metadata and
+short snippets); without a `query` it lists documents by tags, metadata, type or upload date. See
+[MCP tools](docs/api.md#mcp-tools).
 
 ## Deployment options
 

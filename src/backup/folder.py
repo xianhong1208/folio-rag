@@ -56,8 +56,9 @@ FOLDER_EXPORT = Layout(FORMAT, FORMAT_VERSION, frozenset({FOLDER_JSON, CHUNKS_NA
 
 # Columns copied from an export; anything else in the archive is ignored. Ids, folder
 # ids and paths are always assigned by the import.
-FILE_COLUMNS = ("file_name", "file_size", "mime_type", "description", "tags", "content_hash",
-                "upload_time", "updated_time")
+FILE_COLUMNS = ("file_name", "file_size", "mime_type", "description", "tags", "metadata",
+                "content_hash", "upload_time", "updated_time")
+_JSONB_FILE_COLUMNS = ("tags", "metadata")
 INDEX_COLUMNS = ("index_id", "chunk_size", "chunk_overlap", "embedding_model", "num_chunks", "status",
                  "error_message", "content_hash", "index_warning", "pipeline_version",
                  "embedding_dimension", "indexed_at", "updated_at")
@@ -141,6 +142,34 @@ def _jsonable(value: Any) -> Any:
     if isinstance(value, Decimal):
         return int(value) if value == int(value) else float(value)
     return value
+
+
+def imported_labels(tags: Any, metadata: Any) -> Tuple[List[str], Dict[str, Any], bool]:
+    """(tags, metadata, all valid) for a file from an archive, through the same rules
+    as every other write (src/domain/rag/doc_meta.py). An export from before 1.6 has
+    no metadata and may have null tags: none, and valid. A value the rules refuse (a
+    hand-edited or foreign archive) is left out on its own rather than failing the
+    import, and reported through the third element."""
+    from src.domain.rag.doc_meta import (
+        MAX_META_KEYS, DocMetaError, check_meta_key, normalize_meta_value, normalize_tags)
+
+    ok = tags is None or isinstance(tags, list)
+    clean_tags: List[str] = []
+    for t in tags if isinstance(tags, list) else ():
+        try:
+            clean_tags = normalize_tags(clean_tags + [t])
+        except DocMetaError:
+            ok = False
+    ok = ok and (metadata is None or isinstance(metadata, dict))
+    clean_meta: Dict[str, Any] = {}
+    for k, v in metadata.items() if isinstance(metadata, dict) else ():
+        try:
+            if len(clean_meta) >= MAX_META_KEYS:
+                raise DocMetaError("too many metadata keys")
+            clean_meta[check_meta_key(k)] = normalize_meta_value(k, v)
+        except DocMetaError:
+            ok = False
+    return clean_tags, clean_meta, ok
 
 
 def _row(mapping) -> Dict[str, Any]:
@@ -554,12 +583,16 @@ def import_folder(archive: Path, *, db_url: str, storage_root: Path, owner: Opti
                 prefix = f"storage/{owner_dir_name(owner_key)}/{final}/"
                 ids = {f["id"]: str(uuid.uuid4()) for f in doc["files"]}
                 new_paths = {old: prefix + new for old, new in ids.items()}
+                bad_labels = 0
                 for f in doc["files"]:
                     row = {c: f.get(c) for c in FILE_COLUMNS}
-                    row["tags"] = json.dumps(row["tags"] if isinstance(row["tags"], list) else [])
+                    tags, metadata, ok = imported_labels(row["tags"], row["metadata"])
+                    bad_labels += 0 if ok else 1
+                    row["tags"], row["metadata"] = json.dumps(tags), json.dumps(metadata)
                     row.update(id=ids[f["id"]], folder_id=folder_id, file_path=new_paths[f["id"]])
                     cols = ", ".join(row)
-                    vals = ", ".join(f"CAST(:{c} AS JSONB)" if c == "tags" else f":{c}" for c in row)
+                    vals = ", ".join(f"CAST(:{c} AS JSONB)" if c in _JSONB_FILE_COLUMNS else f":{c}"
+                                     for c in row)
                     conn.execute(text(f'INSERT INTO "Files" ({cols}) VALUES ({vals})'), row)
 
                 table = f"data_{folder_id}_{table_uuid}"
@@ -619,6 +652,9 @@ def import_folder(archive: Path, *, db_url: str, storage_root: Path, owner: Opti
         engine.dispose()
     if dropped:
         warnings.append(f"{dropped} chunk(s) belonged to no exported file and were left out")
+    if bad_labels:
+        warnings.append(f"{bad_labels} file(s) had tags or metadata this Folio does not accept; "
+                        "the invalid ones were left out")
     if final != wanted:
         warnings.append(f"{owner_key!r} already has a folder named {wanted!r}; imported as {final!r}")
     return ImportResult(manifest=manifest, imported=True, warnings=warnings, folder_id=folder_id, name=final,

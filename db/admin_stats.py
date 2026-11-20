@@ -17,6 +17,7 @@ from src.domain.rag.chunk_identity import (
     configured_embedding,
     reindex_reason,
 )
+from src.domain.rag.doc_meta import stored_metadata, stored_tags
 from src.log import get_db_logger
 
 log = get_db_logger()
@@ -168,6 +169,9 @@ def files_with_index_status(folder_id: int) -> List[Dict[str, Any]]:
                 "size_bytes": int(f.file_size or 0),
                 "mime": f.mime_type,
                 "uploaded_at": _iso(f.upload_time),
+                "description": f.description,
+                "tags": stored_tags(f.tags),
+                "metadata": stored_metadata(getattr(f, "doc_metadata", None)),
                 "status": (ix.status if ix else "unindexed"),
                 "chunks": (ix.num_chunks or 0) if ix else 0,
                 "embedding_model": ix.embedding_model if ix else None,

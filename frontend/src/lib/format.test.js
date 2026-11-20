@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { fmtNum, fmtBytes, shortModel, fmtTime } from './format'
+import { fmtNum, fmtBytes, shortModel, fmtTime, fmtDate } from './format'
 
 describe('fmtNum', () => {
   it('renders an em dash for null/undefined', () => {
@@ -53,5 +53,13 @@ describe('fmtTime', () => {
     const out = fmtTime('2026-09-15T08:30:00Z')
     expect(out).not.toBe('—')
     expect(typeof out).toBe('string')
+  })
+})
+
+describe('fmtDate', () => {
+  it('shows the year, en-US', () => {
+    expect(fmtDate('2024-03-05T10:00:00')).toBe('Mar 5, 2024')
+    expect(fmtDate(null)).toBe('—')
+    expect(fmtDate('nope')).toBe('—')
   })
 })

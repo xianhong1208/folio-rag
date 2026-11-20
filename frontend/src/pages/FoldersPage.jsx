@@ -1,5 +1,6 @@
 import { useEffect, useState, useCallback, useRef } from 'react'
-import { Folder, Play, Pencil, Trash2, Download, Eye, X, RefreshCw, RotateCcw, XCircle, FolderInput, FolderOutput } from 'lucide-react'
+import { useSearchParams } from 'react-router-dom'
+import { Folder, Play, Pencil, Trash2, Download, Eye, X, RefreshCw, RotateCcw, XCircle, FolderInput, FolderOutput, Tag } from 'lucide-react'
 import { get, post, api, upload as uploadFile } from '../services/api'
 import { fmtNum, fmtBytes, fmtTime, shortModel } from '../lib/format'
 import { pillClass, statusLabel, needsRetry, canRetry, canCancel, isJobActive } from '../lib/jobs'
@@ -11,6 +12,7 @@ import { useModal } from '../contexts/ModalContext'
 import { useToast } from '../contexts/ToastContext'
 import ImportFolderDialog from '../components/ImportFolderDialog'
 import { exportProblem, importSummary, importWarnings, needsIndexAfterImport } from '../lib/folderArchive'
+import { parseTags, formatTags, parseMetadata, formatMetadata } from '../lib/docLabels'
 
 function statusPill(s) {
   return <span className={'pill ' + pillClass(s)}>{statusLabel(s)}</span>
@@ -27,6 +29,7 @@ export default function FoldersPage() {
   const [fq, setFq] = useState('')
   const [sel, setSel] = useState(new Set())
   const [chunks, setChunks] = useState(null) // { name, items } | null
+  const [edit, setEdit] = useState(null) // { file, tags, meta, err, saving } | null
   const fileInput = useRef(null)
   // The folder whose files are currently shown — used to drop a stale files
   // response that resolves after the user has already switched folders.
@@ -97,8 +100,22 @@ export default function FoldersPage() {
     return () => window.removeEventListener('keydown', onKey)
   }, [chunks])
 
-  const openFolder = (f) => { curIdRef.current = f.id; setCur({ id: f.id, name: f.name }); setFiles(null); setSel(new Set()) }
-  const back = () => { curIdRef.current = null; setCur(null); setFiles(null); setSel(new Set()); loadFolders() }
+  // The open folder is in the URL (/folders?folder=<id>), so the Library's document
+  // panel can link to it and the browser's Back returns to the list.
+  const [params, setParams] = useSearchParams()
+  const wanted = Number(params.get('folder')) || null
+  useEffect(() => {
+    if (!folders) return
+    if (wanted == null) {
+      if (curIdRef.current != null) { curIdRef.current = null; setCur(null); setFiles(null); setSel(new Set()) }
+      return
+    }
+    if (curIdRef.current === wanted) return
+    const f = folders.find((x) => x.id === wanted)
+    if (f) { curIdRef.current = f.id; setCur({ id: f.id, name: f.name }); setFiles(null); setSel(new Set()) }
+  }, [folders, wanted])
+  const openFolder = (f) => setParams({ folder: String(f.id) })
+  const back = () => { setParams({}); loadFolders() }
 
   const toggleSel = (id) => setSel((s) => { const n = new Set(s); n.has(id) ? n.delete(id) : n.add(id); return n })
   // One background job for the whole selection (it queues behind a running job). Re-indexing
@@ -253,10 +270,30 @@ export default function FoldersPage() {
     try { await api('DELETE', `/api/admin/manage/folders/${cur.id}/files/${fileId}`); toast('File deleted', 'ok'); loadFiles(cur.id) }
     catch (e) { toast('Delete failed: ' + e.message, 'bad') }
   }
+  const openEdit = (f) => setEdit({ file: f, tags: formatTags(f.tags), meta: formatMetadata(f.metadata), err: null, saving: false })
+  const saveEdit = async () => {
+    const meta = parseMetadata(edit.meta)
+    if (meta.error) { setEdit({ ...edit, err: meta.error }); return }
+    setEdit({ ...edit, err: null, saving: true })
+    try {
+      await api('PATCH', `/api/admin/manage/folders/${cur.id}/files/${edit.file.id}`,
+        { tags: parseTags(edit.tags), metadata: meta.value })
+      toast('Tags and metadata saved', 'ok')
+      setEdit(null)
+      loadFiles(cur.id)
+    } catch (err) { setEdit({ ...edit, err: err.message, saving: false }) }
+  }
   const upload = async (e) => {
     const list = [...(e.target.files || [])]
     e.target.value = ''
     if (!list.length) return
+    const opts = await form({
+      title: `Upload ${list.length} file(s)`, action: 'Upload',
+      fields: [{ id: 'tags', label: 'Tags (optional, comma-separated)', placeholder: 'invoice, 2024' }],
+      note: 'Tags label documents across all your folders; searches and the API can filter by them. Edit them later with the tag button on a file.',
+    })
+    if (!opts) return
+    const tags = parseTags(opts.tags).join(',')
     // The endpoint takes ONE file per request in field `file` (it used to be posted
     // as `files`, which the API rejected with 422 — and the result was never checked,
     // so uploads silently did nothing). Post sequentially so each failure is named.
@@ -265,6 +302,7 @@ export default function FoldersPage() {
       const fd = new FormData()
       fd.append('file', f)
       fd.append('auto_index', 'true')
+      if (tags) fd.append('tags', tags)
       try {
         await uploadFile(`/api/admin/manage/folders/${cur.id}/files`, fd)
         ok++
@@ -344,7 +382,11 @@ export default function FoldersPage() {
                       <td className="selcol"><input type="checkbox" className="selcheck" checked={sel.has(f.id)} onChange={() => toggleSel(f.id)} /></td>
                       <td className="cell-main file-cell">{f.name}{f.error && <div className="sub" style={{ color: 'var(--alert-hi)', whiteSpace: 'normal' }}>{f.error}</div>}
                         {isPartial(f) && <div className="sub" style={{ color: 'var(--signal-hi)', whiteSpace: 'normal' }}>{f.warning}</div>}
-                        {needsReindex(f) && <div className="sub"><span className="reindex-badge" title={reindexNote(f)}>Re-index recommended</span></div>}</td>
+                        {needsReindex(f) && <div className="sub"><span className="reindex-badge" title={reindexNote(f)}>Re-index recommended</span></div>}
+                        {(f.tags?.length > 0 || Object.keys(f.metadata || {}).length > 0) && <div className="tag-row" title={formatMetadata(f.metadata)}>
+                          {(f.tags || []).map((t) => <span className="tag-chip" key={t}>{t}</span>)}
+                          {Object.keys(f.metadata || {}).length > 0 && <span className="meta-count">{Object.keys(f.metadata).length} metadata</span>}
+                        </div>}</td>
                       <td className="statuscol">{f._stage ? <>{statusPill(f._stage)}{f._stagePct != null && <span className="stage-bar"><div style={{ width: f._stagePct + '%' }} /></span>}</> : isPartial(f) ? <span className="pill warn" title={f.warning}>Partial</span> : statusPill(f.status)}</td>
                       <td className="num">{fmtNum(f.chunks)}</td>
                       <td className="num">{fmtBytes(f.size_bytes)}</td>
@@ -353,6 +395,7 @@ export default function FoldersPage() {
                         {f.status === 'indexed' && <button className="act-btn" title="View chunks" onClick={() => viewChunks(f)}><Eye size={14} /></button>}
                         {canCancel(f) && <button className="act-btn danger" title="Cancel indexing" aria-label="Cancel indexing" onClick={() => cancelFile(f)}><XCircle size={14} /></button>}
                         {canRetry(f) && <button className={'act-btn' + (needsRetry(f) ? ' warn' : '')} title={needsRetry(f) ? 'Retry' : (needsReindex(f) ? 'Re-index (recommended)' : 'Reindex')} aria-label={needsRetry(f) ? 'Retry' : 'Reindex'} onClick={() => retryFile(f)}><RotateCcw size={14} /></button>}
+                        <button className="act-btn" title="Edit tags and metadata" aria-label="Edit tags and metadata" onClick={() => openEdit(f)}><Tag size={14} /></button>
                         <button className="act-btn" title="Download" onClick={() => window.open(`/api/admin/manage/folders/${cur.id}/files/${f.id}/download`, '_blank')}><Download size={14} /></button>
                         <button className="act-btn danger" title="Delete file" onClick={() => deleteFile(f.id)}><Trash2 size={14} /></button>
                       </div></td>
@@ -361,6 +404,32 @@ export default function FoldersPage() {
             </tbody>
           </table>
         </div>
+
+        {edit && (
+          <div className="modal-scrim" onMouseDown={(e) => { if (e.target === e.currentTarget && !edit.saving) setEdit(null) }}>
+            <div className="modal" role="dialog" aria-label="Edit tags and metadata">
+              <h3>Tags and metadata · <span className="mono">{edit.file.name}</span></h3>
+              <div className="m-body">
+                <div>
+                  <label htmlFor="edit-tags">Tags (comma-separated)</label>
+                  <input id="edit-tags" autoFocus placeholder="invoice, signed" value={edit.tags}
+                    onChange={(e) => setEdit({ ...edit, tags: e.target.value })} />
+                </div>
+                <div>
+                  <label htmlFor="edit-meta">Metadata (one key: value per line)</label>
+                  <textarea id="edit-meta" rows={5} placeholder={'client: Acme\nyear: 2024\nsigned: 2024-03-01'} value={edit.meta}
+                    onChange={(e) => setEdit({ ...edit, meta: e.target.value })} />
+                </div>
+                <div className={'m-note' + (edit.err ? ' warn' : '')}>{edit.err ||
+                  'Keys: lowercase letters, digits and _. Values: text, numbers, true / false or dates (YYYY-MM-DD); quote a value to keep it text. Up to 32 tags and 32 keys.'}</div>
+              </div>
+              <div className="m-foot">
+                <button className="btn-ghost" onClick={() => setEdit(null)} disabled={edit.saving}>Cancel</button>
+                <button className="btn-cyber" onClick={saveEdit} disabled={edit.saving}>{edit.saving ? 'Saving…' : 'Save'}</button>
+              </div>
+            </div>
+          </div>
+        )}
 
         {chunks && (
           <div className="modal-scrim" onMouseDown={(e) => { if (e.target === e.currentTarget) setChunks(null) }}>

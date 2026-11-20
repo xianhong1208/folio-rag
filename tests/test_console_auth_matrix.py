@@ -96,7 +96,7 @@ def _admin_routes():
 
 def test_route_inventory_is_complete():
     # If this changes, extend the matrix below (and the report table) for the new route.
-    assert len(_admin_routes()) == 38
+    assert len(_admin_routes()) == 39
 
 
 @pytest.mark.parametrize("method, path", _admin_routes())
@@ -120,6 +120,8 @@ PER_FOLDER = [
     ("PATCH", "/api/admin/manage/folders/{f}", {"name": "x"}, "src.api.router.folder_api.update_folder_api"),
     ("DELETE", "/api/admin/manage/folders/{f}", None, "src.api.router.folder_api.delete_folder"),
     ("GET", "/api/admin/manage/folders/{f}/files/" + FID + "/download", None, "src.api.router.file_api.download_file"),
+    ("PATCH", "/api/admin/manage/folders/{f}/files/" + FID, {"tags": ["x"], "metadata": {"y": 1}},
+     "src.api.router.file_api.update_file"),
     ("DELETE", "/api/admin/manage/folders/{f}/files/" + FID, None, "src.api.router.file_api.delete_file"),
     ("POST", "/api/admin/manage/folders/{f}/index", {"skip_existing": True}, "src.api.router.rag_indexing.index_folder_endpoint"),
     ("POST", "/api/admin/manage/folders/{f}/index", {"skip_existing": False}, "src.api.router.rag_indexing.reindex_folder_endpoint"),

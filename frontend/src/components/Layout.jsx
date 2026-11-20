@@ -1,13 +1,13 @@
 import { NavLink, Outlet, useLocation } from 'react-router-dom'
 import { useEffect, useState } from 'react'
-import { Home, Library, Search, BarChart3, SlidersHorizontal, Activity, Sun, Moon, LogOut, Menu } from 'lucide-react'
+import { Home, Library, Folders, Search, BarChart3, SlidersHorizontal, Activity, Sun, Moon, LogOut, Menu } from 'lucide-react'
 import { useSession } from '../contexts/SessionContext'
 import { sessionLabel, expiresIn } from '../lib/session'
 import { saveTheme } from '../lib/theme'
 import { NAV, navEntryFor, activeTab, crumbs } from '../lib/nav'
 import PageCap from './PageCap'
 
-const ICONS = { overview: Home, library: Library, search: Search, insights: BarChart3, settings: SlidersHorizontal, system: Activity }
+const ICONS = { overview: Home, library: Library, folders: Folders, search: Search, insights: BarChart3, settings: SlidersHorizontal, system: Activity }
 
 function UserBadge() {
   const { session, isAdmin, logout } = useSession()
@@ -93,7 +93,7 @@ export default function Layout() {
           })}
         </nav>
         <div className="side-foot">
-          <div className="side-ver">folio v1.5.1</div>
+          <div className="side-ver">folio v1.6.0</div>
           <button className="theme-btn" onClick={toggleTheme}>
             {theme === 'dark' ? <Sun size={14} /> : <Moon size={14} />}
             {theme === 'dark' ? 'Light' : 'Dark'}

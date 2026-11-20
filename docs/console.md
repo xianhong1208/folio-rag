@@ -26,14 +26,34 @@ Paste the token on the login screen. Folders created before 1.4.1 belong to the 
 | Page | What you do there |
 |------|-------------------|
 | **Overview** | The live retrieval pipeline, corpus readouts, index health, and model-service status. |
-| **Folders** | Create folders (owned by you); open one to upload files, watch per-file index status, view chunks (with the AI context line shown apart from the document text), reindex, or delete. **Export** downloads a folder as one archive and **Import** brings one back as a new folder of yours ([details](backup.md#in-the-console)). Files indexed by an older chunking pipeline, or with another embedding model than the configured one, show **Re-index recommended**; the folder list counts them per folder (**N stale**) with a one-click re-index. |
-| **Search Playground** | Run a live query against a folder and see the **per-signal retrieval trace** — Vector · BM25 · Hybrid · Rerank ranks side by side — plus an optional RAG answer. |
+| **Library** | Every document of all your folders in one table, paginated on the server (sort by name, upload date or size). A **filter rail** narrows it: tags with document counts (click to toggle; *any* or *all*), folders, file type, upload date range, part of the name, and metadata conditions (key, operator — `=`, *one of*, `≥`, `≤`, *is set*, *is not set* — and value). Active filters show as chips above the table (click one to remove it), and the whole view lives in the URL, so it can be bookmarked or shared. Type in **search inside documents** to rank the same filtered documents by content instead (their best passage, hits and score, the top 50); clear it to get the list back. **Select** rows (across pages) to add or remove tags or set or clear a metadata key on all of them at once, with progress and a per-document error list. **Click a row** for its panel: folder (a link to it), type, size, index status, dates, editable tags, metadata and description, a download, and a search inside just that document. On a phone the rail opens from a *Filters* button. See [below](#the-library). |
+| **Folders** | Create folders (owned by you); open one to upload files (with tags), give a file tags and metadata (the tag button on its row), watch per-file index status, view chunks (with the AI context line shown apart from the document text), reindex, or delete. **Export** downloads a folder as one archive and **Import** brings one back as a new folder of yours ([details](backup.md#in-the-console)). Files indexed by an older chunking pipeline, or with another embedding model than the configured one, show **Re-index recommended**; the folder list counts them per folder (**N stale**) with a one-click re-index. |
+| **Search Playground** | Run a live query against a folder and see the **per-signal retrieval trace** — Vector · BM25 · Hybrid · Rerank ranks side by side — plus an optional RAG answer. **Filters** opens the Library's tag, metadata and (with All folders) folder filters; they apply to every search on the page. Pick **All folders** to search every folder at once (each hit shows its folder; folders that were not searched are listed with the reason), and switch **Passages / Documents** to see ranked documents with their best passages instead. The answer and the trace need one folder and passages. |
 | **Index Jobs** | Live stream of indexing jobs with progress; cancel a running job. |
 | **Query Analytics** | Volume, latency, zero-result rate, top queries and knowledge gaps. |
 | **Evaluation** | Auto-generate a question set and score `production` (same call as `/api/rag/query`), `vector`-only and `bm25`-only on Recall@k · MRR · nDCG@k; baseline deltas only against runs on the same question set. |
 | **Settings** | Live, persisted configuration for Embedding / LLM / Contextual Retrieval / Reranker / Speech-to-Text / Retrieval, with retrieval presets and connection tests. Changing anything needs `rag:admin`. |
 | **System Health** | Live connectivity to every external dependency. |
 | **Audit Log** | A timeline of every runtime settings change and who made it (`rag:admin`). |
+
+## The Library
+
+The sidebar's **Library** (`/admin/library`) lists documents; **Folders** (`/admin/folders`, with the
+*Index Jobs* tab) is where you create folders and upload. Old links to `/folders` and `/jobs` keep
+working, and `/folders?folder=<id>` opens one folder.
+
+- **Filters are one AND condition**, the same [document filter](api.md#document-filters) as the API:
+  a document must match every chip. Several tags match *any* of them by default; switch to *all* in
+  the Tags header. Rows on one metadata key combine (`year ≥ 2020` and `year ≤ 2024` is a range). A
+  metadata value is typed like in the edit box: `2024` is a number, `"2024"` text, `true` a boolean,
+  `2024-03-01` a date. The *to* date is inclusive.
+- **The URL** holds every filter, the content query, the sort and the page, for example
+  `/admin/library?tag=invoice&m=year:gte:2024&sort=name&order=asc`.
+- **Bulk edits** write one `PATCH` per document that changes (a document that already has the tag or
+  value is left alone), two at a time; a failure is listed by document and the rest still go through.
+  Tag counts and metadata keys refresh afterwards.
+- **Search inside this document** runs the folder's search with `filters.file_ids` set to that one
+  document.
 
 ## Re-indexing after an upgrade
 

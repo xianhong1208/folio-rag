@@ -47,7 +47,9 @@ def source(itest_db, tmp_path):
     (tmp_path / rel).parent.mkdir(parents=True)
     (tmp_path / rel).write_bytes("Oolong tea from Taiwan".encode("utf-8"))
     FileDB.create(id=uuid.UUID(fid), folder_id=folder.id, file_name="tea.md", file_path=rel, file_size=22,
-                  mime_type="text/markdown", tags=["tea"], content_hash="ab" * 32)
+                  mime_type="text/markdown", tags=["tea", "Taiwan"], content_hash="ab" * 32,
+                  description="Oolong notes", doc_metadata={"year": 2024, "due": "2024-03-01",
+                                                            "organic": True})
     table = f"data_{folder.id}_{folder.vector_table_uuid}"
     leaf, parent = str(uuid.uuid4()), str(uuid.uuid4())
     with get_engine().begin() as c:
@@ -114,9 +116,14 @@ def test_export_then_import_as_a_copy(source, tmp_path):
         'SELECT id, vector_table_uuid, description, user_token, file_count FROM "Folders" WHERE id = :i',
         i=r.folder_id)
     assert (desc, owner, count) == ("teas", OWNER, 1)
-    (nfid, path, tags, chash), = _q('SELECT id::text, file_path, tags, content_hash FROM "Files" WHERE folder_id = :i',
-                                     i=new_id)
-    assert nfid != source.fid and tags == ["tea"] and chash == "ab" * 32
+    (nfid, path, tags, meta, desc_, chash), = _q(
+        'SELECT id::text, file_path, tags, metadata, description, content_hash FROM "Files" '
+        'WHERE folder_id = :i', i=new_id)
+    assert nfid != source.fid and chash == "ab" * 32
+    # tags, metadata and the description travel with the folder
+    assert tags == ["tea", "Taiwan"] and desc_ == "Oolong notes"
+    assert meta == {"year": 2024, "due": "2024-03-01", "organic": True}
+    assert doc["files"][0]["metadata"] == meta
     assert path == f"storage/sub_itest-folder-owner/{r.name}/{nfid}"
     assert (source.storage.parent / path).read_text(encoding="utf-8") == "Oolong tea from Taiwan"
     assert (source.storage.parent / f"storage/sub_itest-folder-owner/{source.folder.name}/{source.fid}").exists()

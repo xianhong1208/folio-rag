@@ -71,7 +71,7 @@ Durations are in seconds. Histograms come with `_bucket`, `_sum` and `_count` se
 | `folio_http_request_duration_seconds` | histogram | `route`, `method` | Time until the response starts (headers sent). Streams (job progress, MCP streamable HTTP) count until they open, not while they stay open |
 | `folio_retrieval_stage_duration_seconds` | histogram | `stage` | Each retrieval stage of a search: `embed`, `dense`, `segment`, `bm25`, `fuse`, `rerank`, `prefetch`, `merge`, `expand` (the same timings as the query trace). Dense and BM25 run concurrently, so stages do not add up to the total |
 | `folio_retrieval_search_duration_seconds` | histogram | | One hybrid search: candidates, fusion and rerank |
-| `folio_mcp_tool_calls_total` | counter | `mode`, `outcome` | Per-folder MCP tool calls. `mode`: `search` / `list` / `read`. `outcome`: `ok`, `invalid_request` (e.g. a missing `file_id`), `unauthorized`, `forbidden`, `error` |
+| `folio_mcp_tool_calls_total` | counter | `mode`, `outcome` | MCP tool calls. `mode`: `search` / `list` / `read` (the folder tools), `find` / `find_list` (`folio_find` with / without a query). `outcome`: `ok`, `invalid_request` (e.g. a missing `file_id`), `unauthorized`, `forbidden`, `error` |
 | `folio_mcp_tool_call_duration_seconds` | histogram | `mode` | MCP tool call duration |
 | `folio_index_jobs_submitted_total` | counter | `kind` | Index jobs created, started at once or queued. `kind`: `index` or `rebuild_fts` |
 | `folio_index_jobs_started_total` | counter | `kind` | Jobs that began running |
