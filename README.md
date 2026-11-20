@@ -12,7 +12,8 @@
 ![The Search Playground: an answer with citations, and each result's vector, BM25, fusion and rerank scores](docs/images/console-search.png)
 
 Folio is an open-source retrieval-augmented generation (RAG) server for the Model Context Protocol.
-Each folder becomes a `Folio_<folder>` tool with three modes, **search**, **list** and **read**. It
+Each folder becomes a `Folio_<folder>` tool with three modes, **search**, **list** and **read**, and
+one `folio_find` tool finds documents across all your folders by topic, tags or metadata. It
 is an OAuth 2.1 **resource server**: it verifies tokens offline and never issues them, and pairs
 with [MCP Gate](https://github.com/xianhong1208/MCP_Gate) as the authorization server. Folio was
 called *Agentic RAG* up to v1.1.0; the database names (`agentic_rag`) and the storage layout keep
@@ -161,6 +162,17 @@ Folio_product-docs  mode="search"  query="how do I rotate the signing key?"
 
 You get the matching passages, merged where they belong together, each with a relevance score and
 its source file and heading.
+
+Not sure which folder holds it? Find the documents first, then search inside them:
+
+```
+folio_find  query="signing key rotation"  filters={"tags_any": ["runbook"]}
+Folio_product-docs  mode="search"  query="how do I rotate the signing key?"  file_ids=["<file_id>"]
+```
+
+`folio_find` ranks your documents across every folder (each with its folder tool, tags, metadata and
+short snippets); without a `query` it lists documents by tags, metadata, type or upload date. See
+[MCP tools](docs/api.md#mcp-tools).
 
 ## Deployment options
 

@@ -12,7 +12,8 @@
 ![Search Playground:附引用的答案,以及每筆結果的向量、BM25、融合與重排分數](docs/images/console-search.png)
 
 Folio 是一套開源、給 Model Context Protocol 用的檢索增強生成(RAG)伺服器。每個資料夾會成為一個
-`Folio_<folder>` 工具,有 **search**、**list**、**read** 三種模式。它是 OAuth 2.1 的
+`Folio_<folder>` 工具,有 **search**、**list**、**read** 三種模式;另有一個 `folio_find` 工具,依主題、標籤或
+metadata 跨你所有資料夾找文件。它是 OAuth 2.1 的
 **resource server**:只在本地離線驗證 token,從不簽發,搭配 [MCP Gate](https://github.com/xianhong1208/MCP_Gate)
 當授權伺服器。Folio 在 v1.1.0 以前叫 *Agentic RAG*;資料庫名稱(`agentic_rag`)與儲存目錄結構沿用舊名,
 不需要任何遷移。
@@ -147,6 +148,16 @@ Folio_product-docs  mode="search"  query="how do I rotate the signing key?"
 ```
 
 你會拿到相符的段落,屬於同一段的會合併在一起,每筆都附相關度分數、來源檔案與標題。
+
+不確定在哪個資料夾?先找文件,再到文件裡搜尋:
+
+```
+folio_find  query="signing key rotation"  filters={"tags_any": ["runbook"]}
+Folio_product-docs  mode="search"  query="how do I rotate the signing key?"  file_ids=["<file_id>"]
+```
+
+`folio_find` 跨所有資料夾為你的文件排名(每份附它所屬的資料夾工具、標籤、metadata 與簡短片段);不給
+`query` 時,則依標籤、metadata、類型或上傳日期列出文件。見 [MCP 工具](docs/api.zh-TW.md#mcp-工具)。
 
 ## 部署方式
 

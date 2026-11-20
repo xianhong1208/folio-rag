@@ -304,11 +304,15 @@ class RAGQueryService:
         expand_context: bool,
         token: str,
         offset: Optional[int] = None,
+        file_ids: Optional[list] = None,
+        filters: Optional[dict] = None,
     ) -> Dict[str, Any]:
         """MCP query entry point — unified interface for three modes (search / list / read).
 
         ``similarity_cutoff`` is accepted for backward compatibility and ignored
-        (see handle_search); ``offset`` pages mode='read'.
+        (see handle_search); ``offset`` pages mode='read'. ``file_ids`` / ``filters``
+        limit mode='search' to some of the folder's documents
+        (src/domain/rag/doc_find.py::search_scope); the other modes ignore them.
 
         Returns:
             JSON-serializable dict — wrapped into an MCP content block by agentic_tools.
@@ -340,6 +344,20 @@ class RAGQueryService:
                 )
 
         if mode == "search":
+            scope = None
+            if file_ids is not None or filters is not None:
+                from src.domain.rag import doc_find
+
+                def _scope():
+                    from db.db import get_engine
+                    with get_engine().connect() as conn:
+                        return doc_find.search_scope(conn, folder_id=folder.id, owner=token,
+                                                     file_ids=file_ids, filters=filters)
+                try:
+                    scope = await asyncio.to_thread(_scope)
+                except doc_find.FindError as e:
+                    return {"mode": "search", "error": e.detail, "error_code": e.code,
+                            "results": []}
             # One retriever per request (it records that request's outcome); it
             # shares the folder's searcher, so the path is the REST one.
             retriever = AutoMergingRetriever(
@@ -357,6 +375,7 @@ class RAGQueryService:
                     top_k=top_k,
                     similarity_cutoff=similarity_cutoff,
                     expand_context=expand_context,
+                    scope=scope,
                 )
             # A rejected query (too long, invalid parameters) is not a search that found
             # nothing: logging it put it in analytics as a zero-result query and a knowledge gap.

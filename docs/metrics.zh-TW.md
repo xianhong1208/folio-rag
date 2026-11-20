@@ -66,7 +66,7 @@ Folio 是單一程序(一個 uvicorn worker),一個 target 就是整台伺服器
 | `folio_http_request_duration_seconds` | histogram | `route`、`method` | 到回應開始(送出標頭)為止的時間。串流(工作進度、MCP streamable HTTP)只算到建立為止,不算持續開著的時間 |
 | `folio_retrieval_stage_duration_seconds` | histogram | `stage` | 一次搜尋的各檢索階段:`embed`、`dense`、`segment`、`bm25`、`fuse`、`rerank`、`prefetch`、`merge`、`expand`(與查詢追蹤的時間相同)。dense 與 BM25 同時進行,所以各階段加總不等於總時間 |
 | `folio_retrieval_search_duration_seconds` | histogram | | 一次混合搜尋:候選、融合與重排序 |
-| `folio_mcp_tool_calls_total` | counter | `mode`、`outcome` | 各資料夾 MCP 工具的呼叫。`mode`:`search` / `list` / `read`。`outcome`:`ok`、`invalid_request`(例如缺少 `file_id`)、`unauthorized`、`forbidden`、`error` |
+| `folio_mcp_tool_calls_total` | counter | `mode`、`outcome` | MCP 工具的呼叫。`mode`:`search` / `list` / `read`(資料夾工具)、`find` / `find_list`(`folio_find` 有 / 沒有 query)。`outcome`:`ok`、`invalid_request`(例如缺少 `file_id`)、`unauthorized`、`forbidden`、`error` |
 | `folio_mcp_tool_call_duration_seconds` | histogram | `mode` | MCP 工具呼叫時間 |
 | `folio_index_jobs_submitted_total` | counter | `kind` | 建立的索引工作(立即開始或排隊)。`kind`:`index` 或 `rebuild_fts` |
 | `folio_index_jobs_started_total` | counter | `kind` | 開始執行的工作 |

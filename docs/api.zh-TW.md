@@ -4,7 +4,7 @@
 
 | 群組 | 端點 |
 |------|------|
-| **MCP** | `POST /mcp` —— 每資料夾的 `Folio_<folder>` 工具（`search` / `list` / `read`）;`GET /.well-known/oauth-protected-resource/mcp` |
+| **MCP** | `POST /mcp` —— [`folio_find`](#mcp-工具)(跨你所有資料夾找文件)與每資料夾的 `Folio_<folder>` 工具（`search` / `list` / `read`、`file_ids`）;`GET /.well-known/oauth-protected-resource/mcp` |
 | **資料夾與檔案** | `/api/folders*` · `/api/folders/{id}/files*`（建立、上傳、列出、下載、刪除 —— token-scoped） |
 | **文件** | `POST /api/documents/search` · `GET /api/tags` · `GET /api/metadata/keys`——跨資料夾列出你的文件,可用[篩選條件](#文件篩選) |
 | **搜尋** | `POST /api/search`——一次搜尋你所有(或指定的)資料夾,結果可以是段落或文件([見下文](#跨資料夾搜尋)) |
@@ -71,7 +71,7 @@
   你的 metadata key、各有多少文件,以及出現過的值類型(`string`、`number`、`boolean`、`date`)。
 
 這三個端點和主控台 API 一樣,接受 Bearer token(個人存取權杖)或主控台登入狀態;以 cookie 驗證的 `POST` 需要
-主控台的 CSRF 標頭。在 MCP 中,資料夾工具的 `list` 模式會回傳每個檔案的 `tags`、`metadata` 與 `description`。
+主控台的 CSRF 標頭。在 MCP 中,[`folio_find`](#mcp-工具) 接受同一種篩選。
 
 ## 跨資料夾搜尋
 
@@ -99,6 +99,48 @@
 回應另有 `folders`(搜尋了哪些)、`skipped_folders`(`{id, name, reason, detail}`)、`score_type`(`rerank` 或 `rrf`)、`total_results`、`retrieval_time_ms`、`timings_ms`(各階段時間,多個資料夾相加:`embed`、`dense`、`segment`、`bm25`、`fuse`、`rerank`)與 `cached`。以下情況資料夾會被略過:**還沒有任何索引**(`nothing_indexed`);有檔案是以**不同的 embedding 模型**或維度索引(`embedding_model`:它的向量無法和查詢比較,請重新索引);可搜尋的資料夾超過 `rag.retrieval.max_search_folders`(預設 20;`folder_limit`:搜尋最近更新的那些);或該資料夾的搜尋失敗(`error`)。沒有任何文件符合篩選條件的資料夾則直接不搜尋。
 
 結果快取五分鐘;被搜尋的任一資料夾有索引、標籤或 metadata 變動時,快取立即失效。驗證方式與 `/api/documents/search` 相同:Bearer token,或主控台登入狀態加上 CSRF 標頭。只會搜尋你自己的資料夾。
+
+## MCP 工具
+
+每個呼叫者都看得到 **`folio_find`**;每個資料夾另有自己的 **`Folio_<folder>`** 工具(只列出呼叫者自己的資料夾)。
+
+**`folio_find(query?, filters?, folders?, limit?, offset?)`** 跨呼叫者的所有資料夾找文件,讓 agent 先找出
+*哪些*文件,再到文件*裡*搜尋(RAGFlow 的 `search_metadata` 與 `search_chunks` 也是這樣分工):
+
+- 給 `query`:就是 `group_by: document` 的[跨資料夾搜尋](#跨資料夾搜尋)——文件依最佳段落排名,每份最多 2 段片段
+  (每段約 220 token 以內)、`hits` 與 `score`;`skipped_folders` 列出 `{folder, reason}`;
+- 不給 `query`:列出符合 `filters` 的文件,最新上傳的在前,附 `total` 與 `next_offset`(當作 `offset` 傳回)。
+  完全不帶參數時,另外回傳 `vocabulary`:你最常用的標籤(含數量)與 metadata key(含值類型)。
+
+| 參數 | 預設 | 說明 |
+|---|---|---|
+| `query` | 無 | 2–2000 字元;不給 = 列表 |
+| `filters` | 無 | [文件篩選](#文件篩選);未知的欄位或運算子會被拒絕並指出名稱 |
+| `folders` | 你的全部 | 資料夾名稱或 id;不是你的會回 `folder_not_found`,與不存在的資料夾相同 |
+| `limit` | 10 | 1–50 份文件 |
+| `offset` | 0 | 只用於列表 |
+
+每份文件有 `file_id`、`name`、`folder`、**`tool`**(要用來搜尋它的資料夾工具)、`tags`、`metadata`;有 query 時
+另有 `score`、`hits` 與 `snippets`(`text`、`page`、`score`),列表時另有 `mime`、`uploaded_at`、`status` 與簡短的
+`description`。回應與資料夾工具一樣會裁到 `rag.retrieval.mcp_response_token_budget`:先去掉排名較後的文件
+(`omitted_results`)。`_hint` 會建議下一步。
+
+範圍永遠是 token 所屬的人(它的 `sub`),不是參數:沒有 `sub` 的 token 會得到 `{"error": "unauthorized"}`;`sub`
+沒有任何資料夾的 token(MCP Gate 的 scanner、`client_credentials` client)會得到空結果。`auth.enabled: false` 時
+涵蓋所有資料夾,與 REST 端點相同。拒絕時回傳 `{"error": code, "detail": ...}`(`invalid_filter`、
+`invalid_request`、`folder_not_found`、`unauthorized`)。在 tools/list 中,這個工具的描述會帶上呼叫者自己最常用
+的標籤與 metadata key,讓 agent 用真實的值寫篩選條件(每把 token 最多每分鐘更新一次)。
+
+**`Folio_<folder>`** 有三種模式:`search`(預設)、`list`、`read`。`search` 模式有兩個選用參數,可把搜尋限制在
+該資料夾的部分文件:
+
+- `file_ids`:`folio_find`(或 `list`)回傳的 `file_id`。不屬於這個資料夾的 id 會被忽略,並列在
+  `scope.ignored_file_ids`;一個都不剩時會拒絕(`error_code: invalid_request`),而不是默默地什麼都不搜。
+- `filters`:同一種文件篩選,套用在這個資料夾內。同時給 `file_ids` 時,文件必須兩者都符合。沒有任何文件符合時
+  不會搜尋,`_hint` 會說明。
+
+這些 id 同時限制向量與關鍵字查詢(與 `POST /api/rag/query` 的 `filters` 相同)。回應會帶
+`scope: {file_ids: <數量>, ignored_file_ids?}`。`list` 模式會回傳每個檔案的 `tags`、`metadata` 與 `description`。
 
 ## 1.5 移除:/v1 媒體端點
 

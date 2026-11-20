@@ -369,6 +369,9 @@ def resolve_search_defaults(top_k: Optional[int], expand_context: Optional[bool]
 def register_agentic_tools(mcp: FastMCP) -> None:
     """Module entry point — called by app.create_app after dynamic loading."""
     DynamicToolManager.initialize(mcp)
+    # The person-wide folio_find (one static tool; scoped per caller at call time).
+    from src.fastmcp_tools.find_tool import register_find_tool
+    register_find_tool(mcp)
     logger.info("✅ Folio MCP tools module initialized")
 
 
@@ -382,6 +385,8 @@ async def _query(
     similarity_cutoff: Optional[float],
     expand_context: Optional[bool],
     offset: Optional[int] = None,
+    file_ids: Optional[List[str]] = None,
+    filters: Optional[dict] = None,
 ) -> list:
     """Shared backend query for all per-folder MCP tools.
 
@@ -399,6 +404,9 @@ async def _query(
         expand_context: True -> for mode=search, unmerged leaves expand their
             neighbors (None = rag.retrieval.expand_context_default).
         offset: mode=read page start (chunk index).
+        file_ids: mode=search: only these documents of the folder (ids from
+            folio_find or mode=list); ids of other folders are ignored.
+        filters: mode=search: only documents matching this document filter.
 
     Returns:
         ``list[TextContent | RagFile]`` — the first element is the JSON payload
@@ -426,6 +434,8 @@ async def _query(
             expand_context=expand_context,
             token=token,
             offset=offset,
+            file_ids=file_ids,
+            filters=filters,
         )
 
         content_blocks: list = [_json_block(response)]
