@@ -57,6 +57,9 @@ read through OpenAI-compatible APIs).
 - **Tags and metadata on documents.** Label files with tags and flat key/value metadata (client,
   year, a due date…), then filter a search or list documents across all your folders by them
   ([document filters](docs/api.md#document-filters)).
+- **Search across folders, by document.** One search over all your folders (or some), reranked
+  once over every folder's candidates, answered as passages or as documents ranked by their best
+  passage with snippets ([search across folders](docs/api.md#search-across-folders)).
 - **Many formats.** PDF, Office (including legacy and RTF), OpenDocument, HTML and MHTML, Markdown,
   EPUB, email, scanned PDFs and images (read by a vision model such as Qwen3-VL, tables kept as
   tables; without one, PDFs are read from their text layer), and audio (transcribed by an

@@ -218,6 +218,45 @@ class RAGQueryService:
                 query=query, reason=str(e), folder_id=folder_id
             )
 
+    async def search_across(self, req, *, owner) -> Dict[str, Any]:
+        """Search several of the caller's folders at once, as passages or documents
+        (src/domain/rag/doc_search.py; POST /api/search). ``owner`` is the caller's
+        owner key, or doc_filter.ALL_FOLDERS in open mode. Only wiring lives here."""
+        from src.domain.rag import doc_search as DS
+        from src.domain.rag.chunk_identity import configured_embedding
+
+        ctx = self._ctx
+        passages = req.group_by != DS.GROUP_DOCUMENT
+        settings = SearchSettings.from_config(top_k=req.top_k if passages else None)
+        try:
+            max_folders = int(Config.get_config_model().rag.retrieval.max_search_folders)
+        except Exception:  # noqa: BLE001
+            max_folders = DS.DEFAULT_MAX_FOLDERS
+
+        def _searcher(folder):
+            store = ctx.vector_store_manager.get_or_create(
+                folder_id=folder.id, vector_table_uuid=folder.vector_table_uuid)
+            return self._engine_for(folder.id, store).searcher
+
+        async def _one(folder, top_k):
+            return await self.query_rag(
+                query=req.query, folder_id=folder.id, token=folder.owner, top_k=top_k,
+                similarity_cutoff=settings.similarity_cutoff,
+                sparse_top_k=settings.sparse_top_k, auto_merge=req.auto_merge,
+                filters=req.filters)
+
+        def _connect():
+            from db.db import get_engine
+            return get_engine().connect()
+
+        deps = DS.SearchDeps(
+            connect=_connect, searcher_for=_searcher, query_one=_one, settings=settings,
+            reranker=ctx.reranker, gate=_get_query_semaphore(),
+            cache=DS.CrossFolderCache(CacheService.get_instance(), CacheTTL.QUERY_RESULT),
+            merge_threshold=_merge_threshold(ctx, req.auto_merge), max_folders=max_folders,
+            current_embedding=configured_embedding())
+        return await DS.search_across(req, owner=owner, deps=deps)
+
     async def query_trace(
         self,
         query: str,

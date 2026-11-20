@@ -131,6 +131,11 @@ class RAGAdapter:
             filters=filters,
         )
 
+    async def search_across(self, req, *, owner) -> dict:
+        """Delegates to RAGQueryService — one search over several folders (passages or
+        documents); see src/domain/rag/doc_search.py."""
+        return await self._query_svc.search_across(req, owner=owner)
+
     async def query_trace(
         self,
         query: str,

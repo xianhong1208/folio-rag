@@ -27,7 +27,7 @@
 |------|------|
 | **Overview** | 活的檢索管線、語料讀數、索引健康、模型服務狀態。 |
 | **Folders** | 建立資料夾(歸你所有);點進去可上傳檔案(可加標籤)、為檔案設定標籤與 metadata(列上的標籤按鈕)、看逐檔索引狀態、檢視 chunk(AI 脈絡說明與文件原文分開顯示)、重新索引、刪除。**Export** 把資料夾下載成一個封存檔,**Import** 把封存檔匯入成你的新資料夾([說明](backup.zh-TW.md#在-console-裡))。以舊版切塊流程、或以不同於目前設定的 embedding 模型索引的檔案,會標示 **Re-index recommended**;資料夾列表會逐一統計(**N stale**),並可一鍵重建。 |
-| **Search Playground** | 對資料夾即時查詢,顯示**逐訊號檢索軌跡** —— Vector · BM25 · Hybrid · Rerank 各自名次並列 —— 並可加 RAG 答案。 |
+| **Search Playground** | 對資料夾即時查詢,顯示**逐訊號檢索軌跡** —— Vector · BM25 · Hybrid · Rerank 各自名次並列 —— 並可加 RAG 答案。選 **All folders** 可一次搜尋所有資料夾(每筆結果標示所屬資料夾;沒被搜尋的資料夾會列出原因);切換 **Passages / Documents** 可改看依排名的文件與各自最相關的段落。RAG 答案與檢索軌跡只適用於單一資料夾的段落模式。 |
 | **Index Jobs** | 索引任務即時串流與進度;可取消執行中的任務。 |
 | **Query Analytics** | 查詢量、延遲、零結果率、熱門查詢與知識缺口。 |
 | **Evaluation** | 自動生成題組,對 `production`(與 `/api/rag/query` 同一路徑)、純 `vector`、純 `bm25` 評 Recall@k · MRR · nDCG@k;基準差異只與同一題組的歷次結果比較。 |

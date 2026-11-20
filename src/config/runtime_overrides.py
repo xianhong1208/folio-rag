@@ -97,6 +97,7 @@ EDITABLE: Dict[str, str] = {
     "rag.retrieval.rerank_dense_candidates": "live",
     "rag.retrieval.rerank_sparse_candidates": "live",
     "rag.retrieval.min_relevance": "live",
+    "rag.retrieval.max_search_folders": "live",
     "rag.retrieval.default_hybrid_alpha": "live",
     "rag.retrieval.hybrid_fusion": "live",
     "rag.retrieval.segmenter": "live",
@@ -128,6 +129,7 @@ _RANGES: Dict[str, Tuple[float, float]] = {
     "rag.retrieval.rerank_candidates": (1, 200),
     "rag.retrieval.rerank_dense_candidates": (0, 200),
     "rag.retrieval.rerank_sparse_candidates": (0, 200),
+    "rag.retrieval.max_search_folders": (1, 200),
     # A rerank score (probability), like rag.rerank.score_threshold.
     "rag.retrieval.min_relevance": (0.0, 1.0),
     "rag.retrieval.default_hybrid_alpha": (0.0, 1.0),

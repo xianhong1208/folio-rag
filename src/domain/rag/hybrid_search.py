@@ -92,6 +92,27 @@ _STAGE_TIMINGS: contextvars.ContextVar[Optional[Dict[str, float]]] = contextvars
     "folio_stage_timings", default=None)
 
 
+# Per-request memo of query segmentations ({(segmenter, query): task}). A search over
+# several folders segments the query once per segmenter instead of once per folder
+# (segmentation runs on one thread, so N folders would otherwise queue N copies of
+# the same CKIP call). Unset (None) outside :func:`shared_query_work`.
+_SEGMENT_MEMO: contextvars.ContextVar[Optional[Dict[Any, "asyncio.Future"]]] = contextvars.ContextVar(
+    "folio_segment_memo", default=None)
+
+
+class shared_query_work:
+    """Context manager: inside it, searches of the same query share their query
+    segmentation (one per segmenter). Used by the search across folders."""
+
+    def __enter__(self):
+        self._token = _SEGMENT_MEMO.set({})
+        return self
+
+    def __exit__(self, *exc):
+        _SEGMENT_MEMO.reset(self._token)
+        return False
+
+
 def record_stage(stage: str, started: float) -> None:
     """Add the time since ``started`` (perf_counter) to ``stage`` of the current
     request's timings; a no-op outside a timed search."""
@@ -534,7 +555,8 @@ class HybridSearcher:
             record_stage("embed", t0)
 
     async def dense(self, query_text: str, k: int,
-                    file_ids: Optional[Sequence[str]] = None) -> List[Any]:
+                    file_ids: Optional[Sequence[str]] = None,
+                    query_embedding: Optional[Sequence[float]] = None) -> List[Any]:
         """Vector search, leaves only (parents carry a zero vector, but be explicit).
 
         Runs its own cosine query rather than llama-index's: llama-index never
@@ -545,12 +567,15 @@ class HybridSearcher:
 
         ``file_ids`` (a document filter) limits the scan to those files' chunks, with
         pgvector's iterative index scan on so a selective filter still fills k.
+        ``query_embedding``: the query's embedding when the caller already has it (a
+        search across folders embeds the query once).
         """
         from src.domain.rag.chunk_lookup import ChunkLookup
 
         if file_ids is not None and not file_ids:
             return []
-        embedding = await self.embed_query(query_text)
+        embedding = (list(query_embedding) if query_embedding is not None
+                     else await self.embed_query(query_text))
         table = ChunkLookup._get_table_name(self._vector_store)
         ef = max(DEFAULT_EF_SEARCH, int(k))
         filtered = file_ids is not None
@@ -599,6 +624,18 @@ class HybridSearcher:
         """
         if settings.text_search_config != "simple":
             return query_text
+        memo = _SEGMENT_MEMO.get()
+        if memo is None:
+            return await self._segment(query_text, segmenter_name)
+        key = (segmenter_name, query_text)
+        task = memo.get(key)
+        if task is None:
+            task = asyncio.ensure_future(self._segment(query_text, segmenter_name))
+            memo[key] = task
+        # shield: one cancelled caller must not cancel the segmentation the others await.
+        return await asyncio.shield(task)
+
+    async def _segment(self, query_text: str, segmenter_name: Optional[str]) -> str:
         t0 = time.perf_counter()
         try:
             from src.domain.rag.text_segmenter import get_segmenter
@@ -687,15 +724,17 @@ class HybridSearcher:
             depth = max(depth, *per_list_depths(settings))
         return depth
 
-    async def _retrieve(self, query_text: str, settings: SearchSettings, k: int):
+    async def _retrieve(self, query_text: str, settings: SearchSettings, k: int,
+                        query_embedding: Optional[Sequence[float]] = None):
         """(fused, dense, sparse, dense scores, sparse scores): the per-path lists
         hold the same node objects as ``fused``; their raw cosine / ts_rank scores are
         snapshotted before RRF rewrites ``node.score``."""
         # Independent paths: run them concurrently (latency = the slower one).
         # file_ids only when filtered: an unfiltered search calls both exactly as before.
         only = {"file_ids": settings.file_ids} if settings.file_ids is not None else {}
+        emb = {"query_embedding": query_embedding} if query_embedding is not None else {}
         dense, sparse = await asyncio.gather(
-            self.dense(query_text, k, **only),
+            self.dense(query_text, k, **only, **emb),
             self.sparse(query_text, max(k, int(settings.sparse_top_k or 0)), settings, **only))
         dense_raw, sparse_raw = _snapshot(dense), _snapshot(sparse)
         t0 = time.perf_counter()
@@ -740,6 +779,31 @@ class HybridSearcher:
                 seen.add(nid)
                 pool.append(n)
         return pool
+
+    async def folder_pool(self, query_text: str, settings: SearchSettings, *, dense_k: int,
+                          sparse_k: int, query_embedding: Optional[Sequence[float]] = None
+                          ) -> Optional[List[Any]]:
+        """This folder's share of a search across folders: its candidates, best first,
+        not reranked (the caller reranks the pool of every folder at once).
+
+        With a reranker: the ``per_list`` pool with these depths (the dense top
+        ``dense_k`` plus the BM25 top ``sparse_k``; the whole fused list for the
+        ``fused`` pool or concat fusion), in fused order first. Without one: the fused
+        top ``max(dense_k, sparse_k)``. None when the folder has no index table yet.
+        """
+        k = max(1, int(dense_k), int(sparse_k))
+        depths = replace(settings, top_k=1, rerank_dense_candidates=int(dense_k),
+                         rerank_sparse_candidates=int(sparse_k), rerank_candidates=k)
+        try:
+            fused, dense, sparse, _, _ = await self._retrieve(
+                query_text, depths, k, query_embedding=query_embedding)
+        except Exception as e:  # noqa: BLE001 - re-raised unless it is the missing table
+            if not is_missing_table_error(e, self._table_name()):
+                raise
+            return None
+        if self._reranker:
+            return self.rerank_pool(fused, dense, sparse, depths)
+        return list(fused)[:k]
 
     # ----------------------------------------------------------------- search
     async def search(self, query_text: str, settings: SearchSettings,

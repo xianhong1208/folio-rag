@@ -3,6 +3,7 @@ import { get, post, stream } from '../services/api'
 import EmptyState from '../components/ui/EmptyState'
 import ChunkText, { ContentBadge } from '../components/ui/ChunkText'
 import { citationParts } from '../lib/citations'
+import { ALL_FOLDERS, plural, searchBody, skippedNote, snippetPlace, usesPlayground } from '../lib/searchView'
 
 // Answer text with [n] citations linked to result card #n (numbers match the cards).
 function AnswerText({ text, citations, count }) {
@@ -17,9 +18,10 @@ function AnswerText({ text, citations, count }) {
 
 const COLORS = { vector: 'var(--cyber)', bm25: 'var(--signal)', hybrid: 'var(--matrix)', rerank: 'var(--cyber-deep)' }
 
-function Meta({ md }) {
+function Meta({ md, folder }) {
   return (
     <>
+      {folder ? <span className="c-meta sp-folder-chip">{folder}</span> : null}
       <span className="chunk-head-crumb">{md.file_name || ''}</span>
       {md.headings?.length ? <span className="c-meta">{md.headings.join(' › ')}</span> : null}
       {md.page != null ? <span className="c-meta">p.{md.page}</span> : null}
@@ -69,9 +71,32 @@ function TraceResults({ trace }) {
   )
 }
 
+// Documents view: one card per document, ranked by its best passage.
+function DocResults({ docs, showFolder }) {
+  return docs.map((d, i) => (
+    <div className="chunk-row doc-row" key={d.file_id}>
+      <div className="c-head">
+        <span className="c-idx">#{i + 1}</span>
+        {showFolder ? <span className="c-meta sp-folder-chip">{d.folder?.name}</span> : null}
+        <span className="chunk-head-crumb">{d.name}</span>
+        <span className="c-meta">{plural(d.hits, 'matching passage')}</span>
+        <span className="c-meta" style={{ marginLeft: 'auto' }}>score {d.score != null ? d.score.toFixed(3) : '—'}</span>
+      </div>
+      {d.tags?.length ? <div className="tag-row">{d.tags.map((t) => <span className="tag-chip" key={t}>{t}</span>)}</div> : null}
+      {(d.snippets || []).map((sn, j) => (
+        <div className="doc-snippet" key={sn.node_id || j}>
+          {snippetPlace(sn) ? <div className="c-meta">{snippetPlace(sn)}</div> : null}
+          <ChunkText text={sn.text} contentType={sn.content_type} className="c-text" />
+        </div>
+      ))}
+    </div>
+  ))
+}
+
 export default function SearchPage() {
   const [folders, setFolders] = useState([])
   const [fid, setFid] = useState('')
+  const [view, setView] = useState('passages') // passages | documents
   const [query, setQuery] = useState('')
   const [answer, setAnswer] = useState(false)
   const [trace, setTrace] = useState(false)
@@ -90,6 +115,8 @@ export default function SearchPage() {
     return () => abortRef.current?.abort()
   }, [])
 
+  const playground = usesPlayground(fid, view)
+
   const run = async () => {
     if (!fid) { setRes({ err: 'No indexed folder — index some files first' }); return }
     if (query.trim().length < 2) return
@@ -97,6 +124,19 @@ export default function SearchPage() {
     const ac = new AbortController()
     abortRef.current = ac
     setRunning(true); setRes(null)
+
+    // All folders, or documents: one search through /api/search (no answer, no trace).
+    if (!playground) {
+      try {
+        const r = await post('/api/search', searchBody({ fid, view, query }))
+        if (!ac.signal.aborted) {
+          const d = r.data
+          setRes({ hits: d.results || [], docs: d.documents, total: d.total_results, skipped: d.skipped_folders, across: fid === ALL_FOLDERS })
+        }
+      } catch (e) { if (!ac.signal.aborted) setRes({ err: e.message }) }
+      if (!ac.signal.aborted) setRunning(false)
+      return
+    }
 
     // Streaming path: only when generating an answer without the trace view
     // (the trace needs the full non-streaming trace object).
@@ -132,21 +172,31 @@ export default function SearchPage() {
     <div id="view-search">
       <div className="sp-head">
         <h2>Search Playground</h2>
-        <div className="desc">Live retrieval against a folder — which chunks match, and how each signal ranks them.</div>
+        <div className="desc">Live retrieval against a folder or all of them — which chunks or documents match, and how each signal ranks them.</div>
       </div>
       <div className="sp-bar">
         <span className="sp-prompt">&#10095;</span>
-        <select className="sp-folder" value={fid} onChange={(e) => setFid(e.target.value)}>
-          {folders.length ? folders.map((f) => <option key={f.id} value={f.id}>{f.name} ({f.indexed_files} files)</option>)
-            : <option value="">No indexed folders</option>}
+        <select className="sp-folder" value={fid} onChange={(e) => setFid(e.target.value)} aria-label="Folder">
+          {folders.length ? [
+            <option key={ALL_FOLDERS} value={ALL_FOLDERS}>All folders ({folders.length})</option>,
+            ...folders.map((f) => <option key={f.id} value={f.id}>{f.name} ({f.indexed_files} files)</option>),
+          ] : <option value="">No indexed folders</option>}
         </select>
         <input className="sp-query" placeholder="query the corpus…" value={query}
           onChange={(e) => setQuery(e.target.value)} onKeyDown={(e) => e.key === 'Enter' && run()} />
         <button className="btn-cyber" onClick={run} disabled={running}>{running ? 'Running…' : 'Run'}</button>
       </div>
       <div className="sp-opts">
-        <label className="sp-check"><input type="checkbox" checked={answer} onChange={(e) => setAnswer(e.target.checked)} /> generate answer (RAG)</label>
-        <label className="sp-check"><input type="checkbox" checked={trace} onChange={(e) => setTrace(e.target.checked)} /> retrieval trace</label>
+        <div className="sp-view" role="group" aria-label="Results as">
+          {['passages', 'documents'].map((v) => (
+            <button key={v} type="button" className={view === v ? 'on' : ''} aria-pressed={view === v}
+              onClick={() => setView(v)}>{v === 'passages' ? 'Passages' : 'Documents'}</button>
+          ))}
+        </div>
+        <label className="sp-check" title={playground ? undefined : 'One folder, passages only'}>
+          <input type="checkbox" checked={answer && playground} disabled={!playground} onChange={(e) => setAnswer(e.target.checked)} /> generate answer (RAG)</label>
+        <label className="sp-check" title={playground ? undefined : 'One folder, passages only'}>
+          <input type="checkbox" checked={trace && playground} disabled={!playground} onChange={(e) => setTrace(e.target.checked)} /> retrieval trace</label>
         <span className="sp-sig">vector · BM25 · rerank · auto-merge</span>
       </div>
 
@@ -168,15 +218,18 @@ export default function SearchPage() {
           </div>
         </div>
       )}
+      {res?.skipped?.length ? <div className="sp-skipped">{skippedNote(res.skipped)}</div> : null}
       <div id="sp-results">
         {res == null ? null
           : res.err ? <EmptyState t="Search failed" d={res.err} />
+            : res.docs ? (res.docs.length === 0 ? <EmptyState t="No matches" d="Try rephrasing" />
+              : <DocResults docs={res.docs} showFolder={res.across} />)
             : (res.hits?.length === 0 && !res.streaming) ? <EmptyState t="No matches" d="Try lowering similarity or rephrasing" />
               : res.trace ? <TraceResults trace={res.trace} />
                 : res.hits.map((h, i) => (
                   <div className="chunk-row" key={i} id={'hit-' + (i + 1)}>
                     <div className="c-head">
-                      <span className="c-idx">#{i + 1}</span><Meta md={h.metadata || {}} />
+                      <span className="c-idx">#{i + 1}</span><Meta md={h.metadata || {}} folder={res.across ? h.folder?.name : null} />
                       <span className="c-meta" style={{ marginLeft: 'auto' }}>score {h.score != null ? h.score.toFixed(3) : '—'}</span>
                     </div>
                     <ChunkText text={h.text} contentType={(h.metadata || {}).content_type} className="c-text" />

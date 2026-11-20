@@ -79,6 +79,7 @@ The settings you are likely to touch:
 | `rag.rerank.gap_threshold` | `0.5` | Knowledge-gap analytics: best rerank score below this counts as "no good match". |
 | `rag.retrieval.rerank_pool` | `per_list` | What the cross-encoder scores: `per_list` = the dense top `rerank_dense_candidates` + the BM25 top `rerank_sparse_candidates`; `fused` = the top `max(3 × top_k, rerank_candidates)` of the fused list (the previous behaviour). Live. |
 | `rag.retrieval.rerank_dense_candidates` / `rerank_sparse_candidates` | `30` / `10` | `per_list` pool depths (dense never below 3 × `top_k`). Higher = more recall margin, ~6 ms per extra pair; live-tunable (0–200). |
+| `rag.retrieval.max_search_folders` | `20` | Search across folders (`POST /api/search`): at most this many folders per query, the most recently updated first; the rest are listed in `skipped_folders` (`folder_limit`). Live-tunable (1–200). |
 | `rag.retrieval.rerank_candidates` | `60` | `fused` pool only: `max(3 × top_k, this)` fused candidates go to the cross-encoder; live-tunable (1–200). |
 | `rag.retrieval.mcp_response_token_budget` | `6000` | Estimated-token cap on an MCP search response; lowest-ranked results are dropped to fit and the response says so. `0` = no cap. |
 | `rag.retrieval.min_relevance` | `0.9` in the shipped config (`0` when unset) | MCP search: best rerank score below this → `low_relevance: true` (flagged, not dropped). Model-specific; `0` = off. |

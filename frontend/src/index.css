@@ -770,6 +770,17 @@
   .sp-check input { accent-color: var(--cyber); }
   .sp-sig { margin-left: auto; font-family: "JetBrains Mono", monospace; font-size: 10.5px; color: var(--ink-subtle); letter-spacing: .04em; }
   #sp-results { margin-top: 18px; }
+  .sp-view { display: inline-flex; border: 1px solid var(--hairline); border-radius: 7px; overflow: hidden; }
+  .sp-view button { background: none; border: 0; padding: 5px 12px; font-family: "JetBrains Mono", monospace; font-size: 11.5px; color: var(--ink-muted); cursor: pointer; }
+  .sp-view button + button { border-left: 1px solid var(--hairline); }
+  .sp-view button.on { background: var(--elevated); color: var(--cyber); }
+  .sp-view button:focus-visible { outline: 2px solid var(--cyber); outline-offset: -2px; }
+  .sp-check:has(input:disabled) { opacity: .5; cursor: not-allowed; }
+  .sp-skipped { margin-top: 12px; font-family: "JetBrains Mono", monospace; font-size: 11px; color: var(--ink-subtle); overflow-wrap: anywhere; }
+  .chunk-row .sp-folder-chip { color: var(--ink-muted); border: 1px solid var(--hairline); border-radius: 4px; padding: 0 5px; }
+  .doc-row .tag-row { margin: 2px 0 6px; }
+  .doc-snippet { border-left: 2px solid var(--hairline); padding-left: 10px; margin-top: 8px; }
+  .doc-snippet .c-meta { margin-bottom: 2px; }
 
   /* ═══ De-card secondary views into flat terminal panels (Jobs / Analytics / Health / Audit / Settings) ═══ */
   #view-jobs .card, #view-analytics .card, #view-health .card, #view-audit .card, #view-settings .card {

@@ -164,6 +164,25 @@ def file_recall(result_files: Sequence[str], gold_files: Sequence[str], k: int) 
     return len(gold & set(result_files[:k])) / len(gold)
 
 
+def document_metrics(ranked_files: Sequence[str], gold_files: Sequence[str],
+                     ks: Sequence[int] = (1, 3, 5, 10)) -> Dict[str, float]:
+    """Document-level scores of a ranked list of files (results by document).
+
+    ``doc_recall@k``: share of the gold files among the top k documents;
+    ``doc_mrr@10``: 1 / rank of the first gold file within the top 10 (0 if none).
+    Duplicates in ``ranked_files`` count once, at their first rank."""
+    seen: List[str] = []
+    for f in ranked_files:
+        if f not in seen:
+            seen.append(f)
+    gold = set(gold_files)
+    out: Dict[str, float] = {}
+    for k in ks:
+        out[f"doc_recall@{k}"] = (len(gold & set(seen[:k])) / len(gold)) if gold else 0.0
+    out["doc_mrr@10"] = next((1.0 / r for r, f in enumerate(seen[:10], 1) if f in gold), 0.0)
+    return out
+
+
 def first_rank(hit_lists: Sequence[Sequence[int]]) -> Optional[int]:
     for r, hl in enumerate(hit_lists, 1):
         if hl:
