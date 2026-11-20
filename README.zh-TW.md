@@ -56,7 +56,8 @@ metadata 跨你所有資料夾找文件。它是 OAuth 2.1 的
   (由 OpenAI 相容端點轉錄,簡體中文會轉成繁體)。
 - **用數字說話。** 公開的 205 題黃金測試集與評測工具;主控台可以用 Recall@k、MRR、nDCG@k 為你自己的
   資料夾評分。
-- **主控台**在 `/admin`:資料夾與檔案、顯示逐訊號軌跡的 Search Playground、索引任務、查詢分析與知識缺口、
+- **主控台**在 `/admin`:Library 列出每一份文件,可依標籤、metadata、資料夾、類型與日期篩選、依內容搜尋、
+  批次編輯標籤與 metadata,並有文件面板;資料夾與檔案、顯示逐訊號軌跡的 Search Playground、索引任務、查詢分析與知識缺口、
   評測、即時設定、健康狀態與稽核紀錄。
 - **一個指令備份與還原。** `main.py backup` 把資料庫、每個資料夾的向量與儲存的檔案一起封存,附上一份
   `main.py restore` 會檢查的 manifest;伺服器也能依排程自動備份。`main.py export-folder` /
@@ -123,7 +124,7 @@ MCP_GATE_URL=http://localhost:4568          # MCP Gate 網址(RS256 JWKS issuer)
 FOLIO_AUDIENCE=http://127.0.0.1:5039/mcp    # 必須和在 MCP Gate 註冊的 audience 一字不差
 ```
 
-**3. 建立資料夾並加入文件**,可以在主控台(*Library → New Folder → Upload Files*,用 MCP Gate 發的
+**3. 建立資料夾並加入文件**,可以在主控台(*Folders → New Folder → Upload Files*,用 MCP Gate 發的
 personal access token 登入),或透過 REST:
 
 ```bash

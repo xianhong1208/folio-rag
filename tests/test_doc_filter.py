@@ -41,6 +41,16 @@ class TestParse:
         assert ("year", "lte", 2025) in ops and ("lang", "in", ("zh", "en")) in ops
         assert ("x", "exists", False) in ops
 
+    @pytest.mark.parametrize("ids", [[], ["nope"], ["1; DROP TABLE x"], [12]])
+    def test_bad_file_ids(self, ids):
+        with pytest.raises(ValidationError):
+            F(file_ids=ids)
+
+    def test_file_ids_not_empty(self):
+        f = F(file_ids=["00000000-0000-4000-8000-000000000001"])
+        assert not f.is_empty()
+        assert "file_ids" in f.fingerprint()
+
     def test_unknown_field_is_named(self):
         with pytest.raises(ValidationError) as e:
             F(tag="x")
@@ -166,6 +176,13 @@ class TestSql:
         assert "f.upload_time >= :after_1" in sql and "f.upload_time < :before_2" in sql
         assert params["after_1"] == datetime(2024, 1, 1)
         assert params["before_2"] == datetime(2024, 2, 1, 0, 0)         # converted to UTC
+
+    def test_file_ids_are_bound_uuids(self):
+        a = "2F0C9A4E-0000-4000-8000-000000000001"
+        sql, params = where(F(file_ids=[a]))
+        assert "f.id = ANY(CAST(:file_ids_1 AS uuid[]))" in sql
+        assert params["file_ids_1"] == [a.lower()]
+        assert a.lower() not in sql
 
     def test_name_contains_escapes_like_wildcards(self):
         _, params = where(F(name_contains="50%_off\\"))

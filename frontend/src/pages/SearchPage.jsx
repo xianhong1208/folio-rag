@@ -3,7 +3,10 @@ import { get, post, stream } from '../services/api'
 import EmptyState from '../components/ui/EmptyState'
 import ChunkText, { ContentBadge } from '../components/ui/ChunkText'
 import { citationParts } from '../lib/citations'
-import { ALL_FOLDERS, plural, searchBody, skippedNote, snippetPlace, usesPlayground } from '../lib/searchView'
+import { ALL_FOLDERS, plural, searchBody, searchFilter, skippedNote, snippetPlace, usesPlayground } from '../lib/searchView'
+import { activeFilterCount, chipsFor, clearFilters, emptyState, removeChip, toFilter } from '../lib/libraryFilters'
+import FilterRail from '../components/FilterRail'
+import { SlidersHorizontal, X } from 'lucide-react'
 
 // Answer text with [n] citations linked to result card #n (numbers match the cards).
 function AnswerText({ text, citations, count }) {
@@ -103,6 +106,11 @@ export default function SearchPage() {
   const [running, setRunning] = useState(false)
   const [res, setRes] = useState(null) // {hits, trace, answer, err}
   const abortRef = useRef(null)
+  // Document filters (tags, metadata, folders), the Library rail's compact form.
+  const [flt, setFlt] = useState(emptyState)
+  const [showFlt, setShowFlt] = useState(false)
+  const [tags, setTags] = useState(null)
+  const [keys, setKeys] = useState(null)
 
   useEffect(() => {
     get('/api/admin/folders').then((r) => {
@@ -110,12 +118,18 @@ export default function SearchPage() {
       setFolders(fs)
       if (fs.length) setFid(String(fs[0].id))
     }).catch(() => {})
+    get('/api/tags').then((r) => setTags(r.data.tags)).catch(() => setTags([]))
+    get('/api/metadata/keys').then((r) => setKeys(r.data.keys)).catch(() => setKeys([]))
     // Abort any in-flight stream when the page unmounts, so the SSE read loop
     // stops and the backend stops generating for a client that has navigated away.
     return () => abortRef.current?.abort()
   }, [])
 
   const playground = usesPlayground(fid, view)
+  const filters = searchFilter(flt, fid, toFilter)
+  const fltView = fid && fid !== ALL_FOLDERS ? { ...flt, folders: [] } : flt
+  const nFlt = activeFilterCount(fltView)
+  const folderName = (id) => folders.find((f) => f.id === id)?.name || `#${id}`
 
   const run = async () => {
     if (!fid) { setRes({ err: 'No indexed folder — index some files first' }); return }
@@ -128,7 +142,7 @@ export default function SearchPage() {
     // All folders, or documents: one search through /api/search (no answer, no trace).
     if (!playground) {
       try {
-        const r = await post('/api/search', searchBody({ fid, view, query }))
+        const r = await post('/api/search', searchBody({ fid, view, query, filters }))
         if (!ac.signal.aborted) {
           const d = r.data
           setRes({ hits: d.results || [], docs: d.documents, total: d.total_results, skipped: d.skipped_folders, across: fid === ALL_FOLDERS })
@@ -143,7 +157,7 @@ export default function SearchPage() {
     if (answer && !trace) {
       setRes({ hits: [], answer: '', streaming: true })
       try {
-        await stream(`/api/admin/manage/folders/${fid}/query/stream`, { query }, (ev) => {
+        await stream(`/api/admin/manage/folders/${fid}/query/stream`, { query, ...(filters ? { filters } : {}) }, (ev) => {
           if (ev.type === 'sources') setRes((r) => ({ ...r, hits: ev.results || [], total: ev.total }))
           else if (ev.type === 'meta') setRes((r) => ({ ...r, meta: ev }))
           else if (ev.type === 'token') setRes((r) => ({ ...r, answer: (r.answer || '') + ev.text }))
@@ -159,7 +173,7 @@ export default function SearchPage() {
     }
 
     try {
-      const r = await post(`/api/admin/manage/folders/${fid}/query`, { query, answer, trace })
+      const r = await post(`/api/admin/manage/folders/${fid}/query`, { query, answer, trace, ...(filters ? { filters } : {}) })
       if (!ac.signal.aborted) {
         const gate = r.data.rag_gate
         setRes({ hits: r.data.results || [], trace: r.data.trace, answer: r.data.answer, total: r.data.total_results, meta: gate, citations: gate?.citations })
@@ -197,8 +211,27 @@ export default function SearchPage() {
           <input type="checkbox" checked={answer && playground} disabled={!playground} onChange={(e) => setAnswer(e.target.checked)} /> generate answer (RAG)</label>
         <label className="sp-check" title={playground ? undefined : 'One folder, passages only'}>
           <input type="checkbox" checked={trace && playground} disabled={!playground} onChange={(e) => setTrace(e.target.checked)} /> retrieval trace</label>
+        <button type="button" className={'sp-fbtn' + (showFlt ? ' on' : '')} aria-expanded={showFlt} onClick={() => setShowFlt((v) => !v)}>
+          <SlidersHorizontal size={12} /> Filters{nFlt ? <span className="lib-badge">{nFlt}</span> : null}
+        </button>
         <span className="sp-sig">vector · BM25 · rerank · auto-merge</span>
       </div>
+      {nFlt > 0 && (
+        <div className="lib-chips sp-chips" aria-label="Active filters">
+          {chipsFor(fltView, folderName).map((c) => (
+            <button key={c.key} type="button" className="lib-chip" title="Remove this filter" onClick={() => setFlt(removeChip(flt, c.key))}>
+              <span>{c.label}</span><X size={11} />
+            </button>
+          ))}
+          <button type="button" className="lib-clear" onClick={() => setFlt(clearFilters(flt))}>Clear all</button>
+        </div>
+      )}
+      {showFlt && (
+        <div className="sp-filters">
+          <FilterRail value={flt} onChange={setFlt} tags={tags} keys={keys} folders={folders}
+            compact showFolders={fid === ALL_FOLDERS} />
+        </div>
+      )}
 
       {(res?.answer || res?.streaming) && (
         <div className="answer-card">

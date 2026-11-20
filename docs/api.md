@@ -51,6 +51,7 @@ clear them). An edit drops the folder's cached search results at once.
 | `file_type` | extensions (`pdf`, `.docx`) or MIME types (`application/pdf`, `image/*`) |
 | `uploaded_after` / `uploaded_before` | upload time, inclusive / exclusive; `YYYY-MM-DD` or an ISO date-time |
 | `name_contains` | part of the file name, case-insensitive |
+| `file_ids` | these documents, by file id (1–100; the console's "search inside this document") |
 | `metadata` | `{key: value}` (equal; strings match exactly), or `{key: {"in": [...]}}`, `{"gte": x}`, `{"lte": x}` (a number, or a `YYYY-MM-DD` date compared with dates), `{"exists": true/false}` |
 
 ```json

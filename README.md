@@ -67,7 +67,8 @@ read through OpenAI-compatible APIs).
   OpenAI-compatible endpoint, with Simplified Chinese turned into Traditional).
 - **Measured, not guessed.** A public 205-question golden set and an evaluation harness; the
   console scores your own folders on Recall@k, MRR and nDCG@k.
-- **A console** at `/admin`: folders and files, a Search Playground with the per-signal trace, index
+- **A console** at `/admin`: a Library of every document with tag, metadata, folder, type and date
+  filters, content search, bulk tag / metadata edits and a document panel; folders and files, a Search Playground with the per-signal trace, index
   jobs, query analytics and knowledge gaps, evaluation, live settings, health and an audit log.
 - **Backup and restore in one command.** `main.py backup` archives the database, every folder's
   vectors and the stored files together, with a manifest that `main.py restore` checks; the server
@@ -136,7 +137,7 @@ MCP_GATE_URL=http://localhost:4568          # MCP Gate base URL (RS256 JWKS issu
 FOLIO_AUDIENCE=http://127.0.0.1:5039/mcp    # must equal the audience registered in MCP Gate
 ```
 
-**3. Create a folder and add documents**, in the console (*Library → New Folder → Upload Files*,
+**3. Create a folder and add documents**, in the console (*Folders → New Folder → Upload Files*,
 signed in with a personal access token from MCP Gate) or over REST:
 
 ```bash

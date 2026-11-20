@@ -3,7 +3,7 @@
     {"tags_any": ["invoice", "2024"], "tags_all": ["signed"],
      "folders": ["contracts", 12], "file_type": ["pdf", "text/markdown", "image/*"],
      "uploaded_after": "2024-01-01", "uploaded_before": "2025-01-01",
-     "name_contains": "q3",
+     "name_contains": "q3", "file_ids": ["2f0c…"],
      "metadata": {"client": "Acme", "year": {"gte": 2024},
                   "lang": {"in": ["zh", "en"]}, "due": {"lte": "2024-12-31"},
                   "reviewed": {"exists": true}}}
@@ -13,7 +13,8 @@ tags, ``tags_all`` one with all of them; tags match case-insensitively. ``folder
 takes folder names or ids, always among the caller's own folders. ``file_type`` takes
 extensions (``pdf``, ``.docx``) and MIME types (``application/pdf``, ``image/*``).
 ``uploaded_after`` is inclusive, ``uploaded_before`` exclusive (a date or an ISO
-date-time). A metadata condition is a value (equal; strings match exactly), or an
+date-time). ``file_ids`` names documents by id (a console "search inside this
+document"). A metadata condition is a value (equal; strings match exactly), or an
 object of operators: ``in`` (one of a list), ``gte`` / ``lte`` (a number, or a
 ``YYYY-MM-DD`` date compared with values of the same kind) and ``exists``. Unknown
 fields and operators are refused (422) with their names.
@@ -29,6 +30,7 @@ from __future__ import annotations
 
 import json
 import re
+import uuid
 from dataclasses import dataclass, field
 from datetime import date, datetime, timezone
 from typing import Any, Dict, List, Optional, Sequence, Tuple, Union
@@ -157,6 +159,8 @@ class DocumentFilter(BaseModel):
     uploaded_before: Optional[str] = Field(None, description="Exclusive; YYYY-MM-DD or ISO date-time")
     name_contains: Optional[str] = Field(None, max_length=MAX_NAME_CONTAINS,
                                          description="Part of the file name (case-insensitive)")
+    file_ids: Optional[List[str]] = Field(
+        None, min_length=1, max_length=MAX_FILTER_LIST, description="These documents (file ids)")
     metadata: Optional[Dict[str, Any]] = Field(
         None, description='{key: value | {"in": [...]} | {"gte": x} | {"lte": x} | {"exists": bool}}')
 
@@ -191,6 +195,19 @@ class DocumentFilter(BaseModel):
                 if not _EXT_RE.match(t):
                     raise ValueError(f"file_type {raw!r} is not a file extension")
             out.append(t)
+        return out
+
+    @field_validator("file_ids")
+    @classmethod
+    def _file_ids(cls, v):
+        if v is None:
+            return v
+        out = []
+        for raw in v:
+            try:
+                out.append(str(uuid.UUID(str(raw))))
+            except ValueError:
+                raise ValueError(f"file_ids {raw!r} is not a file id") from None
         return out
 
     @field_validator("uploaded_after", "uploaded_before")
@@ -324,6 +341,8 @@ def _filter_clauses(flt: DocumentFilter, b: _Builder) -> None:
     if flt.uploaded_before is not None:
         b.clauses.append("f.upload_time < " + b.param(
             "before", _parse_instant(flt.uploaded_before, "uploaded_before")))
+    if flt.file_ids is not None:
+        b.clauses.append("f.id = ANY(CAST(" + b.param("file_ids", list(flt.file_ids)) + " AS uuid[]))")
     if flt.name_contains:
         b.clauses.append("f.file_name ILIKE " + b.param(
             "name", "%" + _like_escape(flt.name_contains) + "%") + " ESCAPE '\\'")
