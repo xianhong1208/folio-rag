@@ -26,14 +26,30 @@
 | 頁面 | 功能 |
 |------|------|
 | **Overview** | 活的檢索管線、語料讀數、索引健康、模型服務狀態。 |
+| **Library** | 把你所有資料夾的每一份文件放在同一張表,在伺服器端分頁(可依名稱、上傳日期或大小排序)。**篩選欄**可以縮小範圍:標籤與各自的文件數(點一下切換;*any* 或 *all*)、資料夾、檔案類型、上傳日期區間、檔名包含的文字,以及 metadata 條件(key、運算子 —— `=`、*one of*、`≥`、`≤`、*is set*、*is not set* —— 與值)。生效中的篩選會以 chip 顯示在表格上方(點一下即移除),整個檢視都存在網址裡,可以加書籤或分享。在 **search inside documents** 輸入文字,就改成依內容為同一批篩選後的文件排名(最相關段落、命中數與分數,前 50 份);清除後回到列表。**勾選**多列(可跨頁)即可一次加上或移除標籤、設定或清除某個 metadata key,有進度與逐份文件的錯誤清單。**點一列**打開文件面板:資料夾(可連過去)、類型、大小、索引狀態、日期、可編輯的標籤、metadata 與說明、下載,以及只在這份文件裡搜尋。手機上篩選欄從 *Filters* 按鈕打開。見[下方](#library)。 |
 | **Folders** | 建立資料夾(歸你所有);點進去可上傳檔案(可加標籤)、為檔案設定標籤與 metadata(列上的標籤按鈕)、看逐檔索引狀態、檢視 chunk(AI 脈絡說明與文件原文分開顯示)、重新索引、刪除。**Export** 把資料夾下載成一個封存檔,**Import** 把封存檔匯入成你的新資料夾([說明](backup.zh-TW.md#在-console-裡))。以舊版切塊流程、或以不同於目前設定的 embedding 模型索引的檔案,會標示 **Re-index recommended**;資料夾列表會逐一統計(**N stale**),並可一鍵重建。 |
-| **Search Playground** | 對資料夾即時查詢,顯示**逐訊號檢索軌跡** —— Vector · BM25 · Hybrid · Rerank 各自名次並列 —— 並可加 RAG 答案。選 **All folders** 可一次搜尋所有資料夾(每筆結果標示所屬資料夾;沒被搜尋的資料夾會列出原因);切換 **Passages / Documents** 可改看依排名的文件與各自最相關的段落。RAG 答案與檢索軌跡只適用於單一資料夾的段落模式。 |
+| **Search Playground** | 對資料夾即時查詢,顯示**逐訊號檢索軌跡** —— Vector · BM25 · Hybrid · Rerank 各自名次並列 —— 並可加 RAG 答案。**Filters** 打開與 Library 相同的標籤、metadata 與(選 All folders 時)資料夾篩選,套用在這頁的每一次搜尋。選 **All folders** 可一次搜尋所有資料夾(每筆結果標示所屬資料夾;沒被搜尋的資料夾會列出原因);切換 **Passages / Documents** 可改看依排名的文件與各自最相關的段落。RAG 答案與檢索軌跡只適用於單一資料夾的段落模式。 |
 | **Index Jobs** | 索引任務即時串流與進度;可取消執行中的任務。 |
 | **Query Analytics** | 查詢量、延遲、零結果率、熱門查詢與知識缺口。 |
 | **Evaluation** | 自動生成題組,對 `production`(與 `/api/rag/query` 同一路徑)、純 `vector`、純 `bm25` 評 Recall@k · MRR · nDCG@k;基準差異只與同一題組的歷次結果比較。 |
 | **Settings** | Embedding / LLM / Contextual Retrieval / Reranker / Speech-to-Text / Retrieval 的即時、持久化設定,含檢索預設與連線測試。修改需要 `rag:admin`。 |
 | **System Health** | 每個外部相依的即時連線狀態。 |
 | **Audit Log** | 每次執行期設定變更與變更者的時間軸(`rag:admin`)。 |
+
+## Library
+
+側欄的 **Library**(`/admin/library`)列出文件;**Folders**(`/admin/folders`,含 *Index Jobs* 分頁)
+用來建立資料夾與上傳。舊的 `/folders` 與 `/jobs` 連結照常可用,`/folders?folder=<id>` 會直接打開該資料夾。
+
+- **篩選是一個 AND 條件**,與 API 的[文件篩選](api.zh-TW.md#文件篩選)相同:文件必須符合每一個 chip。
+  多個標籤預設符合*任一*即可;在 Tags 標題切換成 *all* 則須全部符合。同一個 metadata key 的多列會合併
+  (`year ≥ 2020` 與 `year ≤ 2024` 就是區間)。metadata 值的型別與編輯框相同:`2024` 是數字、`"2024"`
+  是文字、`true` 是布林、`2024-03-01` 是日期。*to* 日期包含當天。
+- **網址**保存所有篩選、內容查詢、排序與頁碼,例如
+  `/admin/library?tag=invoice&m=year:gte:2024&sort=name&order=asc`。
+- **批次編輯**只對會改變的文件各送一個 `PATCH`(已有該標籤或值的文件不動),一次兩個;失敗的會逐份列出,
+  其餘照常寫入。完成後標籤數量與 metadata key 會重新載入。
+- **Search inside this document** 會以 `filters.file_ids` 限定這一份文件,執行該資料夾的搜尋。
 
 ## 升級後重新索引
 

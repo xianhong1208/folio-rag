@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest'
-import { ALL_FOLDERS, plural, searchBody, skippedNote, snippetPlace, usesPlayground } from './searchView'
+import { ALL_FOLDERS, plural, searchBody, searchFilter, skippedNote, snippetPlace, usesPlayground } from './searchView'
+import { emptyState, toFilter } from './libraryFilters'
 
 describe('searchView', () => {
   it('uses the folder playground only for one folder and passages', () => {
@@ -15,6 +16,17 @@ describe('searchView', () => {
       .toEqual({ query: 'tea', group_by: 'document', folders: [7] })
     expect(searchBody({ fid: ALL_FOLDERS, view: 'passages', query: 'tea' }))
       .toEqual({ query: 'tea', group_by: 'passage' })
+    expect(searchBody({ fid: ALL_FOLDERS, view: 'documents', query: 'tea', filters: { tags_any: ['x'] } }))
+      .toEqual({ query: 'tea', group_by: 'document', filters: { tags_any: ['x'] } })
+    expect(searchBody({ fid: ALL_FOLDERS, view: 'documents', query: 'tea', filters: null }))
+      .toEqual({ query: 'tea', group_by: 'document' })
+  })
+
+  it('builds the filter from the rail; one chosen folder drops the folder list', () => {
+    const st = { ...emptyState(), tags: ['a'], folders: [4], meta: [{ key: 'year', op: 'eq', value: '2024' }] }
+    expect(searchFilter(st, ALL_FOLDERS, toFilter)).toEqual({ tags_any: ['a'], folders: [4], metadata: { year: 2024 } })
+    expect(searchFilter(st, '7', toFilter)).toEqual({ tags_any: ['a'], metadata: { year: 2024 } })
+    expect(searchFilter(emptyState(), ALL_FOLDERS, toFilter)).toBeNull()
   })
 
   it('explains skipped folders', () => {

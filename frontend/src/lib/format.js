@@ -21,3 +21,11 @@ export function fmtTime(t) {
 }
 
 export const shortModel = (s) => (s || '—').split('/').pop()
+
+// "Nov 20, 2026" — a date with its year (document upload dates span years).
+export function fmtDate(t) {
+  if (!t) return '—'
+  const d = new Date(t)
+  if (isNaN(d)) return '—'
+  return d.toLocaleDateString('en-US', { year: 'numeric', month: 'short', day: 'numeric' })
+}

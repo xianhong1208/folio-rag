@@ -48,6 +48,7 @@
 | `file_type` | 副檔名(`pdf`、`.docx`)或 MIME 類型(`application/pdf`、`image/*`) |
 | `uploaded_after` / `uploaded_before` | 上傳時間,含 / 不含該時間;`YYYY-MM-DD` 或 ISO 日期時間 |
 | `name_contains` | 檔名包含的文字,不分大小寫 |
+| `file_ids` | 這些文件,以檔案 id 指定(1–100 個;主控台的「只在這份文件裡搜尋」) |
 | `metadata` | `{key: value}`(相等;字串須完全相同),或 `{key: {"in": [...]}}`、`{"gte": x}`、`{"lte": x}`(數字,或與日期比較的 `YYYY-MM-DD` 日期)、`{"exists": true/false}` |
 
 ```json

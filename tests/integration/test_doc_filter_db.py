@@ -121,6 +121,17 @@ def test_metadata(lib):
     assert _match(lib, tags_any=["invoice"], metadata={"year": {"lte": 2023}}) == ["beta"]
 
 
+def test_file_ids(lib):
+    ids = lib.ids
+    assert _match(lib, file_ids=[ids["acme"], ids["memo"]]) == ["acme", "memo"]
+    # another person's file id never matches, whatever the filter names
+    assert _match(lib, file_ids=[ids["other"]]) == []
+    assert _match(lib, owner=B, file_ids=[ids["other"], ids["acme"]]) == ["other"]
+    assert _match(lib, file_ids=[ids["acme"], ids["beta"]], tags_all=["signed"]) == ["acme"]
+    assert _match(lib, folder_id=lib.fa2.id, file_ids=[ids["acme"]]) == []
+    assert _match(lib, file_ids=[str(uuid.uuid4())]) == []
+
+
 def test_injection_shaped_input_is_just_data(lib):
     from db.db import get_engine
     evil = "x'); DELETE FROM \"Files\"; --"

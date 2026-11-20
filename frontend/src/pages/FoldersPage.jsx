@@ -1,4 +1,5 @@
 import { useEffect, useState, useCallback, useRef } from 'react'
+import { useSearchParams } from 'react-router-dom'
 import { Folder, Play, Pencil, Trash2, Download, Eye, X, RefreshCw, RotateCcw, XCircle, FolderInput, FolderOutput, Tag } from 'lucide-react'
 import { get, post, api, upload as uploadFile } from '../services/api'
 import { fmtNum, fmtBytes, fmtTime, shortModel } from '../lib/format'
@@ -99,8 +100,22 @@ export default function FoldersPage() {
     return () => window.removeEventListener('keydown', onKey)
   }, [chunks])
 
-  const openFolder = (f) => { curIdRef.current = f.id; setCur({ id: f.id, name: f.name }); setFiles(null); setSel(new Set()) }
-  const back = () => { curIdRef.current = null; setCur(null); setFiles(null); setSel(new Set()); loadFolders() }
+  // The open folder is in the URL (/folders?folder=<id>), so the Library's document
+  // panel can link to it and the browser's Back returns to the list.
+  const [params, setParams] = useSearchParams()
+  const wanted = Number(params.get('folder')) || null
+  useEffect(() => {
+    if (!folders) return
+    if (wanted == null) {
+      if (curIdRef.current != null) { curIdRef.current = null; setCur(null); setFiles(null); setSel(new Set()) }
+      return
+    }
+    if (curIdRef.current === wanted) return
+    const f = folders.find((x) => x.id === wanted)
+    if (f) { curIdRef.current = f.id; setCur({ id: f.id, name: f.name }); setFiles(null); setSel(new Set()) }
+  }, [folders, wanted])
+  const openFolder = (f) => setParams({ folder: String(f.id) })
+  const back = () => { setParams({}); loadFolders() }
 
   const toggleSel = (id) => setSel((s) => { const n = new Set(s); n.has(id) ? n.delete(id) : n.add(id); return n })
   // One background job for the whole selection (it queues behind a running job). Re-indexing

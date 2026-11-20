@@ -8,11 +8,20 @@ export const ALL_FOLDERS = 'all'
 // /api/search does neither.
 export const usesPlayground = (fid, view) => fid !== ALL_FOLDERS && view === 'passages'
 
-// Body of POST /api/search for the current selection.
-export function searchBody({ fid, view, query }) {
+// Body of POST /api/search for the current selection; `filters` is a document filter
+// (lib/libraryFilters.js toFilter) or null.
+export function searchBody({ fid, view, query, filters }) {
   const body = { query, group_by: view === 'documents' ? 'document' : 'passage' }
   if (fid && fid !== ALL_FOLDERS) body.folders = [Number(fid)]
+  if (filters) body.filters = filters
   return body
+}
+
+// The Search page's filter: the rail's state as a document filter. With one folder
+// chosen, the rail's folder list does not apply (and is hidden).
+export function searchFilter(state, fid, toFilter) {
+  const own = fid && fid !== ALL_FOLDERS ? { ...state, folders: [] } : state
+  return toFilter(own)
 }
 
 const REASONS = {
