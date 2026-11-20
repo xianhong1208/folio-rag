@@ -72,6 +72,7 @@ Docker 映像檔自己的 `models.yaml` 還會讀幾個變數（模型名稱、�
 | `rag.rerank.gap_threshold` | `0.5` | 知識缺口分析:最高 rerank 分數低於此值即視為「沒有好的匹配」。 |
 | `rag.retrieval.rerank_pool` | `per_list` | cross-encoder 評分的對象:`per_list` = 向量檢索前 `rerank_dense_candidates` 名 + BM25 前 `rerank_sparse_candidates` 名;`fused` = 融合清單的前 `max(3 × top_k, rerank_candidates)` 名(先前的行為)。即時生效。 |
 | `rag.retrieval.rerank_dense_candidates` / `rerank_sparse_candidates` | `30` / `10` | `per_list` 候選池的深度(向量端不低於 3 × `top_k`)。越大召回餘裕越多,每多一對約多 6 ms;可即時調整(0–200)。 |
+| `rag.retrieval.max_search_folders` | `20` | 跨資料夾搜尋(`POST /api/search`):每次查詢最多搜尋幾個資料夾,最近更新的優先;其餘列在 `skipped_folders`(`folder_limit`)。可即時調整(1–200)。 |
 | `rag.retrieval.rerank_candidates` | `60` | 僅用於 `fused` 候選池:`max(3 × top_k, 此值)` 個融合候選送進 cross-encoder;可即時調整(1–200)。 |
 | `rag.retrieval.mcp_response_token_budget` | `6000` | MCP 搜尋回應的估算 token 上限;超過時省略排名最低的結果並在回應中註明。`0` = 不限制。 |
 | `rag.retrieval.min_relevance` | 隨附設定檔為 `0.9`(未設定時 `0`) | MCP 搜尋:最高 rerank 分數低於此值 → `low_relevance: true`(只標記、不刪除)。依模型而定;`0` = 關閉。 |

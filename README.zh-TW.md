@@ -48,6 +48,8 @@ Folio 是一套開源、給 Model Context Protocol 用的檢索增強生成(RAG)
 - **每人各自的資料夾。** 你只看得到自己 MCP Gate 帳號的資料夾,MCP、REST 與主控台都一樣。
 - **文件的標籤與 metadata。** 為檔案加上標籤與扁平的 key/value metadata(客戶、年份、到期日…),再用它們
   篩選搜尋,或列出你所有資料夾裡符合條件的文件([文件篩選](docs/api.zh-TW.md#文件篩選))。
+- **跨資料夾搜尋,以文件為單位。** 一次搜尋你所有(或部分)資料夾,所有資料夾的候選只重排一次;結果可以是段落,
+  或依最佳段落排名、附上摘錄的文件([跨資料夾搜尋](docs/api.zh-TW.md#跨資料夾搜尋))。
 - **多種格式。** PDF、Office(含舊版與 RTF)、OpenDocument、HTML 與 MHTML、Markdown、EPUB、電子郵件、
   掃描的 PDF 與圖片(由 Qwen3-VL 等視覺模型讀取,表格保持表格;沒有視覺模型時 PDF 從文字層讀取)與音訊
   (由 OpenAI 相容端點轉錄,簡體中文會轉成繁體)。

@@ -71,6 +71,9 @@ rag:
 
     # Max concurrent queries (shared by REST + MCP; excess queues)
     max_concurrent_queries: 8
+    # Search across folders (POST /api/search): folders searched per query at most (1-200);
+    # the rest are reported as skipped (folder_limit)
+    max_search_folders: 20
 
     return_resource_files: false                # MCP search: also attach the top hit's original file
     resource_file_max_bytes: 1000000

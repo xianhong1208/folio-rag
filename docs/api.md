@@ -7,6 +7,7 @@
 | **MCP** | `POST /mcp` — per-folder `Folio_<folder>` tools (`search` / `list` / `read`); `GET /.well-known/oauth-protected-resource/mcp` |
 | **Folders & files** | `/api/folders*` · `/api/folders/{id}/files*` (create, upload, list, download, delete — token-scoped) |
 | **Documents** | `POST /api/documents/search` · `GET /api/tags` · `GET /api/metadata/keys` — your documents across folders, with [filters](#document-filters) |
+| **Search** | `POST /api/search` — one search over all your folders (or some), as passages or as documents ([below](#search-across-folders)) |
 | **RAG** | `POST /api/rag/query` (hybrid retrieval + rerank, optional `filters`) · `/api/rag/files/{id}/index`, `/reindex`, `/index/jobs*` (background indexing + SSE progress) |
 | **Console session** | `POST /api/console/session` `{token}` (sign in) · `GET` (who am I) · `DELETE` (sign out) |
 | **Console (admin)** | `/api/admin/overview` · `/api/admin/folders*` · `/api/admin/jobs` · `/api/admin/analytics` · `/api/admin/eval/{run,status,report}` · `/api/admin/settings*` · `/api/admin/health` · `/api/admin/audit` · `/api/admin/probe` |
@@ -79,6 +80,56 @@ Where filters apply:
 These three take a Bearer token (a personal access token) or the console session, like the
 console's API; a cookie-authenticated `POST` needs the console's CSRF header. In MCP, a folder tool's
 `list` mode returns each file's `tags`, `metadata` and `description`.
+
+## Search across folders
+
+`POST /api/search` searches all your folders at once (or the ones you name), optionally limited by
+a [filter](#document-filters), and answers with **passages** or with **documents**:
+
+```json
+{"query": "payment terms", "folders": ["contracts", 12], "filters": {"tags_any": ["signed"]},
+ "group_by": "document", "top_k": 10, "snippets": 3}
+```
+
+| Field | Default | Meaning |
+|---|---|---|
+| `query` | — | 2–2000 characters |
+| `folders` | all yours | folder names or ids; one that is not yours is a **404**, like one that does not exist |
+| `filters` | none | a [document filter](#document-filters) |
+| `group_by` | `passage` | `passage` = ranked passages (`results`); `document` = ranked documents (`documents`) |
+| `top_k` | `rag.retrieval.default_top_k` passages / 10 documents | 1–50 |
+| `snippets` | 3 | `document`: passages shown per document (1–3) |
+| `auto_merge` | as configured | `passage`: merge hit leaves into their section |
+
+How it works: each folder is searched with its own index (its dense table and its own keyword
+segmenter), in parallel (four folders at a time, inside the server's query limit), with the query
+embedded once. The folders' candidates are pooled and **reranked once**: cross-encoder scores
+compare passages from different folders fairly. Without a reranker (or if the rerank call fails)
+the folders' lists are merged by reciprocal rank, never by raw similarity scores, which are not
+comparable across tables. With several folders each one contributes a smaller pool (twice the
+usual budget split over the folders, at least 10 dense + 4 keyword candidates each), and at most
+150 pooled candidates are reranked. One folder with `group_by: passage` runs exactly the
+single-folder search of `POST /api/rag/query`.
+
+**Documents** are ranked by their best passage (MaxP); a tie goes to the document with more
+matching passages. Each has `file_id`, `name`, `folder {id, name}`, `mime`, `tags`, `metadata`,
+`score` (its best passage's), `hits` (matching passages among the ranked ones) and `snippets`
+(`text`, `score`, `page`, `headings`, `content_type`, `node_id`). Names, tags and metadata are read
+live, so a rename shows at once. **Passages** are the usual result objects plus `folder {id, name}`.
+
+The response also has `folders` (searched), `skipped_folders` (`{id, name, reason, detail}`),
+`score_type` (`rerank` or `rrf`), `total_results`, `retrieval_time_ms`, `timings_ms` (per stage, summed
+over the folders: `embed`, `dense`, `segment`, `bm25`, `fuse`, `rerank`) and `cached`.
+A folder is skipped when it has **nothing indexed** (`nothing_indexed`), when some of its files were
+indexed with **another embedding model** or dimension than the configured one (`embedding_model`:
+its vectors are not comparable with the query's; re-index it), when there are more searchable
+folders than `rag.retrieval.max_search_folders` (default 20; `folder_limit`: the most recently
+updated ones are searched), or when its search failed (`error`). A folder with no document matching
+the filter is simply not searched.
+
+Results are cached for five minutes; any index, tag or metadata change in one of the searched
+folders drops the entry. Auth is the console's, as for `/api/documents/search`: a Bearer token, or
+the console session with its CSRF header. Only your own folders are ever searched.
 
 ## Removed in 1.5: the /v1 media endpoints
 
